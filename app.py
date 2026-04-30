@@ -457,7 +457,7 @@ for i in range(6):
     with c4:
         net = max(g - d, 0)
         st.markdown(f'<div style="color:#00e676;font-weight:700;padding-top:8px">{money(net)}</div>', unsafe_allow_html=True)
-    with c5: cnt = st.number_input("Count", min_value=1, max_value=60, value=int(count), key=f"count_{i}", label_visibility="collapsed")
+    with c5: cnt = st.number_input("Count", min_value=1, max_value=9999, value=max(1, int(count)), key=f"count_{i}", label_visibility="collapsed")
     inflow_data.append({"label": label, "gross": g, "deduct": d, "net": net, "count": cnt})
 
 if i == 0:
