@@ -192,7 +192,7 @@ st.caption("Upload PDF bank statement. Credits are automatically classified into
 
 col1, col2 = st.columns(2)
 with col1:
-    file_a = st.file_uploader("Upload Bank Statement (PDF)", type=["pdf"], key="upload_a")
+    file_a = st.file_uploader("Upload Bank Statement (PDF or Excel)", type=["pdf","xlsx","xls"], key="upload_a")
 with col2:
     pw_a   = st.text_input("PDF Password", type="password", key="pw_a", placeholder="Leave blank if not encrypted")
     if st.button("Extract Monthly Credits", key="btn_extract_a"):
@@ -201,7 +201,7 @@ with col2:
         else:
             with st.spinner("Extracting..."):
                 try:
-                    buckets, summary, bank, name = parse_transactions(file_a.getvalue(), pw_a)
+                    buckets, summary, bank, name = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
                     rows = monthly_analysis(buckets, summary)
                     st.session_state.buckets_a = buckets
                     st.session_state.summary_a = summary
@@ -257,7 +257,7 @@ st.caption("Upload a second bank statement. Nets are merged month-by-month. Only
 
 col3, col4 = st.columns(2)
 with col3:
-    file_b = st.file_uploader("Upload Second Bank Statement (PDF)", type=["pdf"], key="upload_b")
+    file_b = st.file_uploader("Upload Second Bank Statement (PDF or Excel)", type=["pdf","xlsx","xls"], key="upload_b")
 with col4:
     pw_b   = st.text_input("PDF Password", type="password", key="pw_b", placeholder="Leave blank if not encrypted")
     if st.button("Extract & Merge with First Statement", key="btn_extract_b"):
@@ -268,7 +268,7 @@ with col4:
         else:
             with st.spinner("Extracting second statement..."):
                 try:
-                    buckets_b, summary_b, bank_b, name_b = parse_transactions(file_b.getvalue(), pw_b)
+                    buckets_b, summary_b, bank_b, name_b = parse_transactions(file_b.getvalue(), pw_b, filename=file_b.name)
                     rows_b = monthly_analysis(buckets_b, summary_b)
                     st.session_state.buckets_b = buckets_b
                     st.session_state.summary_b = summary_b
