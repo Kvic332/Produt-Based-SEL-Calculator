@@ -9,6 +9,13 @@ from typing import Optional
 
 from PyPDF2 import PdfReader
 
+# Excel support — openpyxl for .xlsx, xlrd for .xls
+try:
+    import openpyxl
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
 # ── Shared constants ──────────────────────────────────────────────────────────
 MONTH_ABBR = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
               7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
@@ -70,70 +77,134 @@ def _get_tenor_months(raw: str) -> Optional[int]:
 # ════════════════════════════════════════════════════════════════════════════
 def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
     """
-    SELF-TRANSFER FIX:
-    'Transfer from AJAGUNIGBALA TO EMMANUEL KAYODE ADEWOLE' must NOT be flagged
-    as a self-transfer just because EMMANUEL/ADEWOLE appear in the narration.
-    We only flag self-transfer when the account holder's name appears as the
-    SENDER — i.e. in the ~60 chars immediately after the transfer-from verb.
+    Classify a credit transaction into one of:
+      self_transfer  — OWealth, savings platforms, own-name transfers
+      reversal       — RSVL, REV, refund, chargeback, dispute
+      loan_disbursal — Loan apps, disbursement keywords
+      non_business   — Gambling, betting, salary, allowance, support, contribution
+      real_credit    — Genuine usable income
+
+    SELF-TRANSFER FIX: Only flags self-transfer when the account holder name
+    appears as the SENDER (60 chars after the transfer-from verb), NOT as the
+    recipient. This prevents false flags like 'Transfer from X TO EMMANUEL'.
     """
     text = narration.lower()
 
-    # OWealth / internal wallet
-    owealth_kw = ["owealth withdrawal","owealth deposit","owealth interest",
-                  "auto-save to owealth","savings withdrawal","owealth balance"]
+    # ── 1. OWealth / savings wallet round-trips ───────────────────────────
+    owealth_kw = [
+        "owealth withdrawal", "owealth deposit", "owealth interest",
+        "auto-save to owealth", "savings withdrawal", "owealth balance",
+        "owealth credit",
+    ]
     if any(k in text for k in owealth_kw):
         return "self_transfer", "OWealth internal round-trip"
 
-    # Savings platforms
-    if any(k in text for k in ["piggyvest","piggy vest","cowrywise","cowry wise"]):
+    # ── 2. Savings platforms ──────────────────────────────────────────────
+    savings_kw = [
+        "piggyvest", "piggy vest", "piggy bank",
+        "cowrywise", "cowry wise",
+        "kuda save", "kuda vault",
+    ]
+    if any(k in text for k in savings_kw):
         return "self_transfer", "Savings platform round-trip"
 
-    # Reversals
-    if re.search(r"\brsvl\b|\*+rsvl", text) or any(
-        k in text for k in [" rev ","reversal","refund","chargeback","dispute","clawback"]
-    ):
-        return "reversal", "Reversal/refund keyword"
+    # ── 3. Reversals ──────────────────────────────────────────────────────
+    # Covers: RSVL, ***RSVL, REV, reversal, refund, chargeback, dispute,
+    # clawback — all case-insensitive (text already lowercased)
+    if re.search(r"\*+rsvl|\brsvl\b|\brev\b|\brev-\b", text):
+        return "reversal", "RSVL/REV reversal marker"
+    if any(k in text for k in [
+        "reversal", "refund", "chargeback", "chargbk",
+        "dispute", "clawback", "returned funds", "charge back",
+    ]):
+        return "reversal", "Reversal keyword"
 
-    # Loan disbursements
-    loan_pats = [
-        r"\bokash\b",r"\beasemoni\b",r"\bfairmoney\b",r"\brenmoney\b",
-        r"\bpalmcredit\b",r"\bbranch\s+loan\b",r"\bcarbon\s+loan\b",
-        r"\bcarbon\s+credit\b",r"\bmigo\b",r"\blidya\b",r"\bzedvance\b",
-        r"\bcreditwave\b",r"\bquickcheck\b",r"\bloan\s+disburs",
-        r"\bcredit\s+disburs",r"\bdisbursement\b",r"\baella\b",
-        r"\bkiakia\b",r"\bkia\s+kia\b",r"\bpage\s+financ",r"\blendigo\b",
-        r"\bbranch\s+limit\b",
+    # ── 4. Loan disbursements ─────────────────────────────────────────────
+    # All major Nigerian loan apps + generic disbursement keywords
+    loan_exact = [
+        "fairmoney", "carbon loan", "branch loan", "branch limit",
+        "palmcredit", "palm credit", "aella credit", "aella",
+        "kiakia", "kia kia", "quickcheck", "quick check",
+        "migo ", "lidya", "zedvance", "creditwave", "creditmfb",
+        "renmoney", "easemoni", "okash", "xcredit", "newcredit",
+        "fast credit", "page financ", "lendigo", "specta",
+        "loans by sterling", "credit direct", "gtbank loan",
+        "access loan", "uba loan", "first bank loan",
+        "zenith loan", "wema loan", "fcmb loan",
     ]
-    for pat in loan_pats:
+    loan_regex = [
+        r"\bloan\s+disburs", r"\bdisbursement\b", r"\bcredit\s+disburs",
+        r"\bloan\s+credit\b", r"\bloan\s+repay",
+    ]
+    if any(k in text for k in loan_exact):
+        return "loan_disbursal", "Loan app keyword"
+    for pat in loan_regex:
         if re.search(pat, text):
-            return "loan_disbursal", f"Loan keyword: {pat}"
+            return "loan_disbursal", f"Loan pattern: {pat}"
 
-    # Self-transfer: account holder name must be the SENDER, not the recipient
+    # ── 5. Self-transfer: own-name detection ─────────────────────────────
+    # CRITICAL: only match name in the SENDER window (after transfer-from verb)
+    # NOT in the full narration, to avoid flagging incoming transfers FROM others
+    # to the account holder as self-transfers.
     if account_name and len(account_name) > 4:
         name_parts = [p for p in account_name.lower().split() if len(p) > 3]
         if name_parts:
             verb_m = re.search(
-                r"\b(transfer from|transferred from|trf from|trf frm|from|frm)\b",
+                r"\b(transfer from|transferred from|trf from|trf frm|"
+                r"tfr from|from|frm)\b",
                 text,
             )
             if verb_m:
-                # Look at ~60 chars AFTER the verb for the sender name
-                sender_window = text[verb_m.end():verb_m.end() + 60]
+                raw_window = text[verb_m.end(): verb_m.end() + 70]
+                # Cut window at " to " or "|" — these separate sender from recipient
+                sender_window = re.split(r"\s+to\s+|\s*\|\s*", raw_window)[0]
                 matched = sum(1 for p in name_parts if p in sender_window)
                 if matched >= 2:
                     return "self_transfer", "Own-name sender detected"
-            if "myself" in text or "| myself" in text:
+            if "myself" in text or "| myself" in text or "/myself" in text:
                 return "self_transfer", "Explicit self-transfer (myself)"
 
-    # Gambling
-    betting_kw = ["sportybet","bet9ja","betnaija","1xbet","betking","betway",
-                  "merrybet","nairabet","baba ijebu","naijabet","lotto ",
-                  "sporty internet","sporty|"]
+    # Contribution from self (common in Nigerian banking — person sends money
+    # from another account to this one, narration says "contribution")
+    if re.search(r"\bcontribution\b", text) and account_name:
+        name_parts = [p for p in account_name.lower().split() if len(p) > 3]
+        matched = sum(1 for p in name_parts if p in text)
+        if matched >= 1:
+            return "self_transfer", "Self-contribution"
+
+    # ── 6. Gambling / betting ─────────────────────────────────────────────
+    betting_kw = [
+        # Major Nigerian platforms
+        "sportybet", "sporty bet", "sporty|", "sporty internet",
+        "bet9ja", "bet 9ja", "betnaija",
+        "1xbet", "1x bet",
+        "betking", "bet king",
+        "betway",
+        "merrybet", "merry bet",
+        "nairabet", "naira bet",
+        "baba ijebu", "baba-ijebu",
+        "naijabet",
+        "lotto ", "lottomania", "premier lotto",
+        "supabets", "supa bets",
+        "cloudbet", "msport", "bangbet",
+        "parimatch", "betboro", "betwinner",
+        "22bet", "melbet",
+        # Generic gambling signals
+        "casino ", "jackpot ", "betting winnings",
+    ]
     if any(k in text for k in betting_kw):
         return "non_business", "Gambling/betting keyword"
 
-    # Non-business
-    if any(k in text for k in ["salary","allowance"]):
+    # ── 7. Non-business inflows ───────────────────────────────────────────
+    # Salary, allowance, support payments, contributions
+    non_biz_exact = [
+        "salary", "salaries",
+        "allowance",
+        " support ",         # spaces prevent matching "customer support"
+        "monthly stipend", "stipend",
+        "upkeep",
+    ]
+    if any(k in text for k in non_biz_exact):
         return "non_business", "Non-business keyword"
 
     return "real_credit", "Usable credit"
@@ -357,14 +428,188 @@ def parse_summary_credits(full_text: str) -> dict[str, float]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# MAIN ENTRY POINT
+# EXCEL / MONO STATEMENT PARSERS
 # ════════════════════════════════════════════════════════════════════════════
-def parse_transactions(pdf_bytes: bytes, password: str = "") -> tuple[dict, dict, str, str]:
+
+def _excel_serial_to_ym(serial) -> Optional[str]:
+    """Convert Excel serial date number to YYYY-MM string."""
+    try:
+        f = float(serial)
+        if not (40000 < f < 70000):
+            return None
+        import datetime as _dt
+        base = _dt.date(1899, 12, 30)
+        d = base + _dt.timedelta(days=int(f))
+        return f"{d.year}-{str(d.month).zfill(2)}"
+    except Exception:
+        return None
+
+
+def _detect_excel_format(rows: list) -> Optional[dict]:
     """
+    Detect Excel format:
+    - Mono standard:      header row with 'Transaction Date', 'Credit', 'Narration'
+    - Moniepoint Business: header row with 'Date', 'Narration', 'Debit', 'Credit' + serial dates
+    - Generic debit/credit table: any row with date + credit + debit columns
+    """
+    for i, row in enumerate(rows[:30]):
+        h = [str(c or "").lower().strip() for c in row]
+
+        # Moniepoint Business Excel: serial dates + date/narration/debit/credit headers
+        if ("date" in h and "narration" in h and "debit" in h and "credit" in h):
+            if i + 1 < len(rows):
+                try:
+                    first_val = float(str(rows[i+1][0] or ""))
+                    if 40000 < first_val < 70000:
+                        return {
+                            "type": "moniepoint_excel",
+                            "hdr_idx": i,
+                            "date_col": h.index("date"),
+                            "narration_col": h.index("narration"),
+                            "debit_col": h.index("debit"),
+                            "credit_col": h.index("credit"),
+                        }
+                except (ValueError, IndexError):
+                    pass
+
+        # Mono standard: 'transaction date' as first column
+        if h and h[0] == "transaction date":
+            credit_col = next((j for j, v in enumerate(h) if "credit" in v), None)
+            narration_col = next((j for j, v in enumerate(h)
+                                  if "narration" in v or "description" in v), None)
+            if credit_col is not None:
+                return {
+                    "type": "mono_standard",
+                    "hdr_idx": i,
+                    "date_col": 0,
+                    "narration_col": narration_col or 5,
+                    "credit_col": credit_col,
+                }
+
+        # Generic: has date + credit + debit
+        has_date   = any("date" in v for v in h)
+        has_credit = any("credit" in v for v in h)
+        has_debit  = any("debit" in v for v in h)
+        if has_date and has_credit and has_debit:
+            date_col   = next((j for j, v in enumerate(h) if "date" in v), 0)
+            credit_col = next((j for j, v in enumerate(h) if "credit" in v), None)
+            narr_col   = next((j for j, v in enumerate(h)
+                               if "narration" in v or "description" in v or "details" in v), None)
+            if credit_col is not None:
+                return {
+                    "type": "generic_excel",
+                    "hdr_idx": i,
+                    "date_col": date_col,
+                    "narration_col": narr_col or 1,
+                    "credit_col": credit_col,
+                }
+    return None
+
+
+def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
+    """
+    Parse Excel bank statement (Mono, Moniepoint Business, or generic format).
+    Returns (buckets, account_name).
+    """
+    if not OPENPYXL_AVAILABLE:
+        raise ImportError("openpyxl is required for Excel parsing. Add it to requirements.txt")
+
+    import io
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+    rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+    wb.close()
+
+    fmt = _detect_excel_format(rows)
+    if not fmt:
+        raise ValueError("Could not detect Excel statement format. Supported: Mono, Moniepoint Business.")
+
+    # Extract account name from header rows above the table
+    account_name = ""
+    for row in rows[:fmt["hdr_idx"]]:
+        for j, cell in enumerate(row):
+            cv = str(cell or "").lower().strip()
+            if cv in ("account name:", "account name", "name"):
+                # Next non-empty cell in same row
+                for nc in row[j+1:]:
+                    nv = str(nc or "").strip()
+                    if nv:
+                        account_name = nv.rstrip("-").strip()
+                        break
+                if not account_name and j + 1 < len(row):
+                    account_name = str(rows[rows.index(row)][j+1] or "").strip()
+            if account_name:
+                break
+        if account_name:
+            break
+
+    buckets: dict = {}
+    hdr_idx      = fmt["hdr_idx"]
+    date_col     = fmt["date_col"]
+    narr_col     = fmt["narration_col"]
+    credit_col   = fmt["credit_col"]
+    fmt_type     = fmt["type"]
+
+    for row in rows[hdr_idx + 1:]:
+        if not row or row[date_col] is None:
+            continue
+
+        # Date parsing
+        if fmt_type == "moniepoint_excel":
+            ym = _excel_serial_to_ym(row[date_col])
+        else:
+            date_str = str(row[date_col] or "").strip()
+            # Try ISO format first: 2025-10-03 or 2025-10-03T...
+            m = re.match(r"^(20\d{2})-(\d{2})", date_str)
+            if m:
+                ym = f"{m.group(1)}-{m.group(2)}"
+            else:
+                # Try dd/mm/yyyy
+                m = re.match(r"^(\d{2})/(\d{2})/(20\d{2})", date_str)
+                ym = f"{m.group(3)}-{m.group(2)}" if m else None
+
+        if not ym:
+            continue
+
+        # Credit amount
+        try:
+            credit_raw = str(row[credit_col] or "").replace(",", "").strip()
+            credit = float(credit_raw) if credit_raw else 0.0
+        except ValueError:
+            credit = 0.0
+
+        if credit <= 0:
+            continue
+
+        narration = str(row[narr_col] or "").strip() if narr_col is not None else ""
+        add_credit(buckets, ym, credit, narration, account_name)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN ENTRY POINT
+
+# ════════════════════════════════════════════════════════════════════════════
+def parse_transactions(file_bytes: bytes, password: str = "",
+                       filename: str = "") -> tuple[dict, dict, str, str]:
+    """
+    Auto-detects PDF vs Excel and routes accordingly.
     Returns (buckets, summary_credits, bank_name, account_name)
     buckets: {ym: {gross, count, self_transfer, reversal, non_business, loan_disbursal, real_credit}}
     """
-    full_text = extract_pdf_text(pdf_bytes, password)
+    # ── Excel detection ───────────────────────────────────────────────────
+    is_excel = (filename.lower().endswith((".xlsx", ".xls")) or
+                file_bytes[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"))
+    if is_excel:
+        buckets, account_name = parse_excel(file_bytes)
+        # Try to detect bank name from account name or default
+        bank = "Mono Excel"
+        summary: dict = {}
+        return buckets, summary, bank, account_name
+
+    # ── PDF ───────────────────────────────────────────────────────────────
+    full_text = extract_pdf_text(file_bytes, password)
     bank = detect_bank(full_text)
     summary = parse_summary_credits(full_text)
 
