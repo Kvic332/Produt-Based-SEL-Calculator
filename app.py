@@ -420,12 +420,28 @@ def get_prefill_rows():
 
 prefill = get_prefill_rows()
 
+# ── Sync prefill into session state so Streamlit widget cache is updated ──
+# This fixes the bug where Oct 25 shows ₦0 because Streamlit cached the
+# previous widget value. We push fresh values into st.session_state BEFORE
+# the widgets render so they pick up the correct numbers.
+if prefill:
+    for i, r in enumerate(prefill[:6]):
+        gross_key  = f"gross_{i}"
+        deduct_key = f"deduct_{i}"
+        count_key  = f"count_{i}"
+        # Only overwrite if the extraction just happened (rows_a was just set)
+        # Use a fingerprint to detect when new data arrives
+        fp = f"{r['ym']}_{r.get('gross',0):.0f}"
+        if st.session_state.get(f"fp_{i}") != fp:
+            st.session_state[gross_key]  = float(r.get("gross", 0))
+            st.session_state[deduct_key] = float(r.get("deductions", 0))
+            st.session_state[count_key]  = max(1, int(r.get("count", 12)))
+            st.session_state[f"fp_{i}"]  = fp
+
 # Build default month labels
 def default_months():
     months = []
     for i in range(1, 7):
-        d = datetime.date(today.year, today.month, 1)
-        # go back (7-i) months
         month = today.month - (7 - i)
         year  = today.year
         while month <= 0:
@@ -439,35 +455,24 @@ inflow_data = []
 
 for i in range(6):
     if prefill and i < len(prefill):
-        r    = prefill[i]
-        label= r["label"]
-        gross= r.get("gross", 0)
-        deduct= r.get("deductions", 0)
-        count = r.get("count", 12)
+        r     = prefill[i]
+        label = r["label"]
     else:
         label = default_m[i][1]
-        gross = 0.0
-        deduct= 0.0
-        count = 12
 
     c1, c2, c3, c4, c5 = st.columns([1.2, 2, 2, 1.5, 0.8])
     with c1: st.markdown(f"**{label}**")
-    with c2: g = st.number_input("Gross Credit (₦)", min_value=0.0, value=float(gross),  step=1000.0, key=f"gross_{i}", label_visibility="collapsed")
-    with c3: d = st.number_input("Deductions (₦)",   min_value=0.0, value=float(deduct), step=1000.0, key=f"deduct_{i}", label_visibility="collapsed")
+    with c2: g = st.number_input("Gross Credit (₦)", min_value=0.0, step=1000.0,
+                                  key=f"gross_{i}", label_visibility="collapsed")
+    with c3: d = st.number_input("Deductions (₦)",   min_value=0.0, step=1000.0,
+                                  key=f"deduct_{i}", label_visibility="collapsed")
     with c4:
         net = max(g - d, 0)
-        st.markdown(f'<div style="color:#00e676;font-weight:700;padding-top:8px">{money(net)}</div>', unsafe_allow_html=True)
-    with c5: cnt = st.number_input("Count", min_value=1, max_value=9999, value=max(1, int(count)), key=f"count_{i}", label_visibility="collapsed")
+        st.markdown(f'<div style="color:#00e676;font-weight:700;padding-top:8px">{money(net)}</div>',
+                    unsafe_allow_html=True)
+    with c5: cnt = st.number_input("Count", min_value=1, max_value=9999,
+                                    key=f"count_{i}", label_visibility="collapsed")
     inflow_data.append({"label": label, "gross": g, "deduct": d, "net": net, "count": cnt})
-
-if i == 0:
-    colh1, colh2, colh3, colh4, colh5 = st.columns([1.2, 2, 2, 1.5, 0.8])
-    with colh1: st.caption("Month")
-    with colh2: st.caption("Gross Credit (₦)")
-    with colh3: st.caption("Deductions (₦)")
-    with colh4: st.caption("Net Credit")
-    with colh5: st.caption("Count")
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 03 — LOAN PARAMETERS
@@ -588,4 +593,3 @@ if calc_btn:
                     file_name="sel_deduction_audit.csv",
                     mime="text/csv",
                 )
-                
