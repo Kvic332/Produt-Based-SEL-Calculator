@@ -183,6 +183,7 @@ def calculate_eligibility(
         "repayment_frequency": repayment_frequency,
         "interest_rate": rate,
         "max_loan": new_loan,
+        "approved": approved,
         "decision": "Max loan amount" if approved else "Below product minimum",
     }
 

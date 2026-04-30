@@ -5,369 +5,525 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
+from typing import Optional
 
 from PyPDF2 import PdfReader
 
+# ── Shared constants ──────────────────────────────────────────────────────────
+MONTH_ABBR = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
+              7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+MONTH_MAP  = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+              "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+MONTH_NUM  = {v.lower(): str(k).zfill(2) for k, v in MONTH_ABBR.items()}
 
-MONEY_RE = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})*|\d+)\.\d{2}(?!\d)")
-ROW_RE = re.compile(r"^(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+(.*)$")
-
-MONTH_NUM = {
-    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
-    "may": "05", "jun": "06", "jul": "07", "aug": "08",
-    "sep": "09", "oct": "10", "nov": "11", "dec": "12",
-}
-
-# OPay: "dd Mon yyyy hh:mm:ss dd Mon yyyy Description -- credit balance"
-OPAY_ROW_RE = re.compile(
-    r"^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}",
-    re.I,
+MONEY_RE   = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})*|\d+)\.\d{2}(?!\d)")
+ZENITH_ROW = re.compile(r"^(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+(.*)$")
+OPAY_ROW   = re.compile(
+    r"^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+    r"\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}", re.I,
 )
 
 
+# ── Data classes ──────────────────────────────────────────────────────────────
 @dataclass
-class Transaction:
-    page: int
-    tran_date: str
-    value_date: str
-    narration: str
-    amount: float
-    balance: float
-    kind: str
-    category: str = ""
-    reason: str = ""
-
-    @property
-    def ym(self) -> str:
-        day, month, year = self.tran_date.split("/")
-        return f"{year}-{month}"
-
-
-def money_to_decimal(value: str) -> Decimal:
-    return Decimal(value.replace(",", ""))
+class CreditAccount:
+    subscriber_name: str
+    account_number: str
+    account_status: str
+    facility_classification: str
+    instalment_amount: float
+    outstanding_balance: float
+    loan_duration_days: str
+    tenor_months: Optional[int]
+    monthly_obligation: float
+    derived_from_balance: bool
+    include_in_obligation: bool
+    is_closed: bool
+    is_bad_credit: bool
 
 
-def detect_format(full_text: str) -> str:
-    """Detect bank statement format from full text."""
-    t = full_text.lower()
-    if "opay digital" in t or "wallet account" in t or "9payment service" in t:
-        return "opay"
-    if "mybankstatement" in t or ("tran date value date narration" in t):
-        return "zenith"
-    return "generic"
+# ════════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ════════════════════════════════════════════════════════════════════════════
+def ym_label(ym: str) -> str:
+    year, month = ym.split("-")
+    return f"{MONTH_ABBR[int(month)]} {year[-2:]}"
 
 
-def extract_pdf_text_rows(pdf_bytes: bytes, password: str = "") -> tuple[str, list[dict]]:
-    reader = PdfReader(BytesIO(pdf_bytes))
-    if reader.is_encrypted:
-        result = reader.decrypt(password or "")
-        if result == 0:
-            raise ValueError("Incorrect or missing PDF password.")
-
-    full_text_parts = []
-    for page in reader.pages:
-        full_text_parts.append(page.extract_text() or "")
-    full_text = "\n".join(full_text_parts)
-
-    fmt = detect_format(full_text)
-
-    if fmt == "opay":
-        records = _parse_opay_rows(full_text)
-    else:
-        records = _parse_zenith_rows(full_text)
-
-    return full_text, records
+def _empty_bucket() -> dict:
+    return {"gross": 0.0, "count": 0, "self_transfer": 0.0,
+            "reversal": 0.0, "non_business": 0.0, "loan_disbursal": 0.0,
+            "real_credit": 0.0}
 
 
-def _parse_zenith_rows(full_text: str) -> list[dict]:
-    records = []
-    current = None
-    in_transactions = False
-    page_no = 1
-    for raw_line in full_text.splitlines():
-        line = raw_line.strip()
-        if "\x0c" in raw_line:
-            page_no += 1
-        if line.startswith("Tran Date Value Date Narration"):
-            in_transactions = True
-            continue
-        if not in_transactions:
-            continue
-        match = ROW_RE.match(line)
-        if match:
-            if current:
-                records.append(current)
-            current = {
-                "page": page_no,
-                "tran_date": match.group(1),
-                "value_date": match.group(2),
-                "lines": [match.group(3)],
-            }
-        elif current and not line.startswith(("mybankStatement", "Tran Date")):
-            current["lines"].append(line)
-    if current:
-        records.append(current)
-    return records
+def _parse_currency(v: str) -> float:
+    return float(re.sub(r"[^\d.]", "", str(v or "")) or 0)
 
 
-def _parse_opay_rows(full_text: str) -> list[dict]:
-    """Parse OPay statement format.
-    Each transaction starts with: dd Mon yyyy hh:mm:ss dd Mon yyyy Description -- credit balance
-    or: dd Mon yyyy hh:mm:ss dd Mon yyyy Description debit -- balance
-    """
-    records = []
-    lines = full_text.splitlines()
-    current = None
-    page_no = 1
-
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-        if "\x0c" in raw_line:
-            page_no += 1
-
-        m = OPAY_ROW_RE.match(line)
-        if m:
-            if current:
-                records.append(current)
-            day, mon, year = m.group(1), m.group(2), m.group(3)
-            tran_date = f"{day}/{MONTH_NUM[mon.lower()]}/{year}"
-            rest = line[m.end():].strip()
-            # Remove the value date (second occurrence of date after time)
-            rest = re.sub(
-                r"^\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}\s*",
-                "", rest, flags=re.I
-            )
-            current = {
-                "page": page_no,
-                "tran_date": tran_date,
-                "value_date": tran_date,
-                "lines": [rest],
-                "format": "opay",
-            }
-        elif current:
-            current["lines"].append(line)
-
-    if current:
-        records.append(current)
-    return records
+def _get_tenor_months(raw: str) -> Optional[int]:
+    digits = int(re.sub(r"[^\d]", "", str(raw)) or 0)
+    return max(1, -(-digits // 30)) if digits > 0 else None
 
 
-def parse_summary_credits(full_text: str) -> dict[str, float]:
-    summary = {}
-    pattern = re.compile(
-        r"\b(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+"
-        r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})",
-        re.I,
-    )
-    month_map = {
-        "jan": "01",
-        "feb": "02",
-        "mar": "03",
-        "apr": "04",
-        "may": "05",
-        "jun": "06",
-        "jul": "07",
-        "aug": "08",
-        "sep": "09",
-        "oct": "10",
-        "nov": "11",
-        "dec": "12",
-    }
-    for match in pattern.finditer(full_text.replace("\n", " ")):
-        year = match.group(1)
-        month = month_map[match.group(2).lower()[:3]]
-        credit = float(match.group(4).replace(",", ""))
-        summary[f"{year}-{month}"] = credit
-    return summary
-
-
+# ════════════════════════════════════════════════════════════════════════════
+# CLASSIFICATION  — self-transfer bug fix
+# ════════════════════════════════════════════════════════════════════════════
 def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
+    """
+    SELF-TRANSFER FIX:
+    'Transfer from AJAGUNIGBALA TO EMMANUEL KAYODE ADEWOLE' must NOT be flagged
+    as a self-transfer just because EMMANUEL/ADEWOLE appear in the narration.
+    We only flag self-transfer when the account holder's name appears as the
+    SENDER — i.e. in the ~60 chars immediately after the transfer-from verb.
+    """
     text = narration.lower()
-    compact = re.sub(r"[^a-z0-9]+", "", text)
 
-    # ── OWealth / savings round-trips ──────────────────────────────────────
-    owealth_kw = [
-        "owealth withdrawal", "owealth deposit", "owealth interest",
-        "auto-save to owealth", "savings withdrawal", "owealth balance",
-    ]
+    # OWealth / internal wallet
+    owealth_kw = ["owealth withdrawal","owealth deposit","owealth interest",
+                  "auto-save to owealth","savings withdrawal","owealth balance"]
     if any(k in text for k in owealth_kw):
         return "self_transfer", "OWealth internal round-trip"
 
-    # PiggyVest / Cowrywise
-    if any(k in text for k in ["piggyvest", "piggy vest", "cowrywise", "cowry wise"]):
+    # Savings platforms
+    if any(k in text for k in ["piggyvest","piggy vest","cowrywise","cowry wise"]):
         return "self_transfer", "Savings platform round-trip"
 
-    if "rsvl" in text or any(k in text for k in [" rev ", "reversal", "refund", "chargeback", "dispute", "clawback"]):
+    # Reversals
+    if re.search(r"\brsvl\b|\*+rsvl", text) or any(
+        k in text for k in [" rev ","reversal","refund","chargeback","dispute","clawback"]
+    ):
         return "reversal", "Reversal/refund keyword"
 
-    loan_patterns = [
-        r"\bokash\b",
-        r"\beasemoni\b",
-        r"\bfairmoney\b",
-        r"\brenmoney\b",
-        r"\bpalmcredit\b",
-        r"\bbranch\s+loan\b",
-        r"\bcarbon\s+loan\b",
-        r"\bcarbon\s+credit\b",
-        r"\bmigo\b",
-        r"\blidya\b",
-        r"\bzedvance\b",
-        r"\bcreditwave\b",
-        r"\bquickcheck\b",
-        r"\bloan\s+disburs",
-        r"\bcredit\s+disburs",
-        r"\bdisbursement\b",
-        r"\baella\b",
-        r"\bkiakia\b",
-        r"\bkia\s+kia\b",
-        r"\bpage\s+financ",
-        r"\blendigo\b",
+    # Loan disbursements
+    loan_pats = [
+        r"\bokash\b",r"\beasemoni\b",r"\bfairmoney\b",r"\brenmoney\b",
+        r"\bpalmcredit\b",r"\bbranch\s+loan\b",r"\bcarbon\s+loan\b",
+        r"\bcarbon\s+credit\b",r"\bmigo\b",r"\blidya\b",r"\bzedvance\b",
+        r"\bcreditwave\b",r"\bquickcheck\b",r"\bloan\s+disburs",
+        r"\bcredit\s+disburs",r"\bdisbursement\b",r"\baella\b",
+        r"\bkiakia\b",r"\bkia\s+kia\b",r"\bpage\s+financ",r"\blendigo\b",
         r"\bbranch\s+limit\b",
     ]
-    for pattern in loan_patterns:
-        if re.search(pattern, text):
-            return "loan_disbursal", f"Loan keyword matched: {pattern}"
+    for pat in loan_pats:
+        if re.search(pat, text):
+            return "loan_disbursal", f"Loan keyword: {pat}"
 
-    # Self-transfer: check if sender name matches account holder name
-    if account_name:
-        name_lower = account_name.lower()
-        name_parts = [p for p in name_lower.split() if len(p) > 3]
+    # Self-transfer: account holder name must be the SENDER, not the recipient
+    if account_name and len(account_name) > 4:
+        name_parts = [p for p in account_name.lower().split() if len(p) > 3]
         if name_parts:
-            matched = sum(1 for p in name_parts if p in text)
-            has_verb = bool(re.search(r"\b(transfer from|from|myself|trf from)\b", text))
-            if has_verb and matched >= 2:
-                return "self_transfer", "Own-name transfer"
+            verb_m = re.search(
+                r"\b(transfer from|transferred from|trf from|trf frm|from|frm)\b",
+                text,
+            )
+            if verb_m:
+                # Look at ~60 chars AFTER the verb for the sender name
+                sender_window = text[verb_m.end():verb_m.end() + 60]
+                matched = sum(1 for p in name_parts if p in sender_window)
+                if matched >= 2:
+                    return "self_transfer", "Own-name sender detected"
+            if "myself" in text or "| myself" in text:
+                return "self_transfer", "Explicit self-transfer (myself)"
 
-    # Gambling / betting winbacks
-    betting_kw = ["sportybet","bet9ja","betnaija","1xbet","betking",
-                  "betway","merrybet","nairabet","baba ijebu","naijabet","lotto ","sporty internet"]
+    # Gambling
+    betting_kw = ["sportybet","bet9ja","betnaija","1xbet","betking","betway",
+                  "merrybet","nairabet","baba ijebu","naijabet","lotto ",
+                  "sporty internet","sporty|"]
     if any(k in text for k in betting_kw):
         return "non_business", "Gambling/betting keyword"
 
-    # Non-business inflows — tightened keywords only
-    if any(k in text for k in ["salary", "allowance"]):
+    # Non-business
+    if any(k in text for k in ["salary","allowance"]):
         return "non_business", "Non-business keyword"
 
     return "real_credit", "Usable credit"
 
 
-def parse_transactions(pdf_bytes: bytes, password: str = "") -> tuple[list[Transaction], dict[str, float]]:
-    full_text, records = extract_pdf_text_rows(pdf_bytes, password)
-    summary_credits = parse_summary_credits(full_text)
-    # Extract account holder name for self-transfer detection
-    name_m = (
-        re.search(r"Account Name\s+([A-Z][A-Z ]{4,})", full_text) or
-        re.search(r"Account Name\n([A-Z][A-Z ]+[A-Z])", full_text, re.I)
-    )
-    account_name = name_m.group(1).strip() if name_m else ""
+def add_credit(buckets: dict, ym: str, amount: float,
+               narration: str, account_name: str = "") -> None:
+    if not ym or not amount or amount <= 0:
+        return
+    if ym not in buckets:
+        buckets[ym] = _empty_bucket()
+    buckets[ym]["gross"]  += amount
+    buckets[ym]["count"]  += 1
+    cat, _ = classify_credit(narration, account_name)
+    buckets[ym][cat] = buckets[ym].get(cat, 0.0) + amount
 
-    transactions = []
-    previous_balance = None
 
-    for record in records:
-        full = " ".join(record["lines"])
-        money_matches = list(MONEY_RE.finditer(full))
-        if not money_matches:
+# ════════════════════════════════════════════════════════════════════════════
+# PDF TEXT EXTRACTION
+# ════════════════════════════════════════════════════════════════════════════
+def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
+    reader = PdfReader(BytesIO(pdf_bytes))
+    if reader.is_encrypted:
+        if reader.decrypt(password or "") == 0:
+            raise ValueError("Incorrect or missing PDF password.")
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# BANK DETECTION
+# ════════════════════════════════════════════════════════════════════════════
+def detect_bank(text: str) -> str:
+    t = text.lower()
+    if "opay digital" in t or "wallet account" in t or "9payment service" in t:
+        return "OPay"
+    if "mybankstatement" in t or "tran date value date narration" in t:
+        return "Zenith"
+    if "moniepoint mfb" in t or "moniepoint microfinance" in t:
+        return "Moniepoint"
+    if "kuda mf bank" in t or "kudabank" in t:
+        return "Kuda"
+    if "palmpay" in t:
+        return "PalmPay"
+    if "guaranty trust" in t or "gtbank" in t or "gt bank" in t:
+        return "GTBank"
+    if "access bank" in t:
+        return "Access"
+    if "united bank for africa" in t:
+        return "UBA"
+    if "first bank" in t or "firstbank" in t:
+        return "FirstBank"
+    if "zenith" in t:
+        return "Zenith"
+    if "sterling bank" in t:
+        return "Sterling"
+    if "fcmb" in t or "first city monument bank" in t:
+        return "FCMB"
+    if "wema" in t:
+        return "Wema"
+    if "fidelity bank" in t:
+        return "Fidelity"
+    if "stanbic ibtc" in t or "stanbic" in t:
+        return "Stanbic"
+    if "union bank" in t:
+        return "Union"
+    return "Unknown"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# BANK PARSERS
+# ════════════════════════════════════════════════════════════════════════════
+def _extract_account_name(full_text: str) -> str:
+    for pat in [
+        r"Account Name\s+([A-Z][A-Z ]{4,})",
+        r"ACCOUNT NAME[:\s]+([A-Z][A-Z ]{4,})",
+        r"Account Name[:\s]+([A-Z][A-Z ]{4,})",
+        r"Name\s+([A-Z][A-Z ]{4,})",
+    ]:
+        m = re.search(pat, full_text, re.I)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def parse_opay(full_text: str) -> tuple[dict, str]:
+    buckets: dict = {}
+    account_name = _extract_account_name(full_text)
+    for line in full_text.splitlines():
+        line = line.strip()
+        m = OPAY_ROW.match(line)
+        if not m:
             continue
+        day, mon, year = m.group(1), m.group(2), m.group(3)
+        ym = f"{year}-{MONTH_NUM[mon.lower()]}"
+        rest = line[m.end():].strip()
+        rest = re.sub(
+            r"^\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}\s*",
+            "", rest, flags=re.I,
+        )
+        money = list(MONEY_RE.finditer(rest))
+        if len(money) < 2:
+            continue
+        amount_m   = money[-2]
+        amount     = float(amount_m.group().replace(",", ""))
+        before_amt = rest[:amount_m.start()]
+        if not re.search(r"--\s*$", before_amt.rstrip()):
+            continue  # debit row
+        narration = re.sub(r"--\s*$", "", before_amt).strip()
+        narration = re.sub(r"\s+Mobile\S*$", "", narration).strip()
+        add_credit(buckets, ym, amount, narration, account_name)
+    return buckets, account_name
 
-        # ── OPay format: "Description -- credit_amount balance" or "Description debit_amount -- balance"
-        if record.get("format") == "opay":
-            balance = money_to_decimal(money_matches[-1].group())
-            if len(money_matches) < 2:
-                continue
-            amount_match = money_matches[-2]
-            amount = money_to_decimal(amount_match.group())
-            before_amount = full[: amount_match.start()]
-            # Credit: "--" appears immediately before the amount
-            is_credit = bool(re.search(r"--\s*$", before_amount.rstrip()))
-            kind = "credit" if is_credit else "debit"
-            # Narration: text before the "--" and amount columns
-            narration = re.sub(r"--\s*$", "", before_amount).strip()
-            # Remove trailing channel/reference junk (Mobile + digits)
-            narration = re.sub(r"\s+Mobile\S*$", "", narration).strip()
-            previous_balance = balance
+
+def parse_zenith(full_text: str) -> tuple[dict, str]:
+    buckets: dict = {}
+    account_name = _extract_account_name(full_text)
+    in_tx = False
+    current: list[str] = []
+
+    def process(lines: list[str]) -> None:
+        full = " ".join(lines)
+        m = ZENITH_ROW.match(full)
+        if not m:
+            return
+        parts = m.group(1).split("/")
+        ym    = f"{parts[2]}-{parts[1]}"
+        rest  = m.group(3)
+        money = list(re.finditer(r"[\d,]+\.\d{2}", rest))
+        if len(money) < 2:
+            return
+        amount_m  = money[-2]
+        amount    = float(amount_m.group().replace(",", ""))
+        narration = rest[:amount_m.start()].strip()
+        lower     = narration.lower()
+        is_rev = bool(re.search(r"\*+rsvl\b|\brsvl\b", lower))
+        is_cr  = bool(re.search(r"\b(?:nip\s*cr|cip\s*cr|inflow|etz\s+inflow)\b", lower)) or is_rev
+        is_chg = bool(re.search(r"\b(?:stamp duty|sms alert|vat charge|charge\+vat|levy)\b", lower))
+        if not is_cr or (is_chg and not is_rev):
+            return
+        add_credit(buckets, ym, amount, narration, account_name)
+
+    for line in full_text.splitlines():
+        line = line.strip()
+        if "Tran Date Value Date Narration" in line:
+            in_tx = True
+            continue
+        if not in_tx:
+            continue
+        if ZENITH_ROW.match(line):
+            if current:
+                process(current)
+            current = [line]
+        elif current and not line.startswith(("mybankStatement", "Tran Date")):
+            current.append(line)
+    if current:
+        process(current)
+    return buckets, account_name
+
+
+def parse_generic(full_text: str) -> tuple[dict, str]:
+    """Balance-movement parser for GTBank, Access, UBA, FirstBank, Sterling, etc."""
+    buckets: dict = {}
+    account_name  = _extract_account_name(full_text)
+    prev_balance: Optional[Decimal] = None
+    in_tx = False
+
+    for line in full_text.splitlines():
+        line = line.strip()
+        if re.search(r"Tran Date|Value Date|Transaction Date", line, re.I):
+            in_tx = True
+            continue
+        if not in_tx or not line:
+            continue
+        date_m = re.match(r"^(\d{2}/\d{2}/\d{4})", line)
+        if not date_m:
+            continue
+        tran_date = date_m.group(1)
+        parts = tran_date.split("/")
+        ym    = f"{parts[2]}-{parts[1]}"
+        money = list(MONEY_RE.finditer(line))
+        if not money:
+            continue
+        balance = Decimal(money[-1].group().replace(",", ""))
+        if len(money) < 2:
+            prev_balance = balance
+            continue
+        amt_m     = money[-2]
+        amount    = Decimal(amt_m.group().replace(",", ""))
+        narration = line[date_m.end():amt_m.start()].strip()
+        narration = re.sub(r"^\d{2}/\d{2}/\d{4}\s*", "", narration).strip()
+
+        if prev_balance is None:
+            kind = "credit" if balance >= amount else "unknown"
         else:
-            # ── Zenith/generic: use balance movement to determine direction
-            balance = money_to_decimal(money_matches[-1].group())
-            amount = money_to_decimal(money_matches[-2].group()) if len(money_matches) >= 2 else Decimal("0")
-            narration = full[: money_matches[-2].start()].strip() if len(money_matches) >= 2 else full[: money_matches[-1].start()].strip()
+            delta = balance - prev_balance
+            if   abs(delta - amount) <= Decimal("0.02"): kind = "credit"
+            elif abs(delta + amount) <= Decimal("0.02"): kind = "debit"
+            elif delta > 0:  kind = "credit";  amount = delta
+            elif delta < 0:  kind = "debit";   amount = -delta
+            else:            kind = "unknown"
 
-            if previous_balance is None:
-                kind = "credit" if balance >= amount else "unknown"
-            else:
-                delta = balance - previous_balance
-                if abs(delta - amount) <= Decimal("0.02"):
-                    kind = "credit"
-                elif abs(delta + amount) <= Decimal("0.02"):
-                    kind = "debit"
-                elif delta > 0:
-                    kind = "credit"
-                    amount = delta
-                elif delta < 0:
-                    kind = "debit"
-                    amount = -delta
-                else:
-                    kind = "unknown"
-            previous_balance = balance
+        prev_balance = balance
+        if kind == "credit" and amount > 0:
+            add_credit(buckets, ym, float(amount), narration, account_name)
 
-        category = ""
-        reason = ""
-        if kind == "credit":
-            category, reason = classify_credit(narration, account_name)
-
-        transactions.append(
-            Transaction(
-                page=record["page"],
-                tran_date=record["tran_date"],
-                value_date=record["value_date"],
-                narration=narration,
-                amount=float(amount),
-                balance=float(balance),
-                kind=kind,
-                category=category,
-                reason=reason,
-            )
-        )
-
-    return transactions, summary_credits
+    return buckets, account_name
 
 
-def monthly_analysis(transactions: list[Transaction], summary_credits: dict[str, float] | None = None) -> list[dict]:
-    buckets = defaultdict(lambda: defaultdict(float))
-    counts = defaultdict(int)
+def parse_summary_credits(full_text: str) -> dict[str, float]:
+    summary: dict[str, float] = {}
+    pat = re.compile(
+        r"\b(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})", re.I,
+    )
+    for m in pat.finditer(full_text.replace("\n", " ")):
+        year  = m.group(1)
+        month = str(MONTH_MAP[m.group(2).lower()[:3]]).zfill(2)
+        credit = float(m.group(4).replace(",", ""))
+        summary[f"{year}-{month}"] = credit
+    return summary
 
-    for tx in transactions:
-        if tx.kind != "credit":
-            continue
-        counts[tx.ym] += 1
-        buckets[tx.ym]["parsed_gross"] += tx.amount
-        buckets[tx.ym][tx.category] += tx.amount
 
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN ENTRY POINT
+# ════════════════════════════════════════════════════════════════════════════
+def parse_transactions(pdf_bytes: bytes, password: str = "") -> tuple[dict, dict, str, str]:
+    """
+    Returns (buckets, summary_credits, bank_name, account_name)
+    buckets: {ym: {gross, count, self_transfer, reversal, non_business, loan_disbursal, real_credit}}
+    """
+    full_text = extract_pdf_text(pdf_bytes, password)
+    bank = detect_bank(full_text)
+    summary = parse_summary_credits(full_text)
+
+    if bank == "OPay":
+        buckets, account_name = parse_opay(full_text)
+    elif bank == "Zenith":
+        buckets, account_name = parse_zenith(full_text)
+    else:
+        buckets, account_name = parse_generic(full_text)
+
+    return buckets, summary, bank, account_name
+
+
+def monthly_analysis(buckets: dict, summary: dict | None = None) -> list[dict]:
     rows = []
-    months = sorted(set(buckets) | set(summary_credits or {}))
-    for ym in months:
-        bucket = buckets[ym]
-        gross = (summary_credits or {}).get(ym, bucket["parsed_gross"])
-        deductions = (
-            bucket["self_transfer"]
-            + bucket["reversal"]
-            + bucket["non_business"]
-            + bucket["loan_disbursal"]
-        )
-        rows.append(
-            {
-                "ym": ym,
-                "gross": gross,
-                "parsed_gross": bucket["parsed_gross"],
-                "self_transfer": bucket["self_transfer"],
-                "reversal": bucket["reversal"],
-                "non_business": bucket["non_business"],
-                "loan_disbursal": bucket["loan_disbursal"],
-                "deductions": deductions,
-                "eligible_income": max(gross - deductions, 0),
-                "count": int(counts[ym]),
-            }
-        )
+    for ym in sorted(set(buckets) | set(summary or {})):
+        b = buckets.get(ym, _empty_bucket())
+        gross = (summary or {}).get(ym, b["gross"])
+        deductions = (b.get("self_transfer", 0) + b.get("reversal", 0) +
+                      b.get("non_business", 0) + b.get("loan_disbursal", 0))
+        rows.append({
+            "ym": ym,
+            "label": ym_label(ym),
+            "gross": gross,
+            "parsed_gross": b["gross"],
+            "self_transfer": b.get("self_transfer", 0),
+            "reversal": b.get("reversal", 0),
+            "non_business": b.get("non_business", 0),
+            "loan_disbursal": b.get("loan_disbursal", 0),
+            "deductions": deductions,
+            "eligible_income": max(gross - deductions, 0),
+            "count": b.get("count", 0),
+        })
     return rows
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FIRSTCENTRAL CREDIT BUREAU PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_firstcentral(pdf_bytes: bytes, password: str = "") -> dict:
+    full_text = extract_pdf_text(pdf_bytes, password)
+
+    STATUS_VALS = r"Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff"
+    CLASS_VALS  = r"Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing"
+
+    heading_re = re.compile(
+        r'Details of Credit Agreement with "([^"]+)" for Account Number:\s*'
+        r'([^\n\r]+(?:-\r?\n\s*[^\n\r]+)?)'
+    )
+    matches    = list(heading_re.finditer(full_text))
+    detail_map: dict[str, dict] = {}
+
+    def _fv(text: str, pattern: str) -> str:
+        m = re.search(pattern, text, re.I)
+        return m.group(1).strip() if m else ""
+
+    for i, match in enumerate(matches):
+        subscriber = match.group(1).strip()
+        acct_no    = re.sub(r"[\s\r\n]+", "", match.group(2)).strip()
+        if not acct_no:
+            continue
+        block_end  = matches[i+1].index if i < len(matches)-1 else min(len(full_text), match.index+5000)
+        window     = re.sub(r"\s+", " ", full_text[match.index:block_end]).strip()
+
+        acct_sts = (_fv(window, f"Account Status.{{0,60}}?({STATUS_VALS})") or
+                    _fv(window, f"({STATUS_VALS})\\s+Account Status"))
+        fac_cls  = (_fv(window, f"Facility Classification.{{0,60}}?({CLASS_VALS})") or
+                    _fv(window, f"({CLASS_VALS})\\s+Facility Classification"))
+        instl    = _parse_currency(
+            _fv(window, r"Instalment Amount\s+([\d,]+\.\d{2})") or
+            _fv(window, r"([\d,]+\.\d{2})\s+Instalment Amount"))
+        outst    = _parse_currency(
+            _fv(window, r"Current Balance\s+([\d,]+\.\d{2})") or
+            _fv(window, r"([\d,]+\.\d{2})\s+Current Balance"))
+        dur_raw  = (_fv(window, r"Loan Duration\s+((?:\d+)|(?:Not Available))\s+Day\(s\)") or
+                    _fv(window, r"((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration") or
+                    "Not Available")
+
+        detail_map[acct_no] = {
+            "subscriber": subscriber,
+            "account_status": acct_sts or "Unknown",
+            "facility_classification": fac_cls or "Unknown",
+            "instalment_amount": instl,
+            "outstanding_balance": outst,
+            "loan_duration_days": dur_raw,
+            "tenor_months": _get_tenor_months(dur_raw),
+        }
+
+    # Summary table fallback
+    summary_map: dict[str, dict] = {}
+    sum_start = full_text.find("Credit Agreements Summary")
+    det_start = full_text.find("Details of Credit Agreement with")
+    if sum_start >= 0 and det_start > sum_start:
+        sumtext = re.sub(r"\s+", " ", full_text[sum_start:det_start]).strip()
+        for acct_no, detail in detail_map.items():
+            idx = sumtext.find(acct_no)
+            if idx < 0:
+                continue
+            cs  = max(0, idx-250)
+            ce  = min(len(sumtext), idx+250)
+            ctx = sumtext[cs:ce]
+            ap  = idx - cs
+            figs = [float(m.group().replace(",","")) for m in re.finditer(r"[\d,]+\.\d{2}", ctx)]
+            pc  = [m[0] for m in re.finditer(f"({CLASS_VALS})", ctx, re.I) if m.start() > ap]
+            ps  = [m[0] for m in re.finditer(f"({STATUS_VALS})", ctx, re.I) if m.start() > ap]
+            ac  = [m[0] for m in re.finditer(f"({CLASS_VALS})", ctx, re.I)]
+            as_ = [m[0] for m in re.finditer(f"({STATUS_VALS})", ctx, re.I)]
+            arr, ins, out, avl = 0, 0, 0, 0
+            if len(figs) >= 4: arr, ins, out, avl = figs[:4]
+            elif len(figs) == 3: arr, ins, out = figs[:3]
+            elif len(figs) == 2: arr, ins = figs[:2]
+            elif len(figs) == 1: arr = figs[0]
+            summary_map[acct_no] = {
+                "facility_classification": ((pc or ac or ["Unknown"])[0]).strip(),
+                "account_status": ((ps or as_ or ["Unknown"])[0]).strip(),
+                "instalment_amount": ins, "outstanding_balance": out,
+                "arrear_amount": arr, "availed_limit": avl,
+                "figure_count": len(figs),
+            }
+
+    records: list[CreditAccount] = []
+    seen: set[str] = set()
+    for acct_no, det in detail_map.items():
+        if acct_no in seen:
+            continue
+        seen.add(acct_no)
+        sm = summary_map.get(acct_no, {})
+        fac_cls = det["facility_classification"] if det["facility_classification"] != "Unknown" else sm.get("facility_classification","Unknown")
+        acct_sts= det["account_status"] if det["account_status"] != "Unknown" else sm.get("account_status","Unknown")
+        fc      = sm.get("figure_count", 0)
+        instl   = det["instalment_amount"] if det["instalment_amount"] > 0 else (sm.get("instalment_amount",0) if fc >= 3 else 0)
+        outst   = det["outstanding_balance"] if det["outstanding_balance"] > 0 else (sm.get("outstanding_balance",0) if fc >= 3 else 0)
+        arrear  = sm.get("arrear_amount", 0)
+        tenor   = det["tenor_months"] or _get_tenor_months(det["loan_duration_days"])
+
+        sn = re.sub(r"[^a-z]", "", acct_sts.lower())
+        cn = re.sub(r"[^a-z]", "", fac_cls.lower())
+        is_closed = sn == "closed"
+        is_bad = (sn in ("open","writtenoff","lostwrittenoff") and
+                  cn in ("lost","derogatory","delinquent","nonperforming") and
+                  (outst > 10000 or arrear > 10000))
+        is_perf = sn == "open" and cn == "performing"
+        mo, drv = 0.0, False
+        if is_perf:
+            if instl > 0: mo = instl
+            elif outst > 0 and tenor: mo = outst / tenor; drv = True
+
+        records.append(CreditAccount(
+            subscriber_name=det["subscriber"], account_number=acct_no,
+            account_status=acct_sts, facility_classification=fac_cls,
+            instalment_amount=instl, outstanding_balance=outst,
+            loan_duration_days=det["loan_duration_days"], tenor_months=tenor,
+            monthly_obligation=mo, derived_from_balance=drv,
+            include_in_obligation=mo > 0, is_closed=is_closed, is_bad_credit=is_bad,
+        ))
+
+    visible = [r for r in records if not r.is_closed]
+    return {
+        "records": visible,
+        "total_monthly_obligation": sum(r.monthly_obligation for r in visible if r.include_in_obligation),
+        "bad_credit_accounts": [r for r in visible if r.is_bad_credit],
+    }
