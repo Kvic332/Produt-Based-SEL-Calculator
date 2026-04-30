@@ -321,46 +321,67 @@ def parse_opay(full_text: str) -> tuple[dict, str]:
 def parse_zenith(full_text: str) -> tuple[dict, str]:
     buckets: dict = {}
     account_name = _extract_account_name(full_text)
+
     in_tx = False
-    current: list[str] = []
+    current_lines: list[str] = []
 
     def process(lines: list[str]) -> None:
         full = " ".join(lines)
-        m = ZENITH_ROW.match(full)
+
+        # Match date at start
+        m = re.match(r"^(\d{2}/\d{2}/\d{4})", full)
         if not m:
             return
+
         parts = m.group(1).split("/")
-        ym    = f"{parts[2]}-{parts[1]}"
-        rest  = m.group(3)
-        money = list(re.finditer(r"[\d,]+\.\d{2}", rest))
-        if len(money) < 2:
+        ym = f"{parts[2]}-{parts[1]}"
+
+        # Extract all monetary values
+        money = list(re.finditer(r"[\d,]+\.\d{2}", full))
+        if len(money) < 3:
             return
-        amount_m  = money[-2]
-        amount    = float(amount_m.group().replace(",", ""))
-        narration = rest[:amount_m.start()].strip()
-        lower     = narration.lower()
-        is_rev = bool(re.search(r"\*+rsvl\b|\brsvl\b", lower))
-        is_cr  = bool(re.search(r"\b(?:nip\s*cr|cip\s*cr|inflow|etz\s+inflow)\b", lower)) or is_rev
-        is_chg = bool(re.search(r"\b(?:stamp duty|sms alert|vat charge|charge\+vat|levy)\b", lower))
-        if not is_cr or (is_chg and not is_rev):
+
+        try:
+            # Zenith format: DEBIT CREDIT BALANCE
+            debit  = float(money[-3].group().replace(",", ""))
+            credit = float(money[-2].group().replace(",", ""))
+            # balance = money[-1]  # not needed
+        except Exception:
             return
-        add_credit(buckets, ym, amount, narration, account_name)
+
+        # Only process credits
+        if credit <= 0:
+            return
+
+        narration = full[m.end():money[-3].start()].strip()
+
+        add_credit(buckets, ym, credit, narration, account_name)
 
     for line in full_text.splitlines():
         line = line.strip()
-        if "Tran Date Value Date Narration" in line:
+
+        # Detect start of transaction table
+        if "DATE POSTED VALUE DATE DESCRIPTION" in line.upper():
             in_tx = True
             continue
-        if not in_tx:
+
+        if not in_tx or not line:
             continue
-        if ZENITH_ROW.match(line):
-            if current:
-                process(current)
-            current = [line]
-        elif current and not line.startswith(("mybankStatement", "Tran Date")):
-            current.append(line)
-    if current:
-        process(current)
+
+        # If line starts with date → new transaction
+        if re.match(r"^\d{2}/\d{2}/\d{4}", line):
+            if current_lines:
+                process(current_lines)
+            current_lines = [line]
+        else:
+            # continuation of previous line (multi-line description)
+            if current_lines:
+                current_lines.append(line)
+
+    # process last block
+    if current_lines:
+        process(current_lines)
+
     return buckets, account_name
 
 
