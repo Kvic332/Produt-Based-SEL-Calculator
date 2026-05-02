@@ -297,18 +297,42 @@ def detect_bank(text: str) -> str:
         return "FairMoney"
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
-    if "mybankstatement" in t or "tran date value date narration" in t:
-        return "Zenith"
+    # ── mybankStatement-format banks ─────────────────────────────────────
+    # These banks all share the mybankStatement PDF engine which renders
+    # explicit Debit/Credit columns and hyphen or slash date separators.
+    # They MUST all be checked BEFORE the generic "mybankstatement" check
+    # below, otherwise they'd get misrouted to parse_zenith().
+    if "guaranty trust" in t or "gtbank" in t or "gt bank" in t or "gtco" in t:
+        return "GTBank"
+    if "access bank" in t:
+        return "Access"
+    if "first bank" in t or "firstbank" in t:
+        return "FirstBank"
+    if "united bank for africa" in t or ("uba" in t and "mybankstatement" in t):
+        return "UBA"
+    if "fidelity bank" in t:
+        return "Fidelity"
+    if "union bank" in t:
+        return "Union"
+    if "stanbic ibtc" in t or "stanbic" in t:
+        return "Stanbic"
+    if "fcmb" in t or "first city monument bank" in t:
+        return "FCMB"
+    if "wema" in t:
+        return "Wema"
+    if "sterling bank" in t:
+        return "Sterling"
+    # ── Zenith (mybankstatement is Zenith-specific only after above ruled out) ──
     if "date posted" in t and "value date" in t and "zenith" in t:
         return "Zenith_Corporate"
+    if "mybankstatement" in t or "tran date value date narration" in t:
+        return "Zenith"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
         return "Moniepoint"
     if "kuda mf bank" in t or "kudabank" in t:
         return "Kuda"
     if "palmpay" in t:
         return "PalmPay"
-    if "guaranty trust" in t or "gtbank" in t or "gt bank" in t:
-        return "GTBank"
     if "access bank" in t:
         return "Access"
     if "united bank for africa" in t:
@@ -423,8 +447,119 @@ def parse_zenith(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
+def parse_gtbank(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for all mybankStatement-engine banks: GTBank/GTCO, Access Bank,
+    First Bank, UBA, Fidelity, Union Bank, Stanbic IBTC, FCMB, Wema, Sterling.
+
+    These banks share the mybankStatement PDF platform which produces a
+    consistent format with explicit Debit and Credit columns:
+
+        Tran. date   Value date   Transaction details   Debit   Credit   Balance
+        10-01-2025   10-01-2025   TRANSFER FROM FATHIA  0.00    50,000   129,678.71
+
+    Key characteristics:
+    - Date separators vary by bank/vintage: hyphens (10-01-2025) or slashes (10/01/2025)
+    - Explicit Debit/Credit columns — credit rows have 0.00 in Debit column
+    - Narrations are multi-line (continuation lines carry no date)
+    - mybankStatement watermark appears on every page
+
+    Credits are identified by the three-number tail (debit, credit, balance)
+    where debit == 0.00 and credit > 0. This is more reliable than balance-
+    delta inference (parse_generic) which breaks across page boundaries and
+    on multi-line narrations.
+    """
+    buckets: dict = {}
+    account_name = _extract_account_name(full_text)
+
+    # GTBank date format in transactions: DD-MM-YYYY or DD/MM/YYYY
+    GTB_DATE = re.compile(r"^(\d{2}[-/]\d{2}[-/]\d{4})")
+    MONEY3   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
+
+    in_tx          = False
+    pending_ym     = ""
+    pending_narr   = ""
+    pending_credit = 0.0
+
+    def _flush() -> None:
+        nonlocal pending_ym, pending_narr, pending_credit
+        if pending_credit > 0:
+            add_credit(buckets, pending_ym, pending_credit,
+                       pending_narr.strip(), account_name)
+        pending_ym = pending_narr = ""
+        pending_credit = 0.0
+
+    for line in full_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Detect transaction section header
+        if re.search(r"tran\.?\s*date|value\s*date|transaction\s*details", line, re.I):
+            in_tx = True
+            continue
+        # Skip mybankStatement watermark lines and page headers
+        if re.search(r"mybankstatement|guaranty trust|gtbank|rc no\.", line, re.I):
+            continue
+
+        if not in_tx:
+            continue
+
+        date_m = GTB_DATE.match(line)
+        if date_m:
+            _flush()
+            raw_date = date_m.group(1).replace("-", "/")
+            parts    = raw_date.split("/")
+            pending_ym = f"{parts[2]}-{parts[1]}"
+
+            # Check if this line already has all 3 money amounts (debit/credit/balance)
+            m3 = MONEY3.search(line)
+            if m3:
+                debit  = float(m3.group(1).replace(",", ""))
+                credit = float(m3.group(2).replace(",", ""))
+                narr   = line[date_m.end(): m3.start()].strip()
+                # Strip leading value-date (second date on same line)
+                narr   = re.sub(r"^\d{2}[-/]\d{2}[-/]\d{4}\s*", "", narr).strip()
+                if credit > 0 and debit == 0:
+                    pending_credit = credit
+                    pending_narr   = narr
+                else:
+                    # Debit row — flush immediately with no credit
+                    pending_credit = 0.0
+                    pending_narr   = ""
+            else:
+                # Narration continues on next lines
+                narr_start = line[date_m.end():].strip()
+                narr_start = re.sub(r"^\d{2}[-/]\d{2}[-/]\d{4}\s*", "", narr_start).strip()
+                pending_narr   = narr_start
+                pending_credit = 0.0  # will be set when we find the amounts
+        else:
+            # Continuation line: might complete the money amounts or add to narration
+            if not pending_ym:
+                continue
+            m3 = MONEY3.search(line)
+            if m3 and pending_credit == 0.0:
+                # This continuation line has the debit/credit/balance amounts
+                debit  = float(m3.group(1).replace(",", ""))
+                credit = float(m3.group(2).replace(",", ""))
+                narr_extra = line[:m3.start()].strip()
+                pending_narr = (pending_narr + " " + narr_extra).strip()
+                if credit > 0 and debit == 0:
+                    pending_credit = credit
+                else:
+                    # It's a debit — discard
+                    pending_credit = 0.0
+                    pending_narr   = ""
+            elif not m3:
+                # Pure narration continuation
+                pending_narr += " " + line
+
+    _flush()
+    return buckets, account_name
+
+
 def parse_generic(full_text: str) -> tuple[dict, str]:
-    """Balance-movement parser for GTBank, Access, UBA, FirstBank, Sterling, etc."""
+    """Balance-movement parser for Access, UBA, FirstBank, Sterling, etc."""
     buckets: dict = {}
     account_name  = _extract_account_name(full_text)
     prev_balance: Optional[Decimal] = None
@@ -737,19 +872,156 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
     return None
 
 
-def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
-    if not OPENPYXL_AVAILABLE:
-        raise ImportError("openpyxl is required for Excel parsing. Add it to requirements.txt")
+def _parse_excel_direct(file_bytes: bytes) -> tuple[dict, str]:
+    """
+    Fallback Excel parser using zipfile + lxml — bypasses openpyxl's stylesheet
+    parser entirely. Handles files with invalid/missing stylesheet XML that
+    openpyxl refuses to open (e.g. Moniepoint Business exports).
 
-    import io
-    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-    ws = wb.active
-    rows = [[cell.value for cell in row] for row in ws.iter_rows()]
-    wb.close()
+    Reads xl/sharedStrings.xml and xl/worksheets/sheet1.xml directly.
+    Uses column letter references (A, B, J…) instead of positional indices
+    so non-contiguous column layouts (common in Moniepoint Business) are
+    handled correctly.
+    """
+    import zipfile
+    import datetime as _dt
+    from lxml import etree as _etree
+
+    NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ns = {"s": NS}
+
+    def _col_letter(cell_ref: str) -> str:
+        return re.match(r"([A-Z]+)", cell_ref).group(1)
+
+    def _serial_to_ym(val: str) -> Optional[str]:
+        try:
+            f = float(val)
+            if not (40000 < f < 70000):
+                return None
+            base = _dt.date(1899, 12, 30)
+            d = base + _dt.timedelta(days=int(f))
+            return f"{d.year}-{str(d.month).zfill(2)}"
+        except Exception:
+            return None
+
+    with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
+        # ── Shared strings ────────────────────────────────────────────────
+        shared: list[str] = []
+        with zf.open("xl/sharedStrings.xml") as f:
+            tree = _etree.parse(f)
+            for si in tree.findall(".//s:si", ns):
+                texts = si.findall(".//s:t", ns)
+                shared.append("".join(t.text or "" for t in texts))
+
+        # ── Sheet data ────────────────────────────────────────────────────
+        with zf.open("xl/worksheets/sheet1.xml") as f:
+            tree = _etree.parse(f)
+        xml_rows = tree.findall(".//s:row", ns)
+
+    def _row_dict(xml_row) -> dict[str, str]:
+        """Return {col_letter: value} for one XML row."""
+        d: dict[str, str] = {}
+        for c in xml_row.findall("s:c", ns):
+            ref = c.get("r", "")
+            if not ref:
+                continue
+            t_attr = c.get("t", "n")
+            v_el = c.find("s:v", ns)
+            val = ""
+            if v_el is not None and v_el.text:
+                val = shared[int(v_el.text)] if t_attr == "s" else v_el.text
+            d[_col_letter(ref)] = val
+        return d
+
+    # ── Account name (scan first 10 rows) ─────────────────────────────────
+    account_name = ""
+    for xml_row in xml_rows[:10]:
+        rd = _row_dict(xml_row)
+        cols = sorted(rd.keys())
+        for i, col in enumerate(cols):
+            if "account name" in rd[col].lower():
+                # value is in the next non-empty column on the same row
+                for next_col in cols[i + 1:]:
+                    nv = rd[next_col].strip(" -")
+                    if nv:
+                        account_name = nv
+                        break
+                break
+        if account_name:
+            break
+
+    # ── Find header row ───────────────────────────────────────────────────
+    hdr_row_idx = None
+    date_col = credit_col = narr_col = None
+    for i, xml_row in enumerate(xml_rows):
+        rd = _row_dict(xml_row)
+        inv = {v.lower().strip(): col for col, v in rd.items() if v.strip()}
+        if "date" in inv and "credit" in inv and "debit" in inv:
+            hdr_row_idx = i
+            date_col   = inv["date"]
+            credit_col = inv["credit"]
+            narr_col   = inv.get("narration") or inv.get("description") or inv.get("details")
+            break
+
+    if hdr_row_idx is None:
+        raise ValueError("Could not find header row (Date/Credit/Debit) in Excel file.")
+
+    # ── Parse credit rows ─────────────────────────────────────────────────
+    buckets: dict = {}
+    for xml_row in xml_rows[hdr_row_idx + 1:]:
+        rd = _row_dict(xml_row)
+        date_raw   = rd.get(date_col, "")
+        credit_raw = rd.get(credit_col, "")
+        if not date_raw or not credit_raw:
+            continue
+        try:
+            credit = float(str(credit_raw).replace(",", ""))
+        except ValueError:
+            continue
+        if credit <= 0:
+            continue
+        # Date: try serial first (Moniepoint Business), then ISO/DD-MM-YYYY strings
+        ym = _serial_to_ym(date_raw)
+        if not ym:
+            m = re.match(r"^(20\d{2})-(\d{2})", date_raw)
+            if m:
+                ym = f"{m.group(1)}-{m.group(2)}"
+            else:
+                m = re.match(r"^(\d{2})/(\d{2})/(20\d{2})", date_raw)
+                ym = f"{m.group(3)}-{m.group(2)}" if m else None
+        if not ym:
+            continue
+        narration = rd.get(narr_col, "").strip() if narr_col else ""
+        add_credit(buckets, ym, credit, narration, account_name)
+
+    return buckets, account_name
+
+
+def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
+    """
+    Parse an Excel bank statement.
+    Primary path: openpyxl (handles most files).
+    Fallback path: direct zip+lxml parsing for files where openpyxl fails
+    due to an invalid/corrupt stylesheet XML (e.g. Moniepoint Business exports).
+    """
+    # ── Try openpyxl first ────────────────────────────────────────────────
+    if OPENPYXL_AVAILABLE:
+        try:
+            import io
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+            ws = wb.active
+            rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+            wb.close()
+        except Exception:
+            # Stylesheet or other XML error — fall through to direct parser
+            return _parse_excel_direct(file_bytes)
+    else:
+        return _parse_excel_direct(file_bytes)
 
     fmt = _detect_excel_format(rows)
     if not fmt:
-        raise ValueError("Could not detect Excel statement format. Supported: Mono, Moniepoint Business.")
+        # openpyxl loaded OK but format unrecognised — try direct parser
+        return _parse_excel_direct(file_bytes)
 
     account_name = ""
     for row in rows[:fmt["hdr_idx"]]:
@@ -832,10 +1104,19 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     bank = detect_bank(full_text)
     summary = parse_summary_credits(full_text)
 
+    # mybankStatement-engine banks all share the same explicit Debit/Credit
+    # column format and are handled by parse_gtbank regardless of bank name.
+    _MYBANKSTATEMENT_BANKS = {
+        "GTBank", "Access", "FirstBank", "UBA",
+        "Fidelity", "Union", "Stanbic", "FCMB", "Wema", "Sterling",
+    }
+
     if bank == "FairMoney":
         buckets, account_name = parse_fairmoney(full_text)
     elif bank == "OPay":
         buckets, account_name = parse_opay(full_text)
+    elif bank in _MYBANKSTATEMENT_BANKS:
+        buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
         buckets, account_name = parse_zenith(full_text)
     elif bank == "Zenith_Corporate":
