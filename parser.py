@@ -293,7 +293,7 @@ def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
 # ════════════════════════════════════════════════════════════════════════════
 def detect_bank(text: str) -> str:
     t = text.lower()
-    if "fairmoney mfb" in t or "fairmoney microfinance" in t:
+    if ("fairmoney mfb" in t or "fairmoney microfinance" in t) and "mybankstatement" not in t:
         return "FairMoney"
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
@@ -472,12 +472,22 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
     GTB_DATE = re.compile(r"^(\d{2}[-/]\d{2}[-/]\d{4})")
     MONEY3   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
     MONEY2   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
+    DATE_ORDER = "dmy"
+    period_m = re.search(
+        r"\bPeriod\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s*20\d{2}",
+        full_text,
+        re.I,
+    )
+    if period_m:
+        first_date_m = re.search(r"\n\s*(\d{2})[-/](\d{2})[-/](20\d{2})", full_text)
+        if first_date_m and int(first_date_m.group(1)) == MONTH_MAP[period_m.group(1).lower()[:3]]:
+            DATE_ORDER = "mdy"
 
     # Skip lines that ARE page headers — anchored so narrations mentioning
     # "GTBank" or "Access Bank" in the text are NOT accidentally dropped.
     SKIP_HDR = re.compile(
         r"^(?:mybankstatement|guaranty trust bank|first bank|access bank plc|"
-        r"united bank for africa|fidelity bank|union bank|stanbic|fcmb|"
+        r"united bank for africa|fidelity bank|union bank|stanbic\s+(?:ibtc\s+)?bank|fcmb(?:\s|$)|"
         r"wema bank|sterling bank|gtco|rc no\.|"
         r"account\s+(?:name|no\.?|number|type|branch|currency|sort)|"
         r"available\s+balance|book\s+balance|total\s+(?:debit|credit)|"
@@ -571,7 +581,11 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
         if date_m:
             _flush()
             raw_date   = date_m.group(1).replace("-", "/")
-            dd, mm, yy = raw_date.split("/")
+            p1, p2, yy = raw_date.split("/")
+            if DATE_ORDER == "mdy" or (int(p2) > 12 >= int(p1)):
+                mm = p1
+            else:
+                mm = p2
             pending_ym = f"{yy}-{mm}"
 
             # Everything after the transaction date (strip optional value-date)
@@ -845,7 +859,7 @@ def parse_fairmoney(full_text: str) -> tuple[dict, str]:
 def parse_summary_credits(full_text: str) -> dict[str, float]:
     summary: dict[str, float] = {}
     pat = re.compile(
-        r"\b(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\b(20\d{2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
         r"\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})", re.I,
     )
     for m in pat.finditer(full_text.replace("\n", " ")):
