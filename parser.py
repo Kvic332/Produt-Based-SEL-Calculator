@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
@@ -288,11 +289,37 @@ def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
+def extract_pdf_text_layout(pdf_bytes: bytes) -> str:
+    """
+    Extract PDF text preserving spatial column layout using pdftotext -layout.
+    Required for PDFs where amounts are in fixed-width columns (e.g. OPay v2).
+    Returns empty string if pdftotext is unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", "-", "-"],
+            input=pdf_bytes,
+            capture_output=True,
+            timeout=30,
+        )
+        return result.stdout.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # BANK DETECTION
 # ════════════════════════════════════════════════════════════════════════════
 def detect_bank(text: str) -> str:
     t = text.lower()
+    # ── OPay v2: new "Account Statement" format with Trans. Time column ──
+    # Must be checked FIRST — before FairMoney — because OPay transaction
+    # narrations often contain "FairMoney MFB" (transfer-from counterparty),
+    # which would otherwise trigger a false FairMoney detection.
+    # The "trans. time" column header is unique to the OPay v2 layout.
+    if ("trans. time" in t and
+            ("opay digital" in t or "wallet account" in t or "9payment service" in t)):
+        return "OPay_v2"
     if ("fairmoney mfb" in t or "fairmoney microfinance" in t) and "mybankstatement" not in t:
         return "FairMoney"
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
@@ -398,6 +425,145 @@ def parse_opay(full_text: str) -> tuple[dict, str]:
         narration = re.sub(r"--\s*$", "", before_amt).strip()
         narration = re.sub(r"\s+Mobile\S*$", "", narration).strip()
         add_credit(buckets, ym, amount, narration, account_name)
+    return buckets, account_name
+
+
+def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
+    """
+    Parser for the OPay "Account Statement" format (2025+).
+
+    Layout characteristics:
+    - Header: Trans. Time | Value Date | Description | Debit(₦) | Credit(₦) | Balance After(₦) | Channel
+    - Each transaction occupies one anchor line (date/time at the start) plus
+      optional description fragment lines before and after it.
+    - The debit / credit / balance / channel columns occupy fixed character
+      positions starting around column 88 of the pdftotext -layout output.
+    - Null values in numeric columns are rendered as "--".
+    - Channel keyword ("Mobile", "POS", "Web", etc.) always follows the three
+      numeric columns, making AMOUNTS_PAT reliable for anchor detection.
+    - The PDF contains TWO account sections:
+        1. Wallet Account  (the main transactional account)
+        2. Savings Account (the OWealth sub-account — interest + round-trips)
+      We parse only the first section, stopping when the second "Trans. Time"
+      header (or "Savings Account" label) is encountered.
+
+    Requires pdftotext (poppler-utils) installed on the host.
+    Falls back gracefully to an empty result if pdftotext is unavailable.
+    """
+    # ── Layout-preserved text via pdftotext -layout ───────────────────────
+    layout_text = extract_pdf_text_layout(pdf_bytes)
+    if not layout_text:
+        return {}, ""
+
+    # ── Patterns ──────────────────────────────────────────────────────────
+    # Anchor line: starts with 0–4 spaces then DD Mon YYYY HH:MM:SS
+    DATE_LINE = re.compile(
+        r"^\s{0,4}(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}",
+        re.I,
+    )
+    # Three amount tokens (-- or N,NNN.NN) followed by a channel keyword.
+    # This anchors on the channel word so it works regardless of how much
+    # the description overflows into the amounts region.
+    AMOUNTS_PAT = re.compile(
+        r"([\d,]+\.\d{2}|--)\s+([\d,]+\.\d{2}|--)\s+([\d,]+\.\d{2})\s+"
+        r"(?:Mobile|POS|Web|USSD|ATM|Agent)",
+        re.I,
+    )
+    # Description continuation: deeply indented (36+ spaces), non-blank.
+    DESC_CONT  = re.compile(r"^\s{36,}(\S.*)$")
+    # Strip trailing transaction-reference digit runs from continuation lines.
+    TRAIL_REF  = re.compile(r"\s+\d{10,}\s*$")
+    # Section boundary markers.
+    TRANS_TIME = re.compile(r"Trans\.\s*Time", re.I)
+    SECTION_END = re.compile(r"Savings Account", re.I)
+
+    # ── Account name ──────────────────────────────────────────────────────
+    # OPay v2 layout: the "Account Name" label and "Account Number" label
+    # appear on the same header line; the actual name value appears on the
+    # NEXT line at the far-left column (before the account number).
+    account_name = ""
+    layout_lines = layout_text.splitlines()
+    for i, line in enumerate(layout_lines):
+        if "Account Name" in line and "Account Number" in line:
+            for j in range(i + 1, min(i + 5, len(layout_lines))):
+                val = layout_lines[j][:50].strip()
+                if val and re.match(r"^[A-Z][A-Z ]{3,}$", val):
+                    account_name = val
+                    break
+            break
+    if not account_name:
+        account_name = _extract_account_name(layout_text)
+
+    # ── Parse main Wallet section only ────────────────────────────────────
+    lines = layout_text.splitlines()
+    buckets: dict = {}
+    pre_desc: list[str] = []   # description fragments accumulating BEFORE the date line
+    state = "pre"              # "pre" = before date line, "post" = after date line
+    section_count = 0
+    in_tx = False
+
+    for line in lines:
+        # Section boundary detection
+        if TRANS_TIME.search(line):
+            section_count += 1
+            if section_count > 1:
+                break           # Enter OWealth/Savings section — stop
+            in_tx = True
+            pre_desc = []
+            state = "pre"
+            continue
+
+        if SECTION_END.search(line):
+            break               # Belt-and-suspenders stop
+
+        if not in_tx:
+            continue
+
+        # ── Transaction anchor line ───────────────────────────────────────
+        m = DATE_LINE.match(line)
+        if m:
+            mon  = m.group(2).lower()[:3]
+            year = m.group(3)
+            ym   = f"{year}-{MONTH_NUM[mon]}"
+
+            amt_m = AMOUNTS_PAT.search(line)
+            if amt_m:
+                credit_tok = amt_m.group(2)
+                credit = (0.0 if credit_tok == "--"
+                          else float(credit_tok.replace(",", "")))
+                # Description: text between value-date end (col ~38) and
+                # the start of the amounts block.
+                inline_desc = line[38:amt_m.start()].strip()
+                parts = pre_desc[:]
+                if inline_desc:
+                    parts.append(inline_desc)
+                full_desc = " ".join(parts).strip()
+                if credit > 0:
+                    add_credit(buckets, ym, credit, full_desc, account_name)
+
+            pre_desc = []
+            state = "post"
+            continue
+
+        # ── Non-anchor line ───────────────────────────────────────────────
+        stripped = line.strip()
+        if not stripped:
+            pre_desc = []
+            state = "pre"
+            continue
+
+        dm = DESC_CONT.match(line)
+        if dm:
+            text = TRAIL_REF.sub("", dm.group(1)).strip()
+            # Only collect non-empty, non-digit-only continuation lines
+            if text and not re.match(r"^[\d\s]+$", text):
+                if state == "pre":
+                    # Pre-description: belongs to the next date line
+                    pre_desc.append(text)
+                # Post-description lines (after the date line) are
+                # transaction-ref overflows — discard them.
+
     return buckets, account_name
 
 
@@ -1182,6 +1348,10 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_fairmoney(full_text)
     elif bank == "OPay":
         buckets, account_name = parse_opay(full_text)
+    elif bank == "OPay_v2":
+        # New OPay "Account Statement" format — requires pdftotext -layout
+        # for accurate column-aligned extraction.
+        buckets, account_name = parse_opay_v2(file_bytes)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
