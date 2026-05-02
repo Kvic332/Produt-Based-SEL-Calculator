@@ -151,7 +151,7 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
         if name_parts:
             verb_m = re.search(
                 r"\b(transfer from|transferred from|trf from|trf frm|"
-                r"tfr from|from|frm)\b",
+                r"tfr from|transfer frm|trfr from)\b",
                 text,
             )
             if verb_m:
@@ -242,6 +242,8 @@ def detect_bank(text: str) -> str:
         return "OPay"
     if "mybankstatement" in t or "tran date value date narration" in t:
         return "Zenith"
+    if "date posted" in t and "value date" in t and "zenith" in t:
+        return "Zenith_Corporate"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
         return "Moniepoint"
     if "kuda mf bank" in t or "kudabank" in t:
@@ -412,6 +414,113 @@ def parse_generic(full_text: str) -> tuple[dict, str]:
 
     return buckets, account_name
 
+
+
+def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
+    """
+    Zenith Bank corporate/BOP statement format.
+    Columns: DATE POSTED  VALUE DATE  DESCRIPTION  DEBIT  CREDIT  BALANCE
+    Key differences from mybankStatement:
+    - Has explicit DEBIT and CREDIT columns (one is always 0.00)
+    - Header says 'DATE POSTED VALUE DATE DESCRIPTION DEBIT CREDIT BALANCE'
+    - Long narrations wrap onto the next line
+    """
+    buckets: dict = {}
+    # Corporate statements have company name at top, not "Account Name"
+    # Try standard extraction first
+    account_name = _extract_account_name(full_text)
+    if not account_name:
+        # Fall back to first all-caps line in document
+        name_m = re.search(r'^([A-Z][A-Z &]+(?:ENTERPRISES|LIMITED|LTD|COMPANY|CO\.?|PLC|NIG|NIGERIA))',
+                            full_text, re.MULTILINE)
+        account_name = name_m.group(1).strip() if name_m else "Unknown"
+    # Clean up trailing junk (e.g. " Account Number: ...")
+    account_name = re.sub(r'\s+(Account|Number|Currency|CA|NGN).*$', '', account_name, flags=re.I).strip()
+
+    MONEY       = r'[\d,]+\.\d{2}'
+    DATE_START  = re.compile(r'^\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s*')
+    THREE_NUMS  = re.compile(rf'({MONEY})\s+({MONEY})\s+({MONEY})\s*$')
+
+    lines  = full_text.splitlines()
+    in_tx  = False
+    joined = []
+    i      = 0
+
+    def _fix_concat(line: str) -> str:
+        """Fix PDF.js concatenation artifacts where narration runs into amount.
+        e.g. 'DS82577120.00' -> 'DS8257712 0.00'
+             'OMOSHALEWA0.00' -> 'OMOSHALEWA 0.00'
+             'Owolabi/ABN35,000.00' -> 'Owolabi/ABN 35,000.00'
+        """
+        # Fix digit-run concatenated with 0.00 (reference codes, DS numbers)
+        line = re.sub(r'(\d{6,})(0\.\d{2})', r'\1 \2', line)
+        # Fix alphabetic text directly concatenated with a money amount
+        line = re.sub(r'([A-Za-z/])(\d+\.\d{2})', r'\1 \2', line)
+        line = re.sub(r'([A-Za-z/])(\d{1,3}(?:,\d{3})+\.\d{2})', r'\1 \2', line)
+        return line
+
+    while i < len(lines):
+        line = lines[i]
+        if 'DATE POSTED' in line and 'VALUE DATE' in line:
+            in_tx = True
+            i += 1
+            continue
+        if not in_tx:
+            i += 1
+            continue
+
+        dm = DATE_START.match(line)
+        if dm:
+            if THREE_NUMS.search(_fix_concat(line)):
+                joined.append(_fix_concat(line).strip())
+                i += 1
+            else:
+                # Narration wraps onto next line(s)
+                combined = line.rstrip()
+                i += 1
+                while i < len(lines):
+                    nxt = lines[i].strip()
+                    if not nxt:
+                        i += 1
+                        continue
+                    if DATE_START.match(lines[i]):
+                        break
+                    combined = combined + ' ' + nxt
+                    i += 1
+                    if THREE_NUMS.search(_fix_concat(combined)):
+                        break
+                joined.append(_fix_concat(combined).strip())
+        else:
+            i += 1
+
+    for row in joined:
+        dm = DATE_START.match(row)
+        if not dm:
+            continue
+        tdate = dm.group(1)
+        parts = tdate.split('/')
+        ym    = f"{parts[2]}-{parts[1]}"
+        rest  = row[dm.end():]
+        tm    = THREE_NUMS.search(rest)
+        if not tm:
+            continue
+        debit     = float(tm.group(1).replace(',', ''))
+        credit    = float(tm.group(2).replace(',', ''))
+        narration = rest[:tm.start()].strip()
+
+        # Skip bank charges, VAT, stamp duty, SMS charge (debit-only bank fees)
+        lower = narration.lower()
+        if any(k in lower for k in [
+            'nip charge', 'stamp duty', 'sms charge', 'vat charge',
+            'account maintenance', 'statement charge', 'airtime',
+            'value added tax', 'charges on counter',
+        ]):
+            continue
+
+        if credit > 0 and debit == 0:
+            add_credit(buckets, ym, credit, narration, account_name)
+
+    return buckets, account_name
 
 def parse_summary_credits(full_text: str) -> dict[str, float]:
     summary: dict[str, float] = {}
@@ -617,6 +726,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_opay(full_text)
     elif bank == "Zenith":
         buckets, account_name = parse_zenith(full_text)
+    elif bank == "Zenith_Corporate":
+        buckets, account_name = parse_zenith_corporate(full_text)
     else:
         buckets, account_name = parse_generic(full_text)
 
