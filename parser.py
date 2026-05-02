@@ -30,6 +30,26 @@ OPAY_ROW   = re.compile(
     r"\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}", re.I,
 )
 
+# ── FairMoney parser constants ────────────────────────────────────────────────
+# Transaction anchor: DD/MM/YYYY  REFNUM  [+/-] ₦ AMOUNT  ₦ BALANCE[Narration]
+_FM_TX = re.compile(
+    r"^(\d{2}/\d{2}/\d{4})\s+\d+\s+"    # date  reference-number
+    r"([+\-])\s*₦\s*([\d,]+\.\d{2})\s+" # sign  amount
+    r"₦\s*[\d,]+\.\d{2}"                 # balance (consumed, not captured)
+    r"(.*)"                               # narration start (may be empty or run-on)
+)
+# Lines that are page-header boilerplate to skip during narration accumulation
+_FM_HEADER = re.compile(
+    r"^(?:FairMoney MFB|Licensed by CBN|28 Pade Odanye|Phone:|Email:|"
+    r"Account number|Date Reference|number|Transaction|details|"
+    r"Credit Debit Account|balance|Opening Balance|Total Deposits|"
+    r"Total Withdrawals|Closing Balance|Page \d+ of \d+)",
+    re.I,
+)
+# Pure-money lines (e.g. "₦ 62.00") and date-range lines to skip
+_FM_MONEY_ONLY = re.compile(r"^₦\s*[\d,]+\.\d{2}$")
+_FM_DATE_RANGE = re.compile(r"^\d{2}/\d{2}/\d{4}\s+-\s+\d{2}/\d{2}/\d{4}$")
+
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 @dataclass
@@ -87,6 +107,13 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
     SELF-TRANSFER FIX: Only flags self-transfer when the account holder name
     appears as the SENDER (60 chars after the transfer-from verb), NOT as the
     recipient. This prevents false flags like 'Transfer from X TO EMMANUEL'.
+
+    CONTRIBUTION: ALL "contribution" credits are excluded (non_business) —
+    whether from the account holder or from outsiders. Contributions (ajo,
+    esusu, cooperative, group savings) are not verifiable business income.
+
+    OVERDRAFT: Credits tagged as overdraft, OD credit, or facility drawdown
+    are excluded as loan_disbursal — they are borrowed funds, not income.
     """
     text = narration.lower()
 
@@ -108,9 +135,21 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
     if any(k in text for k in savings_kw):
         return "self_transfer", "Savings platform round-trip"
 
-    # ── 3. Reversals ──────────────────────────────────────────────────────
-    # Covers: RSVL, ***RSVL, REV, reversal, refund, chargeback, dispute,
-    # clawback — all case-insensitive (text already lowercased)
+    # ── 3. Overdraft / facility drawdown → loan_disbursal ────────────────
+    # Check BEFORE reversals: some OD narrations contain "reversal" in them
+    # (e.g. "overdraft credit limit reversal") but are still borrowed funds.
+    if re.search(
+        r"\boverdraft\b|\bod\s+credit\b|\bod\s+limit\b|\bod\s+utiliz",
+        text,
+    ):
+        return "loan_disbursal", "Overdraft credit"
+    if re.search(
+        r"\bfacility\s+drawdown\b|\bcredit\s+facility\b|\bod\s+reversal\b",
+        text,
+    ):
+        return "loan_disbursal", "Facility/OD drawdown"
+
+    # ── 4. Reversals ──────────────────────────────────────────────────────
     if re.search(r"\*+rsvl|\brsvl\b|\brev\b|\brev-\b", text):
         return "reversal", "RSVL/REV reversal marker"
     if any(k in text for k in [
@@ -120,7 +159,6 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
         return "reversal", "Reversal keyword"
 
     # ── 4. Loan disbursements ─────────────────────────────────────────────
-    # All major Nigerian loan apps + generic disbursement keywords
     loan_exact = [
         "fairmoney", "carbon loan", "branch loan", "branch limit",
         "palmcredit", "palm credit", "aella credit", "aella",
@@ -131,6 +169,8 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
         "loans by sterling", "credit direct", "gtbank loan",
         "access loan", "uba loan", "first bank loan",
         "zenith loan", "wema loan", "fcmb loan",
+        # FairMoney internal credits (interest/wallet round-trips on FairMoney accounts)
+        "incoming fairmoney",
     ]
     loan_regex = [
         r"\bloan\s+disburs", r"\bdisbursement\b", r"\bcredit\s+disburs",
@@ -143,9 +183,6 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
             return "loan_disbursal", f"Loan pattern: {pat}"
 
     # ── 5. Self-transfer: own-name detection ─────────────────────────────
-    # CRITICAL: only match name in the SENDER window (after transfer-from verb)
-    # NOT in the full narration, to avoid flagging incoming transfers FROM others
-    # to the account holder as self-transfers.
     if account_name and len(account_name) > 4:
         name_parts = [p for p in account_name.lower().split() if len(p) > 3]
         if name_parts:
@@ -156,7 +193,6 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
             )
             if verb_m:
                 raw_window = text[verb_m.end(): verb_m.end() + 70]
-                # Cut window at " to " or "|" — these separate sender from recipient
                 sender_window = re.split(r"\s+to\s+|\s*\|\s*", raw_window)[0]
                 matched = sum(1 for p in name_parts if p in sender_window)
                 if matched >= 2:
@@ -164,43 +200,62 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
             if "myself" in text or "| myself" in text or "/myself" in text:
                 return "self_transfer", "Explicit self-transfer (myself)"
 
-    # Contribution from self (common in Nigerian banking — person sends money
-    # from another account to this one, narration says "contribution")
-    if re.search(r"\bcontribution\b", text) and account_name:
-        name_parts = [p for p in account_name.lower().split() if len(p) > 3]
-        matched = sum(1 for p in name_parts if p in text)
-        if matched >= 1:
-            return "self_transfer", "Self-contribution"
+    # ── 5b. Contributions — ALL excluded regardless of sender ─────────────
+    # Contributions (ajo, esusu, cooperative, group savings) are not
+    # verifiable business income whether they come from the account holder
+    # or from third parties. Classify as non_business so they are excluded.
+    if re.search(r"\bcontribution\b|\bcontrib\b|\bajo\b|\besusu\b|\bcooperative\b", text):
+        return "non_business", "Contribution/group-savings credit"
 
     # ── 6. Gambling / betting ─────────────────────────────────────────────
     betting_kw = [
-        # Major Nigerian platforms
+        # ── Major Nigerian platforms ──────────────────────────────────────
         "sportybet", "sporty bet", "sporty|", "sporty internet",
-        "bet9ja", "bet 9ja", "betnaija",
-        "1xbet", "1x bet",
+        "bet9ja", "bet 9ja", "betnaija", "bet naija",
+        "1xbet", "1x bet", "1x-bet",
         "betking", "bet king",
         "betway",
         "merrybet", "merry bet",
         "nairabet", "naira bet",
         "baba ijebu", "baba-ijebu",
         "naijabet",
-        "lotto ", "lottomania", "premier lotto",
+        "lotto ", "lottomania", "premier lotto", "golden chance lotto",
         "supabets", "supa bets",
-        "cloudbet", "msport", "bangbet",
-        "parimatch", "betboro", "betwinner",
-        "22bet", "melbet",
-        # Generic gambling signals
-        "casino ", "jackpot ", "betting winnings",
+        "cloudbet",
+        "msport", "m-sport",
+        "bangbet", "bang bet",
+        "parimatch", "pari match",
+        "betboro",
+        "betwinner", "bet winner",
+        "22bet", "22 bet",
+        "melbet", "mel bet",
+        "betfair",
+        "bet365",
+        "frapapa",
+        "linebet", "line bet",
+        "xbet",
+        "accessbet", "access bet",
+        "wazobet", "wazobia bet",
+        "betland",
+        "surebet247", "sure bet",
+        "betpawa", "bet pawa",
+        "10bet", "ten bet",
+        "nosporbet",
+        "helabet", "hela bet",
+        "premierbet", "premier bet",
+        # ── Generic gambling signals ──────────────────────────────────────
+        "casino ", "jackpot ", "betting winnings", "bet winnings",
+        "winnings payout", "betting credit", "bet credit",
+        "slot winnings", "poker winnings",
     ]
     if any(k in text for k in betting_kw):
         return "non_business", "Gambling/betting keyword"
 
-    # ── 7. Non-business inflows ───────────────────────────────────────────
-    # Salary, allowance, support payments, contributions
+    # ── 8. Non-business inflows ───────────────────────────────────────────
     non_biz_exact = [
         "salary", "salaries",
         "allowance",
-        " support ",         # spaces prevent matching "customer support"
+        " support ",
         "monthly stipend", "stipend",
         "upkeep",
     ]
@@ -238,6 +293,8 @@ def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
 # ════════════════════════════════════════════════════════════════════════════
 def detect_bank(text: str) -> str:
     t = text.lower()
+    if "fairmoney mfb" in t or "fairmoney microfinance" in t:
+        return "FairMoney"
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
     if "mybankstatement" in t or "tran date value date narration" in t:
@@ -313,7 +370,7 @@ def parse_opay(full_text: str) -> tuple[dict, str]:
         amount     = float(amount_m.group().replace(",", ""))
         before_amt = rest[:amount_m.start()]
         if not re.search(r"--\s*$", before_amt.rstrip()):
-            continue  # debit row
+            continue
         narration = re.sub(r"--\s*$", "", before_amt).strip()
         narration = re.sub(r"\s+Mobile\S*$", "", narration).strip()
         add_credit(buckets, ym, amount, narration, account_name)
@@ -415,26 +472,17 @@ def parse_generic(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
-
 def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
     """
     Zenith Bank corporate/BOP statement format.
     Columns: DATE POSTED  VALUE DATE  DESCRIPTION  DEBIT  CREDIT  BALANCE
-    Key differences from mybankStatement:
-    - Has explicit DEBIT and CREDIT columns (one is always 0.00)
-    - Header says 'DATE POSTED VALUE DATE DESCRIPTION DEBIT CREDIT BALANCE'
-    - Long narrations wrap onto the next line
     """
     buckets: dict = {}
-    # Corporate statements have company name at top, not "Account Name"
-    # Try standard extraction first
     account_name = _extract_account_name(full_text)
     if not account_name:
-        # Fall back to first all-caps line in document
         name_m = re.search(r'^([A-Z][A-Z &]+(?:ENTERPRISES|LIMITED|LTD|COMPANY|CO\.?|PLC|NIG|NIGERIA))',
                             full_text, re.MULTILINE)
         account_name = name_m.group(1).strip() if name_m else "Unknown"
-    # Clean up trailing junk (e.g. " Account Number: ...")
     account_name = re.sub(r'\s+(Account|Number|Currency|CA|NGN).*$', '', account_name, flags=re.I).strip()
 
     MONEY       = r'[\d,]+\.\d{2}'
@@ -447,14 +495,7 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
     i      = 0
 
     def _fix_concat(line: str) -> str:
-        """Fix PDF.js concatenation artifacts where narration runs into amount.
-        e.g. 'DS82577120.00' -> 'DS8257712 0.00'
-             'OMOSHALEWA0.00' -> 'OMOSHALEWA 0.00'
-             'Owolabi/ABN35,000.00' -> 'Owolabi/ABN 35,000.00'
-        """
-        # Fix digit-run concatenated with 0.00 (reference codes, DS numbers)
         line = re.sub(r'(\d{6,})(0\.\d{2})', r'\1 \2', line)
-        # Fix alphabetic text directly concatenated with a money amount
         line = re.sub(r'([A-Za-z/])(\d+\.\d{2})', r'\1 \2', line)
         line = re.sub(r'([A-Za-z/])(\d{1,3}(?:,\d{3})+\.\d{2})', r'\1 \2', line)
         return line
@@ -475,7 +516,6 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
                 joined.append(_fix_concat(line).strip())
                 i += 1
             else:
-                # Narration wraps onto next line(s)
                 combined = line.rstrip()
                 i += 1
                 while i < len(lines):
@@ -508,7 +548,6 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
         credit    = float(tm.group(2).replace(',', ''))
         narration = rest[:tm.start()].strip()
 
-        # Skip bank charges, VAT, stamp duty, SMS charge (debit-only bank fees)
         lower = narration.lower()
         if any(k in lower for k in [
             'nip charge', 'stamp duty', 'sms charge', 'vat charge',
@@ -521,6 +560,99 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
             add_credit(buckets, ym, credit, narration, account_name)
 
     return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FAIRMONEY PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_fairmoney(full_text: str) -> tuple[dict, str]:
+    """
+    FairMoney MFB statement parser.
+
+    PyPDF2/pypdf renders each transaction as a single line in the form:
+        DD/MM/YYYY  REFNUM  [+/-] ₦ AMOUNT  ₦ BALANCENarration start
+    Narration continuation lines follow with no date or reference number.
+
+    Page headers (bank name, address, account summary) repeat on every page
+    and are filtered out during narration accumulation.
+
+    Credits are identified by the '+' sign prefix on the amount.
+    'Incoming FairMoney' credits (internal FairMoney wallet/interest credits)
+    are classified as loan_disbursal and excluded from eligible income.
+    """
+    buckets: dict    = {}
+    account_name: str = ""
+    lines = full_text.splitlines()
+
+    # ── Extract account holder name ───────────────────────────────────────
+    # FairMoney puts the account name as a plain "Firstname Lastname" line
+    # (Title-case, 2+ words) near the top of each page before the header
+    # table. Grab the first such line from the full text.
+    name_re = re.compile(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)$")
+    skip_names = {"Date Reference", "Credit Debit Account"}
+    for line in lines:
+        stripped = line.strip()
+        if stripped in skip_names:
+            continue
+        m = name_re.match(stripped)
+        if m and len(stripped.split()) >= 2:
+            account_name = stripped
+            break
+
+    # ── Parse transactions ────────────────────────────────────────────────
+    pending_sign:   Optional[str]   = None
+    pending_amount: float           = 0.0
+    pending_ym:     str             = ""
+    pending_narr:   str             = ""
+
+    def _flush() -> None:
+        nonlocal pending_sign, pending_amount, pending_ym, pending_narr
+        if pending_sign == "+" and pending_amount > 0:
+            add_credit(buckets, pending_ym, pending_amount,
+                       pending_narr.strip(), account_name)
+        pending_sign   = None
+        pending_amount = 0.0
+        pending_ym     = ""
+        pending_narr   = ""
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Check for a new transaction anchor line first
+        m = _FM_TX.match(stripped)
+        if m:
+            _flush()
+            date_str, sign, amt_str, narr_start = m.groups()
+            day, month, year = date_str.split("/")
+            pending_ym     = f"{year}-{month}"
+            pending_sign   = sign
+            pending_amount = float(amt_str.replace(",", ""))
+            pending_narr   = narr_start.strip()
+            continue
+
+        # Not a transaction anchor — handle as possible narration continuation
+        if pending_sign is not None:
+            # Skip page-header boilerplate lines
+            if _FM_HEADER.match(stripped):
+                continue
+            if _FM_MONEY_ONLY.match(stripped):
+                continue
+            if _FM_DATE_RANGE.match(stripped):
+                continue
+            # Skip the account holder name line and account number that
+            # repeat on each page header
+            if stripped == account_name:
+                continue
+            if re.match(r"^\d{10}$", stripped):   # 10-digit account number
+                continue
+            # Append as narration continuation
+            pending_narr += " " + stripped
+
+    _flush()
+    return buckets, account_name
+
 
 def parse_summary_credits(full_text: str) -> dict[str, float]:
     summary: dict[str, float] = {}
@@ -541,7 +673,6 @@ def parse_summary_credits(full_text: str) -> dict[str, float]:
 # ════════════════════════════════════════════════════════════════════════════
 
 def _excel_serial_to_ym(serial) -> Optional[str]:
-    """Convert Excel serial date number to YYYY-MM string."""
     try:
         f = float(serial)
         if not (40000 < f < 70000):
@@ -555,16 +686,9 @@ def _excel_serial_to_ym(serial) -> Optional[str]:
 
 
 def _detect_excel_format(rows: list) -> Optional[dict]:
-    """
-    Detect Excel format:
-    - Mono standard:      header row with 'Transaction Date', 'Credit', 'Narration'
-    - Moniepoint Business: header row with 'Date', 'Narration', 'Debit', 'Credit' + serial dates
-    - Generic debit/credit table: any row with date + credit + debit columns
-    """
     for i, row in enumerate(rows[:30]):
         h = [str(c or "").lower().strip() for c in row]
 
-        # Moniepoint Business Excel: serial dates + date/narration/debit/credit headers
         if ("date" in h and "narration" in h and "debit" in h and "credit" in h):
             if i + 1 < len(rows):
                 try:
@@ -581,7 +705,6 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
                 except (ValueError, IndexError):
                     pass
 
-        # Mono standard: 'transaction date' as first column
         if h and h[0] == "transaction date":
             credit_col = next((j for j, v in enumerate(h) if "credit" in v), None)
             narration_col = next((j for j, v in enumerate(h)
@@ -595,7 +718,6 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
                     "credit_col": credit_col,
                 }
 
-        # Generic: has date + credit + debit
         has_date   = any("date" in v for v in h)
         has_credit = any("credit" in v for v in h)
         has_debit  = any("debit" in v for v in h)
@@ -616,10 +738,6 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
 
 
 def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
-    """
-    Parse Excel bank statement (Mono, Moniepoint Business, or generic format).
-    Returns (buckets, account_name).
-    """
     if not OPENPYXL_AVAILABLE:
         raise ImportError("openpyxl is required for Excel parsing. Add it to requirements.txt")
 
@@ -633,13 +751,11 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
     if not fmt:
         raise ValueError("Could not detect Excel statement format. Supported: Mono, Moniepoint Business.")
 
-    # Extract account name from header rows above the table
     account_name = ""
     for row in rows[:fmt["hdr_idx"]]:
         for j, cell in enumerate(row):
             cv = str(cell or "").lower().strip()
             if cv in ("account name:", "account name", "name"):
-                # Next non-empty cell in same row
                 for nc in row[j+1:]:
                     nv = str(nc or "").strip()
                     if nv:
@@ -663,24 +779,20 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
         if not row or row[date_col] is None:
             continue
 
-        # Date parsing
         if fmt_type == "moniepoint_excel":
             ym = _excel_serial_to_ym(row[date_col])
         else:
             date_str = str(row[date_col] or "").strip()
-            # Try ISO format first: 2025-10-03 or 2025-10-03T...
             m = re.match(r"^(20\d{2})-(\d{2})", date_str)
             if m:
                 ym = f"{m.group(1)}-{m.group(2)}"
             else:
-                # Try dd/mm/yyyy
                 m = re.match(r"^(\d{2})/(\d{2})/(20\d{2})", date_str)
                 ym = f"{m.group(3)}-{m.group(2)}" if m else None
 
         if not ym:
             continue
 
-        # Credit amount
         try:
             credit_raw = str(row[credit_col] or "").replace(",", "").strip()
             credit = float(credit_raw) if credit_raw else 0.0
@@ -698,7 +810,6 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
 
 # ════════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
-
 # ════════════════════════════════════════════════════════════════════════════
 def parse_transactions(file_bytes: bytes, password: str = "",
                        filename: str = "") -> tuple[dict, dict, str, str]:
@@ -712,17 +823,18 @@ def parse_transactions(file_bytes: bytes, password: str = "",
                 file_bytes[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"))
     if is_excel:
         buckets, account_name = parse_excel(file_bytes)
-        # Try to detect bank name from account name or default
         bank = "Mono Excel"
         summary: dict = {}
         return buckets, summary, bank, account_name
 
     # ── PDF ───────────────────────────────────────────────────────────────
-    full_text = extract_pdf_text(file_bytes, password)
+    full_text = extract_pdf_text(pdf_bytes=file_bytes, password=password)
     bank = detect_bank(full_text)
     summary = parse_summary_credits(full_text)
 
-    if bank == "OPay":
+    if bank == "FairMoney":
+        buckets, account_name = parse_fairmoney(full_text)
+    elif bank == "OPay":
         buckets, account_name = parse_opay(full_text)
     elif bank == "Zenith":
         buckets, account_name = parse_zenith(full_text)
@@ -809,7 +921,6 @@ def parse_firstcentral(pdf_bytes: bytes, password: str = "") -> dict:
             "tenor_months": _get_tenor_months(dur_raw),
         }
 
-    # Summary table fallback
     summary_map: dict[str, dict] = {}
     sum_start = full_text.find("Credit Agreements Summary")
     det_start = full_text.find("Details of Credit Agreement with")
