@@ -452,107 +452,160 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
     Parser for all mybankStatement-engine banks: GTBank/GTCO, Access Bank,
     First Bank, UBA, Fidelity, Union Bank, Stanbic IBTC, FCMB, Wema, Sterling.
 
-    These banks share the mybankStatement PDF platform which produces a
-    consistent format with explicit Debit and Credit columns:
+    pypdf renders the Debit/Credit columns in two ways depending on PDF vintage:
 
-        Tran. date   Value date   Transaction details   Debit   Credit   Balance
-        10-01-2025   10-01-2025   TRANSFER FROM FATHIA  0.00    50,000   129,678.71
+    Layout A — 3 numbers (debit=0.00 explicit on credit rows):
+        10-01-2025  10-01-2025  TRANSFER FROM X  0.00  50,000.00  129,678.71
 
-    Key characteristics:
-    - Date separators vary by bank/vintage: hyphens (10-01-2025) or slashes (10/01/2025)
-    - Explicit Debit/Credit columns — credit rows have 0.00 in Debit column
-    - Narrations are multi-line (continuation lines carry no date)
-    - mybankStatement watermark appears on every page
+    Layout B — 2 numbers (debit column blank/omitted on credit rows):
+        10-01-2025  10-01-2025  TRANSFER FROM X  50,000.00  129,678.71
 
-    Credits are identified by the three-number tail (debit, credit, balance)
-    where debit == 0.00 and credit > 0. This is more reliable than balance-
-    delta inference (parse_generic) which breaks across page boundaries and
-    on multi-line narrations.
+    Layout A: debit==0 and credit>0 → confirmed credit.
+    Layout B: balance delta > 0 → confirmed credit; delta < 0 → debit.
+
+    The skip filter is anchored to line-start patterns so it never
+    accidentally drops transaction narrations that mention a bank name.
     """
-    buckets: dict = {}
-    account_name = _extract_account_name(full_text)
+    buckets: dict     = {}
+    account_name: str = _extract_account_name(full_text)
 
-    # GTBank date format in transactions: DD-MM-YYYY or DD/MM/YYYY
     GTB_DATE = re.compile(r"^(\d{2}[-/]\d{2}[-/]\d{4})")
     MONEY3   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
+    MONEY2   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
 
-    in_tx          = False
-    pending_ym     = ""
-    pending_narr   = ""
-    pending_credit = 0.0
+    # Skip lines that ARE page headers — anchored so narrations mentioning
+    # "GTBank" or "Access Bank" in the text are NOT accidentally dropped.
+    SKIP_HDR = re.compile(
+        r"^(?:mybankstatement|guaranty trust bank|first bank|access bank plc|"
+        r"united bank for africa|fidelity bank|union bank|stanbic|fcmb|"
+        r"wema bank|sterling bank|gtco|rc no\.|"
+        r"account\s+(?:name|no\.?|number|type|branch|currency|sort)|"
+        r"available\s+balance|book\s+balance|total\s+(?:debit|credit)|"
+        r"opening\s+balance|closing\s+balance|statement\s+period|"
+        r"dear\s+customer|page\s+\d+)",
+        re.I,
+    )
+
+    in_tx        = False
+    prev_bal     : Optional[Decimal] = None
+    pending_ym   = ""
+    pending_narr = ""
+    pending_cr   = 0.0   # confirmed credit amount (0 = nothing pending)
 
     def _flush() -> None:
-        nonlocal pending_ym, pending_narr, pending_credit
-        if pending_credit > 0:
-            add_credit(buckets, pending_ym, pending_credit,
+        nonlocal pending_ym, pending_narr, pending_cr
+        if pending_cr > 0:
+            add_credit(buckets, pending_ym, pending_cr,
                        pending_narr.strip(), account_name)
         pending_ym = pending_narr = ""
-        pending_credit = 0.0
+        pending_cr = 0.0
+
+    def _kind_from_delta(amount: Decimal, balance: Decimal, narr: str = "") -> str:
+        nonlocal prev_bal
+        if prev_bal is None:
+            # No previous balance — use narration heuristic for first row
+            tl = narr.lower()
+            if re.search(r"\bfrom\b|\bpayment\b|\bcredit\b|\bdeposit\b|\binflow\b|\breceived\b", tl):
+                kind = "credit"
+            elif re.search(r"\bto\b|\btransfer to\b|\bwithdraw\b|\bdebit\b|\boutflow\b|\bcharge\b|\bairtime\b|\bpurchase\b", tl):
+                kind = "debit"
+            else:
+                kind = "credit"  # default to credit when truly ambiguous on first row
+        else:
+            delta = balance - prev_bal
+            if   abs(delta - amount) <= Decimal("0.02"): kind = "credit"
+            elif abs(delta + amount) <= Decimal("0.02"): kind = "debit"
+            elif delta > 0:                               kind = "credit"
+            elif delta < 0:                               kind = "debit"
+            else:                                         kind = "credit"
+        prev_bal = balance
+        return kind
+
+    def _process_amounts(m3, m2, narr_prefix: str) -> None:
+        """Resolve amounts and set pending_cr / clear it."""
+        nonlocal pending_cr, pending_narr, prev_bal
+        if m3:
+            debit   = float(m3.group(1).replace(",", ""))
+            credit  = float(m3.group(2).replace(",", ""))
+            balance = Decimal(m3.group(3).replace(",", ""))
+            prev_bal = balance
+            extra   = narr_prefix.strip()
+            pending_narr = (pending_narr + " " + extra).strip() if extra else pending_narr
+            if credit > 0 and debit == 0:
+                pending_cr = credit
+            else:
+                pending_cr   = 0.0
+                pending_narr = ""
+        elif m2:
+            amount  = Decimal(m2.group(1).replace(",", ""))
+            balance = Decimal(m2.group(2).replace(",", ""))
+            extra   = narr_prefix.strip()
+            pending_narr = (pending_narr + " " + extra).strip() if extra else pending_narr
+            kind = _kind_from_delta(amount, balance, pending_narr)
+            if kind == "credit":
+                pending_cr = float(amount)
+            else:
+                pending_cr   = 0.0
+                pending_narr = ""
 
     for line in full_text.splitlines():
-        line = line.strip()
-        if not line:
+        stripped = line.strip()
+        if not stripped:
             continue
 
-        # Detect transaction section header
-        if re.search(r"tran\.?\s*date|value\s*date|transaction\s*details", line, re.I):
+        # ── Section-start detection ───────────────────────────────────────
+        if re.search(r"tran\.?\s*date", stripped, re.I) and \
+           re.search(r"debit|credit|balance", stripped, re.I):
             in_tx = True
             continue
-        # Skip mybankStatement watermark lines and page headers
-        if re.search(r"mybankstatement|guaranty trust|gtbank|rc no\.", line, re.I):
+
+        # ── Page-header skip (anchored — won't kill narration lines) ─────
+        if SKIP_HDR.match(stripped):
             continue
 
         if not in_tx:
             continue
 
-        date_m = GTB_DATE.match(line)
+        date_m = GTB_DATE.match(stripped)
+
         if date_m:
             _flush()
-            raw_date = date_m.group(1).replace("-", "/")
-            parts    = raw_date.split("/")
-            pending_ym = f"{parts[2]}-{parts[1]}"
+            raw_date   = date_m.group(1).replace("-", "/")
+            dd, mm, yy = raw_date.split("/")
+            pending_ym = f"{yy}-{mm}"
 
-            # Check if this line already has all 3 money amounts (debit/credit/balance)
-            m3 = MONEY3.search(line)
-            if m3:
-                debit  = float(m3.group(1).replace(",", ""))
-                credit = float(m3.group(2).replace(",", ""))
-                narr   = line[date_m.end(): m3.start()].strip()
-                # Strip leading value-date (second date on same line)
-                narr   = re.sub(r"^\d{2}[-/]\d{2}[-/]\d{4}\s*", "", narr).strip()
-                if credit > 0 and debit == 0:
-                    pending_credit = credit
-                    pending_narr   = narr
-                else:
-                    # Debit row — flush immediately with no credit
-                    pending_credit = 0.0
-                    pending_narr   = ""
+            # Everything after the transaction date (strip optional value-date)
+            rest = stripped[date_m.end():].strip()
+            rest = re.sub(r"^\d{2}[-/]\d{2}[-/]\d{4}\s*", "", rest).strip()
+
+            m3 = MONEY3.search(rest)
+            m2 = MONEY2.search(rest) if not m3 else None
+
+            if m3 or m2:
+                amt_match  = m3 or m2
+                narr_chunk = rest[:rest.rfind(amt_match.group(0))].strip()
+                pending_narr = narr_chunk
+                _process_amounts(m3, m2, "")
             else:
-                # Narration continues on next lines
-                narr_start = line[date_m.end():].strip()
-                narr_start = re.sub(r"^\d{2}[-/]\d{2}[-/]\d{4}\s*", "", narr_start).strip()
-                pending_narr   = narr_start
-                pending_credit = 0.0  # will be set when we find the amounts
+                # Amounts not on this line yet — narration wraps
+                pending_narr = rest
+                pending_cr   = 0.0
+
         else:
-            # Continuation line: might complete the money amounts or add to narration
+            # ── Continuation line ─────────────────────────────────────────
             if not pending_ym:
                 continue
-            m3 = MONEY3.search(line)
-            if m3 and pending_credit == 0.0:
-                # This continuation line has the debit/credit/balance amounts
-                debit  = float(m3.group(1).replace(",", ""))
-                credit = float(m3.group(2).replace(",", ""))
-                narr_extra = line[:m3.start()].strip()
-                pending_narr = (pending_narr + " " + narr_extra).strip()
-                if credit > 0 and debit == 0:
-                    pending_credit = credit
-                else:
-                    # It's a debit — discard
-                    pending_credit = 0.0
-                    pending_narr   = ""
-            elif not m3:
+
+            m3 = MONEY3.search(stripped)
+            m2 = MONEY2.search(stripped) if not m3 else None
+
+            if (m3 or m2) and pending_cr == 0.0:
+                amt_match  = m3 or m2
+                narr_chunk = stripped[:stripped.rfind(amt_match.group(0))].strip()
+                _process_amounts(m3, m2, narr_chunk)
+            elif not m3 and not m2:
                 # Pure narration continuation
-                pending_narr += " " + line
+                pending_narr += " " + stripped
 
     _flush()
     return buckets, account_name
