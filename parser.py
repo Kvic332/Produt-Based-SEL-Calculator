@@ -1466,14 +1466,25 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         text_tokens: list[str] = []
 
         for wl in window:
+            wl = wl.strip()
+            if not wl:
+                continue
+
+            # Capture amounts
             if _KUDA_MONEY.match(wl):
                 amounts.append(_KUDA_MONEY.match(wl).group(1))
-            elif _KUDA_TIME.match(wl):
-                pass
-            elif re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
+                continue
+
+            # Skip time
+            if _KUDA_TIME.match(wl):
+                continue
+
+            # Stop at page/header noise
+            if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
                 break
-            elif wl:
-                text_tokens.append(wl)
+
+            # Keep ALL meaningful text (INCLUDING description)
+            text_tokens.append(wl)
 
         if len(amounts) < 1:
             i += 1
@@ -1495,7 +1506,8 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         ym = f"{year}-{mon}"
 
         amount = Decimal(amounts[0].replace(",", ""))
-        narration = re.sub(r"\s+", " ", " ".join(text_tokens)).strip()
+        narration = " ".join(text_tokens)
+        narration = re.sub(r"\s+", " ", narration).strip().lower()
         # Skip stamp duty reversals / government levies
         if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
             i += 1
