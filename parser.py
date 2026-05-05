@@ -1510,9 +1510,7 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         narration = " ".join(text_tokens)
         narration = re.sub(r"\s+", " ", narration).strip().lower()
         # 🔥 NORMALIZE narration for dedup
-        norm_narration = re.sub(r"[^a-z0-9]", "", narration)
-        # 🔥 STEP 2: trim noisy prefixes (THIS is where your line goes)
-        norm_narration = re.sub(r"(localfundstransfer|disbursement.*?kuda)", "", norm_narration)
+        norm_narration = re.sub(r"\s+", " ", narration).strip()
 
         # 🔥 DEDUP FIX ENDS HERE
         # Skip stamp duty reversals / government levies
