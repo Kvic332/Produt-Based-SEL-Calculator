@@ -1467,11 +1467,9 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         while j < len(lines):
             wl = lines[j].strip()
 
-            # stop when next date starts (new transaction)
             if _KUDA_DATE.match(wl):
                 break
 
-            # stop at page/header noise
             if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
                 break
 
@@ -1486,62 +1484,65 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
             if not wl:
                 continue
 
-            # Capture amounts
             if _KUDA_MONEY.match(wl):
                 amounts.append(_KUDA_MONEY.match(wl).group(1))
                 continue
 
-            # Skip time
             if _KUDA_TIME.match(wl):
                 continue
 
-            # Stop at page/header noise
             if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
                 break
 
-            # Keep ALL meaningful text (INCLUDING description)
             text_tokens.append(wl)
 
         if len(amounts) < 1:
-            i += 1
+            i = j
             continue
 
         category = " ".join(text_tokens[:4])
         is_outward = bool(_KUDA_OUTWARD.search(category))
         if is_outward:
-            i += 1
+            i = j
             continue
 
-        # Credit transaction
         parts = date_str.split("/")
         if len(parts) != 3:
-            i += 1
+            i = j
             continue
+
         day, mon, yr = parts
         year = int(yr) + 2000
         ym = f"{year}-{mon}"
 
         amount_values = [Decimal(a.replace(",", "")) for a in amounts]
-        # pick the largest amount (actual credit, not stamp duty)
         amount = max(amount_values)
+
         narration = " ".join(text_tokens)
         narration = re.sub(r"\s+", " ", narration).strip().lower()
-        # 🔥 NORMALIZE narration for dedup
-        norm_narration = re.sub(r"\s+", " ", narration).strip()
 
-        # 🔥 DEDUP FIX ENDS HERE
-        # Skip stamp duty reversals / government levies
+        # 🔥 NORMALIZE narration for dedup
+        norm_narration = narration
+        norm_narration = re.sub(r"\s+", "", norm_narration)
+        norm_narration = re.sub(r"localfundstransfer", "", norm_narration)
+        norm_narration = re.sub(r"disbursement", "", norm_narration)
+        norm_narration = re.sub(r"kuda", "", norm_narration)
+        norm_narration = re.sub(r"[^a-z0-9]", "", norm_narration)
+
+        if not norm_narration:
+            norm_narration = narration[:20]
+
         if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
-            i += 1
+            i = j
             continue
-        # Skip savings wallet round-trips that escaped the category check
+
         if re.search(r"\bspend\s+and\s+save\b|\bspend\s*\+\s*save\b", narration, re.I):
-            i += 1
+            i = j
             continue
-        # 🔥 FINAL DEDUP FIX (CORRECT POSITION)
-        txn_key = (date_str, str(amount), norm_narration)
+
+        txn_key = (date_str, str(amount), norm_narration[:40])
         if txn_key in seen_txns:
-            i += 1
+            i = j
             continue
         seen_txns.add(txn_key)
 
@@ -1556,10 +1557,10 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         b.setdefault(f"{kind}_txns", []).append(
             {"date": date_str, "narration": narration, "amount": float(amount)}
         )
-        i += 1
+
+        i = j  # 🔥 final correct move
 
     return buckets, account_name
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # ACCESS BANK DIRECT E-STATEMENT PARSER
