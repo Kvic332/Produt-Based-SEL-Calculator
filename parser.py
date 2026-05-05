@@ -366,11 +366,25 @@ def detect_bank(text: str) -> str:
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
 
-    # ── PalmPay: guarded by tagline — won't false-trigger on counterparty names ──
-    # FIX #3: placed here, after OPay checks, before mybankStatement banks.
-    # "digital finance that fits your life" is unique to PalmPay PDF headers.
+    # ── PalmPay: guarded by tagline OR text-only header keywords ──────────
+    # Logo text is an image so "digital finance that fits your life" may not
+    # extract. Fall back to the unique column combination: "total money in"
+    # + "transaction detail" + "money out (ngn)" which only appears on PalmPay.
     if "digital finance that fits your life" in t or "palmpay.com" in t:
         return "PalmPay"
+    if "total money in" in t and "transaction detail" in t and "money out (ngn)" in t:
+        return "PalmPay"
+
+    # ── Kuda: detected before generic MBS checks ─────────────────────────
+    if "kuda mf bank" in t or "kudabank" in t or "kuda technologies" in t:
+        return "Kuda"
+
+    # ── Zenith Corporate BOP: MUST be detected before any bank-name scan ──
+    # because Zenith Corporate narrations frequently contain other bank names
+    # (FCMB, GTB, Access etc.) that would be picked up first.
+    # Primary signal: "date posted" + "value date" columns (unique to Zenith BOP).
+    if "date posted" in t and "value date" in t:
+        return "Zenith_Corporate"
 
     # ── mybankStatement-format banks (explicit detection) ─────────────────
     # All of these use the mybankStatement PDF engine which produces a
@@ -379,6 +393,10 @@ def detect_bank(text: str) -> str:
     if "guaranty trust" in t or "gtbank" in t or "gt bank" in t or "gtco" in t:
         return "GTBank"
     if "access bank" in t:
+        # Access direct e-statements use "Posted Date  Value Date  Description  Debit (NGN)  Credit (NGN)"
+        # Access MBS statements use "mybankstatement" watermark
+        if "posted date" in t and "credit (ngn)" in t and "mybankstatement" not in t:
+            return "Access_Direct"
         return "Access"
     if "first bank" in t or "firstbank" in t:
         return "FirstBank"
@@ -442,9 +460,6 @@ def detect_bank(text: str) -> str:
         return "InvestmentOne"
 
     # ── Zenith ────────────────────────────────────────────────────────────
-    # Zenith Corporate BOP: has explicit "DATE POSTED" + "VALUE DATE" headers
-    if "date posted" in t and "value date" in t and "zenith" in t:
-        return "Zenith_Corporate"
     # Zenith retail (mybankStatement engine) — must come AFTER all named MBS
     # banks above. Any remaining MBS PDF that wasn't caught above gets
     # "MBS_Generic" instead of "Zenith" to avoid the parse_zenith mis-route.
@@ -1412,6 +1427,193 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
 # (which found zero credits because it looks for NIP CR patterns, not
 # Debit/Credit columns). Also added "MBS_Generic" as the safe fallback for
 # any MBS-watermarked PDF whose bank name was not caught by a specific check.
+
+# ════════════════════════════════════════════════════════════════════════════
+# KUDA BANK PARSER
+# Format: Tab-separated tokens — PyPDF2 splits each tab into its own line.
+# Sequence per transaction: DD/MM/YY / HH:MM:SS / ₦Amount / category_words
+#   / To-From info / description / ₦Balance
+# Outward direction = category contains "outward", "paid", "payment", etc.
+# ════════════════════════════════════════════════════════════════════════════
+_KUDA_DATE  = re.compile(r"^(\d{2}/\d{2}/\d{2})$")
+_KUDA_TIME  = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+_KUDA_MONEY = re.compile(r"^₦([\d,]+\.\d{2})$")
+_KUDA_OUTWARD = re.compile(
+    r"^(?:outward|paid|payment|bill|airtime|data|electricity|cable|"
+    r"withdrawal|atm|pos charge|bank charge|fee|stamp duty|debit|"
+    r"spend and save|spend\s*\+\s*save)", re.I
+)
+
+
+def parse_kuda(full_text: str) -> tuple[dict, str]:
+    m = re.search(r"Account Number\s*:\s*\d+\s+([A-Z][A-Z ]{3,})", full_text)
+    account_name = m.group(1).strip() if m else ""
+
+    lines = [ln.strip() for ln in full_text.split("\n")]
+    buckets: dict = {}
+
+    i = 0
+    while i < len(lines):
+        dm = _KUDA_DATE.match(lines[i])
+        if not dm:
+            i += 1
+            continue
+
+        date_str = dm.group(1)  # DD/MM/YY
+        window = lines[i + 1 : i + 12]
+
+        amounts: list[str] = []
+        text_tokens: list[str] = []
+
+        for wl in window:
+            if _KUDA_MONEY.match(wl):
+                amounts.append(_KUDA_MONEY.match(wl).group(1))
+            elif _KUDA_TIME.match(wl):
+                pass
+            elif re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
+                break
+            elif wl:
+                text_tokens.append(wl)
+
+        if len(amounts) < 1:
+            i += 1
+            continue
+
+        category = " ".join(text_tokens[:4])
+        is_outward = bool(_KUDA_OUTWARD.search(category))
+        if is_outward:
+            i += 1
+            continue
+
+        # Credit transaction
+        parts = date_str.split("/")
+        if len(parts) != 3:
+            i += 1
+            continue
+        day, mon, yr = parts
+        year = int(yr) + 2000
+        ym = f"{year}-{mon}"
+
+        amount = Decimal(amounts[0].replace(",", ""))
+        narration = re.sub(r"\s+", " ", " ".join(text_tokens)).strip()
+        # Skip stamp duty reversals / government levies
+        if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
+            i += 1
+            continue
+        # Skip savings wallet round-trips that escaped the category check
+        if re.search(r"\bspend\s+and\s+save\b|\bspend\s*\+\s*save\b", narration, re.I):
+            i += 1
+            continue
+
+        kind, _ = classify_credit(narration, account_name)
+
+        if ym not in buckets:
+            buckets[ym] = _empty_bucket()
+        b = buckets[ym]
+        b["gross"] += float(amount)
+        b["count"] += 1
+        b[kind] += float(amount)
+        b.setdefault(f"{kind}_txns", []).append(
+            {"date": date_str, "narration": narration, "amount": float(amount)}
+        )
+        i += 1
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ACCESS BANK DIRECT E-STATEMENT PARSER
+# Format: Posted Date  Value Date  Description  Debit(NGN)  Credit(NGN)  Balance(NGN)
+# Dates in DD-MMM-YY (e.g. 10-SEP-25).  Credit column = "-" when no credit.
+# PyPDF2 splits narrations across multiple lines; amounts concatenate onto end.
+# ════════════════════════════════════════════════════════════════════════════
+_AX_DATE_ROW = re.compile(
+    r"^(\d{2}-[A-Za-z]{3}-\d{2})\s+(\d{2}-[A-Za-z]{3}-\d{2})\s*(.*)"
+)
+# Match tail: debit  credit  balance  where either debit or credit may be "-"
+_AX_TAIL = re.compile(
+    r"([\d,]+\.\d{2}|-)\s+([\d,]+\.\d{2}|-)\s+([\d,]+\.\d{2})\s*$"
+)
+
+
+def _ax_to_ym(ds: str) -> str | None:
+    parts = ds.upper().split("-")
+    if len(parts) != 3:
+        return None
+    _, mon, yr = parts
+    mon_num = MONTH_NUM.get(mon.lower())
+    if not mon_num:
+        return None
+    return f"{int(yr) + 2000}-{mon_num}"
+
+
+def parse_access_direct(full_text: str) -> tuple[dict, str]:
+    m = re.search(r"Account Name[:\s]+([A-Z][A-Z ]{3,})", full_text, re.I)
+    account_name = m.group(1).strip() if m else ""
+
+    lines = [ln.strip() for ln in full_text.split("\n")]
+    buckets: dict = {}
+
+    pending_date: str | None = None
+    pending_ym: str | None = None
+    pending_chunks: list[str] = []
+
+    _skip = re.compile(
+        r"^(?:Posted Date|Value Date|TRANSACTIONS|This is an automated|"
+        r"Generated on|Account Details|Financial Summary|ACCOUNT ST|"
+        r"Page \d+|Cleared|UnCleared|Opening Balance|Closing Balance|"
+        r"Total Withdrawals|Total Deposits)", re.I
+    )
+
+    def flush(chunks: list[str], date: str, ym: str) -> None:
+        if not chunks or not ym:
+            return
+        combined = " ".join(chunks)
+        am = _AX_TAIL.search(combined)
+        if not am:
+            return
+        debit_s, credit_s = am.group(1), am.group(2)
+        if credit_s == "-" or not credit_s:
+            return
+        credit_val = Decimal(credit_s.replace(",", ""))
+        if credit_val <= 0:
+            return
+        narr = _AX_TAIL.sub("", combined).strip()
+        narr = re.sub(r"\s+", " ", narr)
+        # Normalise PyPDF2 word-splits: "CUST ODIAN" → "CUSTODIAN", "ALLOW ANCE" → "ALLOWANCE"
+        narr = re.sub(r"\bCUST ODIAN\b", "CUSTODIAN", narr)
+        narr = re.sub(r"\bALLOW ANCE\b", "ALLOWANCE", narr)
+        narr = re.sub(r"\bSALAR Y\b", "SALARY", narr)
+        narr = re.sub(r"\bT O\b", "TO", narr)
+        narr = re.sub(r"\bFROM\s+F AVOUR\b", "FROM FAVOUR", narr)
+        narr = re.sub(r"  +", " ", narr)
+        kind, _ = classify_credit(narr, account_name)
+        if ym not in buckets:
+            buckets[ym] = _empty_bucket()
+        b = buckets[ym]
+        b["gross"] += float(credit_val)
+        b["count"] += 1
+        b[kind] += float(credit_val)
+        b.setdefault(f"{kind}_txns", []).append(
+            {"date": date, "narration": narr, "amount": float(credit_val)}
+        )
+
+    for line in lines:
+        if not line or _skip.match(line):
+            continue
+        dm = _AX_DATE_ROW.match(line)
+        if dm:
+            flush(pending_chunks, pending_date or "", pending_ym or "")
+            pending_date = dm.group(1)
+            pending_ym = _ax_to_ym(pending_date)
+            pending_chunks = [dm.group(3)] if dm.group(3).strip() else []
+        elif pending_date:
+            pending_chunks.append(line)
+
+    flush(pending_chunks, pending_date or "", pending_ym or "")
+    return buckets, account_name
+
+
 _MYBANKSTATEMENT_BANKS = {
     # Original 10 (explicitly detected by name keyword)
     "GTBank", "Access", "FirstBank", "UBA",
@@ -1459,10 +1661,13 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     elif bank == "OPay_v2":
         buckets, account_name = parse_opay_v2(file_bytes)
     elif bank == "PalmPay":
-        # FIX #1: PalmPay now has a dedicated parser instead of falling
-        # through to parse_generic which requires a balance column.
         buckets, account_name = parse_palmpay(full_text)
+    elif bank == "Kuda":
+        buckets, account_name = parse_kuda(full_text)
+    elif bank == "Access_Direct":
+        buckets, account_name = parse_access_direct(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
+        # Access MBS routes here; Access_Direct (direct e-statement) routes above
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
         buckets, account_name = parse_zenith(full_text)
