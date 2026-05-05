@@ -1461,7 +1461,22 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
             continue
 
         date_str = dm.group(1)  # DD/MM/YY
-        window = lines[i + 1 : i + 12]
+        window = []
+        j = i + 1
+
+        while j < len(lines):
+            wl = lines[j].strip()
+
+            # stop when next date starts (new transaction)
+            if _KUDA_DATE.match(wl):
+                break
+
+            # stop at page/header noise
+            if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
+                break
+
+            window.append(wl)
+            j += 1
 
         amounts: list[str] = []
         text_tokens: list[str] = []
