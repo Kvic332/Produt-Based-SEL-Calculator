@@ -1451,6 +1451,7 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
 
     lines = [ln.strip() for ln in full_text.split("\n")]
     buckets: dict = {}
+    seen_txns = set()
 
     i = 0
     while i < len(lines):
@@ -1508,6 +1509,8 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         amount = Decimal(amounts[0].replace(",", ""))
         narration = " ".join(text_tokens)
         narration = re.sub(r"\s+", " ", narration).strip().lower()
+
+        # 🔥 DEDUP FIX ENDS HERE
         # Skip stamp duty reversals / government levies
         if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
             i += 1
@@ -1516,6 +1519,12 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         if re.search(r"\bspend\s+and\s+save\b|\bspend\s*\+\s*save\b", narration, re.I):
             i += 1
             continue
+        # 🔥 FINAL DEDUP FIX (CORRECT POSITION)
+        txn_key = (date_str, str(amount), narration)
+        if txn_key in seen_txns:
+            i += 1
+            continue
+        seen_txns.add(txn_key)
 
         kind, _ = classify_credit(narration, account_name)
 
