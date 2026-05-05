@@ -1446,12 +1446,35 @@ _KUDA_OUTWARD = re.compile(
 
 
 def parse_kuda(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Kuda MF Bank PDF statements.
+
+    PyPDF2 extracts Kuda tabs as individual lines. Each transaction block:
+      DD/MM/YY       ← date
+      HH:MM:SS       ← time (used for dedup key)
+      ₦Amount        ← transaction amount
+      category_word  ← direction indicator (tab-split)
+      to/from info
+      description
+      ₦NewBalance    ← new running balance (second ₦ amount)
+
+    Direction: "inward transfer" or "local funds transfer" = credit.
+    "outward", "spend and save", "paid", "bills", "airtime" etc. = debit.
+    
+    Page-boundary dedup: Kuda PDFs repeat transactions at page seams.
+    Dedup key = (date, time, amount) — unique per real transaction.
+    Same amount at same second from same direction = same transaction.
+
+    spend+save detection: The Spend+Save feature tab-splits its category
+    into ['spend', 'and\tsave', 'spend\tand\tsave']. We join all tokens
+    (replacing tabs) before checking the outward pattern.
+    """
     m = re.search(r"Account Number\s*:\s*\d+\s+([A-Z][A-Z ]{3,})", full_text)
     account_name = m.group(1).strip() if m else ""
 
     lines = [ln.strip() for ln in full_text.split("\n")]
     buckets: dict = {}
-    seen_txns = set()
+    seen_keys: set = set()   # (date, time, first_amount) dedup
 
     i = 0
     while i < len(lines):
@@ -1461,90 +1484,80 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
             continue
 
         date_str = dm.group(1)  # DD/MM/YY
+
+        # Collect lines until the next date or page header
         window = []
         j = i + 1
-
         while j < len(lines):
             wl = lines[j].strip()
-
             if _KUDA_DATE.match(wl):
                 break
-
             if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
-                break
-
+                j += 1
+                continue
             window.append(wl)
             j += 1
 
+        # Extract time, amounts, and narration tokens from the window
+        time_found: str | None = None
         amounts: list[str] = []
         text_tokens: list[str] = []
 
         for wl in window:
-            wl = wl.strip()
             if not wl:
                 continue
-
-            if _KUDA_MONEY.match(wl):
-                amounts.append(_KUDA_MONEY.match(wl).group(1))
+            mm = _KUDA_MONEY.match(wl)
+            if mm:
+                amounts.append(mm.group(1))
                 continue
-
             if _KUDA_TIME.match(wl):
+                time_found = wl
                 continue
-
-            if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
-                break
-
             text_tokens.append(wl)
 
-        if len(amounts) < 1:
+        if not amounts:
             i = j
             continue
 
-        category = " ".join(text_tokens[:4])
-        is_outward = bool(_KUDA_OUTWARD.search(category))
+        # Dedup by (date, time, first_amount) — eliminates page-boundary repeats
+        dedup_key = (date_str, time_found or "notime", amounts[0])
+        if dedup_key in seen_keys:
+            i = j
+            continue
+        seen_keys.add(dedup_key)
+
+        # Direction detection: join ALL tokens with tabs replaced by spaces
+        # This correctly catches tab-split "spend and save"
+        category_full = re.sub(r"\t", " ", " ".join(text_tokens)).strip().lower()
+        is_outward = bool(_KUDA_OUTWARD.search(category_full))
+        # Standalone "spend" token = savings deduction, always outward
+        if not is_outward and text_tokens and re.match(r"^spend$", text_tokens[0].strip(), re.I):
+            is_outward = True
         if is_outward:
             i = j
             continue
 
+        # Parse date: DD/MM/YY → YYYY-MM
         parts = date_str.split("/")
         if len(parts) != 3:
             i = j
             continue
-
         day, mon, yr = parts
-        year = int(yr) + 2000
-        ym = f"{year}-{mon}"
+        ym = f"{int(yr) + 2000}-{mon}"
 
-        amount_values = [Decimal(a.replace(",", "")) for a in amounts]
-        amount = max(amount_values)
+        amount = Decimal(amounts[0].replace(",", ""))
+        narration = re.sub(r"\t", " ", " ".join(text_tokens))
+        narration = re.sub(r"\s+", " ", narration).strip()
 
-        narration = " ".join(text_tokens)
-        narration = re.sub(r"\s+", " ", narration).strip().lower()
-
-        # 🔥 NORMALIZE narration for dedup
-        norm_narration = narration
-        norm_narration = re.sub(r"\s+", "", norm_narration)
-        norm_narration = re.sub(r"localfundstransfer", "", norm_narration)
-        norm_narration = re.sub(r"disbursement", "", norm_narration)
-        norm_narration = re.sub(r"kuda", "", norm_narration)
-        norm_narration = re.sub(r"[^a-z0-9]", "", norm_narration)
-
-        if not norm_narration:
-            norm_narration = narration[:20]
-
+        # Skip stamp duty / government levies (these are tiny bank charges, not income)
         if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
             i = j
             continue
 
+        # Safety: catch any spend+save that escaped the category check
         if re.search(r"\bspend\s+and\s+save\b|\bspend\s*\+\s*save\b", narration, re.I):
             i = j
             continue
-
-        txn_key = (date_str, str(amount), norm_narration[:40])
-        if txn_key in seen_txns:
-            i = j
-            continue
-        seen_txns.add(txn_key)
 
         kind, _ = classify_credit(narration, account_name)
 
@@ -1558,24 +1571,9 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
             {"date": date_str, "narration": narration, "amount": float(amount)}
         )
 
-        i = j  # 🔥 final correct move
+        i = j
 
     return buckets, account_name
-
-# ════════════════════════════════════════════════════════════════════════════
-# ACCESS BANK DIRECT E-STATEMENT PARSER
-# Format: Posted Date  Value Date  Description  Debit(NGN)  Credit(NGN)  Balance(NGN)
-# Dates in DD-MMM-YY (e.g. 10-SEP-25).  Credit column = "-" when no credit.
-# PyPDF2 splits narrations across multiple lines; amounts concatenate onto end.
-# ════════════════════════════════════════════════════════════════════════════
-_AX_DATE_ROW = re.compile(
-    r"^(\d{2}-[A-Za-z]{3}-\d{2})\s+(\d{2}-[A-Za-z]{3}-\d{2})\s*(.*)"
-)
-# Match tail: debit  credit  balance  where either debit or credit may be "-"
-_AX_TAIL = re.compile(
-    r"([\d,]+\.\d{2}|-)\s+([\d,]+\.\d{2}|-)\s+([\d,]+\.\d{2})\s*$"
-)
-
 
 def _ax_to_ym(ds: str) -> str | None:
     parts = ds.upper().split("-")
