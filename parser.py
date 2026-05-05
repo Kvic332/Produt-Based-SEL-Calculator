@@ -1521,7 +1521,9 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         year = int(yr) + 2000
         ym = f"{year}-{mon}"
 
-        amount = Decimal(amounts[0].replace(",", ""))
+        amount_values = [Decimal(a.replace(",", "")) for a in amounts]
+        # pick the largest amount (actual credit, not stamp duty)
+        amount = max(amount_values)
         narration = " ".join(text_tokens)
         narration = re.sub(r"\s+", " ", narration).strip().lower()
         # 🔥 NORMALIZE narration for dedup
