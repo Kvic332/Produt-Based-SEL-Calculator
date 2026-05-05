@@ -1509,6 +1509,10 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         amount = Decimal(amounts[0].replace(",", ""))
         narration = " ".join(text_tokens)
         narration = re.sub(r"\s+", " ", narration).strip().lower()
+        # 🔥 NORMALIZE narration for dedup
+        norm_narration = re.sub(r"[^a-z0-9]", "", narration)
+        # 🔥 STEP 2: trim noisy prefixes (THIS is where your line goes)
+        norm_narration = re.sub(r"(localfundstransfer|disbursement.*?kuda)", "", norm_narration)
 
         # 🔥 DEDUP FIX ENDS HERE
         # Skip stamp duty reversals / government levies
@@ -1520,7 +1524,7 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
             i += 1
             continue
         # 🔥 FINAL DEDUP FIX (CORRECT POSITION)
-        txn_key = (date_str, str(amount), narration)
+        txn_key = (date_str, str(amount), norm_narration)
         if txn_key in seen_txns:
             i += 1
             continue
