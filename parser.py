@@ -321,12 +321,19 @@ def detect_bank(text: str) -> str:
             ("opay digital" in t or "wallet account" in t or "9payment service" in t)):
         return "OPay_v2"
 
+    # ── Moniepoint Business: same ISO-timestamp layout as OPay Business ──
+    # The Moniepoint logo is an image (invisible to PyPDF2) but the MFB
+    # stamp/watermark text IS extracted. Check BEFORE OPay_Business so
+    # Moniepoint statements are never misrouted to OPay_Business.
+    if ("moniepoint mfb" in t or "moniepoint microfinance" in t) and \
+            re.search(r"\d{4}-\d{2}-\d{2}t\d{2}:", t):
+        return "Moniepoint_Business"
+
     # ── OPay Business: ISO-timestamp "Account Statement" format ──────────
-    # Identified by "Business Name" header label + ISO 8601 date-time rows
-    # (YYYY-MM-DDThh:mm:ss). Distinct from the personal wallet OPay_v2
-    # (which has "Trans. Time" column) and the old OPay feed format.
-    # Must be checked before FairMoney/OPay to avoid misrouting.
-    if "business name" in t and re.search(r"\d{4}-\d{2}-\d{2}t\d{2}:", t):
+    # Moniepoint check fires first when MFB watermark text is present.
+    # OPay Business: "Business Name" + ISO timestamps + OPay ref patterns.
+    if "business name" in t and re.search(r"\d{4}-\d{2}-\d{2}t\d{2}:", t) and \
+            ("2mpt" in t or "ap_trsf" in t or "business_credit" in t):
         return "OPay_Business"
 
     if ("fairmoney mfb" in t or "fairmoney microfinance" in t) and "mybankstatement" not in t:
@@ -1479,6 +1486,9 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_opay_v2(file_bytes)
     elif bank == "OPay_Business":
         # OPay Business "Account Statement" — ISO timestamp rows, 3-line blocks
+        buckets, account_name = parse_opay_business(file_bytes)
+    elif bank == "Moniepoint_Business":
+        # Moniepoint Business — identical ISO-timestamp 3-line layout to OPay Business
         buckets, account_name = parse_opay_business(file_bytes)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
