@@ -662,7 +662,7 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
     )
     AMOUNTS_PAT = re.compile(
         r"([\d,]+\.\d{2}|--)\s+([\d,]+\.\d{2}|--)\s+([\d,]+\.\d{2})\s+"
-        r"(?:Mobile|POS|Web|USSD|ATM|Agent)",
+        r"(?:Mobile|POS|Web|USSD|ATM|Agent|Internet|Bank)",
         re.I,
     )
     DESC_CONT  = re.compile(r"^\s{36,}(\S.*)$")
@@ -703,7 +703,10 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
             continue
 
         if SECTION_END.search(line):
-            break
+            if blocks or current:   # already have wallet txns → stop here
+                break
+            else:
+                continue       
 
         if TXN_START.match(line):
 
