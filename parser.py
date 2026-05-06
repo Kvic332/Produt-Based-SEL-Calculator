@@ -685,75 +685,108 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
 
     lines = layout_text.splitlines()
     buckets: dict = {}
-    pre_desc: list[str] = []
-    state = "pre"
-    in_tx = False
-    # BUG 1 FIX: removed section_count guard — it stopped parsing at the second
-    # "Trans. Time" header (the OWealth/savings section header at ~64% of the file),
-    # silently dropping ~36% of transactions. Now we use SECTION_END exclusively
-    # to detect non-wallet sections, and additionally skip any secondary
-    # "Trans. Time" header lines without breaking out of the parse loop.
-    seen_first_header = False
 
-    for line in lines:
+    TXN_START = re.compile(
+        r"^\s*(\d{2})\s+"
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}",
+        re.I,
+    )
+
+    blocks = []
+    current = []
+
+    for raw in lines:
+        line = raw.rstrip()
+
         if TRANS_TIME.search(line):
-            if not seen_first_header:
-                # First header — start parsing the main wallet section
-                seen_first_header = True
-                in_tx = True
-                pre_desc = []
-                state = "pre"
-            # Any subsequent "Trans. Time" header is a sub-section within the
-            # same wallet export — reset continuation state but keep parsing
-            else:
-                pre_desc = []
-                state = "pre"
             continue
+
         if SECTION_END.search(line):
             break
-        if not in_tx:
+
+        if TXN_START.match(line):
+
+            if current:
+                blocks.append(current)
+
+            current = [line]
+
+        else:
+            if current:
+                current.append(line)
+
+    if current:
+        blocks.append(current)
+
+    for block in blocks:
+
+        first = block[0]
+
+        m = TXN_START.match(first)
+
+        if not m:
             continue
 
-        m = DATE_LINE.match(line)
-        if m:
-            mon  = m.group(2).lower()[:3]
-            year = m.group(3)
-            ym   = f"{year}-{MONTH_NUM[mon]}"
-            amt_m = AMOUNTS_PAT.search(line)
-            if amt_m:
-                credit_tok = amt_m.group(2)
-                credit = (0.0 if credit_tok == "--"
-                          else float(credit_tok.replace(",", "")))
-                # BUG 3 FIX: description column starts at position 37, not 38.
-                # line[38:] was clipping the leading character of the description,
-                # e.g. "OWealth Withdrawal" → "Wealth Withdrawal",
-                #      "Auto-save to OWealth" → "uto-save to OWealth".
-                # Both then missed keyword matching and leaked into real_credit.
-                inline_desc = line[37:amt_m.start()].strip()
-                parts = pre_desc[:]
-                if inline_desc:
-                    parts.append(inline_desc)
-                full_desc = " ".join(parts).strip()
-                if credit > 0:
-                    add_credit(buckets, ym, credit, full_desc, account_name)
-            pre_desc = []
-            state = "post"
+        day = m.group(1)
+        mon = m.group(2).lower()[:3]
+        year = m.group(3)
+
+        ym = f"{year}-{MONTH_NUM[mon]}"
+
+        full_block = "\n".join(block)
+
+        amt_m = AMOUNTS_PAT.search(full_block)
+
+        if not amt_m:
             continue
 
-        stripped = line.strip()
-        if not stripped:
-            pre_desc = []
-            state = "pre"
+        debit_tok = amt_m.group(1)
+        credit_tok = amt_m.group(2)
+
+        if credit_tok == "--":
             continue
-        dm = DESC_CONT.match(line)
-        if dm:
-            text = TRAIL_REF.sub("", dm.group(1)).strip()
-            if text and not re.match(r"^[\d\s]+$", text):
-                if state == "pre":
-                    pre_desc.append(text)
 
-    return buckets, account_name
+        credit = float(credit_tok.replace(",", ""))
 
+        narration_lines = []
+
+        for ln in block[1:]:
+
+            if AMOUNTS_PAT.search(ln):
+                break
+
+            cleaned = TRAIL_REF.sub("", ln).strip()
+
+            if not cleaned:
+                continue
+
+            narration_lines.append(cleaned)
+
+        inline_desc = first[m.end():]
+
+        if amt_m:
+            inline_desc = inline_desc[:max(0, amt_m.start() - m.end())]
+
+        inline_desc = inline_desc.strip()
+
+        if inline_desc:
+            narration_lines.insert(0, inline_desc)
+
+        narration = " ".join(narration_lines)
+
+        narration = re.sub(r"\s+", " ", narration).strip()
+
+        if not narration:
+            continue
+
+        add_credit(
+            buckets,
+            ym,
+            credit,
+            narration,
+            account_name,
+        )
 
 def parse_zenith(full_text: str) -> tuple[dict, str]:
     buckets: dict = {}
