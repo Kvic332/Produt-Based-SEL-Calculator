@@ -646,6 +646,87 @@ def parse_opay(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
+def _parse_opay_v2_text(full_text: str) -> tuple[dict, str]:
+    """
+    Fallback parser for OPay v2 when pdftotext -layout is unavailable.
+    PyPDF2 still extracts the transaction rows, but multi-line descriptions and
+    channel/reference text are collapsed differently from the layout extractor.
+    """
+    if not full_text:
+        return {}, ""
+
+    TXN_START = re.compile(
+        r"^\s*(\d{2})\s+"
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}",
+        re.I,
+    )
+    AMOUNTS_PAT = re.compile(
+        r"([\d,]+\.\d{2}|--)\s+([\d,]+\.\d{2}|--)\s+([\d,]+\.\d{2})\s+"
+        r"(?:Mobile|POS|Web|USSD|ATM|Agent|Internet|Bank)",
+        re.I,
+    )
+    VALUE_DATE_PREFIX = re.compile(
+        r"^\s*\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\s+20\d{2}\s*",
+        re.I,
+    )
+    TRAIL_REF = re.compile(r"\s+\d{10,}\s*$")
+    SECTION_END = re.compile(r"Savings Account", re.I)
+
+    account_name = _extract_account_name(full_text)
+    buckets: dict = {}
+    blocks: list[list[str]] = []
+    current: list[str] = []
+
+    for raw in full_text.splitlines():
+        line = raw.rstrip()
+        if SECTION_END.search(line) and (blocks or current):
+            break
+        if TXN_START.match(line):
+            if current:
+                blocks.append(current)
+            current = [line]
+        elif current:
+            current.append(line)
+
+    if current:
+        blocks.append(current)
+
+    for block in blocks:
+        first = block[0]
+        m = TXN_START.match(first)
+        if not m:
+            continue
+
+        ym = f"{m.group(3)}-{MONTH_NUM[m.group(2).lower()[:3]]}"
+        full_block = " ".join(ln.strip() for ln in block if ln.strip())
+        amt_m = AMOUNTS_PAT.search(full_block)
+        if not amt_m:
+            continue
+
+        credit_tok = amt_m.group(2)
+        if credit_tok == "--":
+            continue
+
+        narration = full_block[m.end():amt_m.start()]
+        narration = VALUE_DATE_PREFIX.sub("", narration)
+        narration = TRAIL_REF.sub("", narration)
+        narration = re.sub(r"\s+", " ", narration).strip()
+        if not narration:
+            continue
+
+        add_credit(
+            buckets,
+            ym,
+            float(credit_tok.replace(",", "")),
+            narration,
+            account_name,
+        )
+
+    return buckets, account_name
+
+
 def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
     """
     Parser for the OPay "Account Statement" format (2025+).
@@ -653,7 +734,7 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
     """
     layout_text = extract_pdf_text_layout(pdf_bytes)
     if not layout_text:
-        return {}, ""
+        return _parse_opay_v2_text(extract_pdf_text(pdf_bytes))
 
     DATE_LINE = re.compile(
         r"^\s{0,4}(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
