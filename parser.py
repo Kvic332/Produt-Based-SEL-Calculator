@@ -66,10 +66,15 @@ _PP_SELF_RECV = re.compile(
 # ── Classification keyword lists (module-level for easy review / PR governance) ──
 
 # OWealth / savings wallet round-trips
+# Includes prefix-clipped variants caused by pdftotext column-offset bug
+# where line[38:] clips the leading "O" → "Wealth..." or "A" → "uto-save..."
 _OWEALTH_KW = [
     "owealth withdrawal", "owealth deposit", "owealth interest",
     "auto-save to owealth", "savings withdrawal", "owealth balance",
     "owealth credit",
+    # Clipped variants (pdftotext drops leading char at description column boundary)
+    "wealth withdrawal", "wealth deposit", "wealth interest",
+    "uto-save to owealth",
 ]
 
 # Third-party savings platforms
@@ -682,17 +687,27 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
     buckets: dict = {}
     pre_desc: list[str] = []
     state = "pre"
-    section_count = 0
     in_tx = False
+    # BUG 1 FIX: removed section_count guard — it stopped parsing at the second
+    # "Trans. Time" header (the OWealth/savings section header at ~64% of the file),
+    # silently dropping ~36% of transactions. Now we use SECTION_END exclusively
+    # to detect non-wallet sections, and additionally skip any secondary
+    # "Trans. Time" header lines without breaking out of the parse loop.
+    seen_first_header = False
 
     for line in lines:
         if TRANS_TIME.search(line):
-            section_count += 1
-            if section_count > 1:
-                break
-            in_tx = True
-            pre_desc = []
-            state = "pre"
+            if not seen_first_header:
+                # First header — start parsing the main wallet section
+                seen_first_header = True
+                in_tx = True
+                pre_desc = []
+                state = "pre"
+            # Any subsequent "Trans. Time" header is a sub-section within the
+            # same wallet export — reset continuation state but keep parsing
+            else:
+                pre_desc = []
+                state = "pre"
             continue
         if SECTION_END.search(line):
             break
@@ -709,7 +724,12 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
                 credit_tok = amt_m.group(2)
                 credit = (0.0 if credit_tok == "--"
                           else float(credit_tok.replace(",", "")))
-                inline_desc = line[38:amt_m.start()].strip()
+                # BUG 3 FIX: description column starts at position 37, not 38.
+                # line[38:] was clipping the leading character of the description,
+                # e.g. "OWealth Withdrawal" → "Wealth Withdrawal",
+                #      "Auto-save to OWealth" → "uto-save to OWealth".
+                # Both then missed keyword matching and leaked into real_credit.
+                inline_desc = line[37:amt_m.start()].strip()
                 parts = pre_desc[:]
                 if inline_desc:
                     parts.append(inline_desc)
@@ -1574,6 +1594,27 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         i = j
 
     return buckets, account_name
+
+# ════════════════════════════════════════════════════════════════════════════
+# ACCESS BANK DIRECT E-STATEMENT CONSTANTS
+# BUG 2 FIX: _AX_DATE_ROW and _AX_TAIL were referenced in parse_access_direct
+# but never defined, causing an immediate NameError on any Access direct PDF.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Matches the opening date pair on an Access direct e-statement row:
+#   DD-MMM-YY  DD-MMM-YY  <rest of line>
+# e.g. "10-SEP-25  10-SEP-25  NIP Transfer to MODUPE COMFORT..."
+_AX_DATE_ROW = re.compile(
+    r"^(\d{2}-[A-Za-z]{3}-\d{2})\s+(\d{2}-[A-Za-z]{3}-\d{2})\s*(.*)"
+)
+
+# Matches the three trailing amount columns at the end of a combined row:
+#   debit_or_dash  credit_or_dash  balance
+# e.g. "-  5,000.00  1,011.73"  OR  "1,000.00  -  1,011.73"
+_AX_TAIL = re.compile(
+    r"([\d,]+\.\d{2}|-)\s+([\d,]+\.\d{2}|-)\s+([\d,]+\.\d{2})\s*$"
+)
+
 
 def _ax_to_ym(ds: str) -> str | None:
     parts = ds.upper().split("-")
