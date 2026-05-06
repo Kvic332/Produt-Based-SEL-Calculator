@@ -790,6 +790,7 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
             narration,
             account_name,
         )
+    return buckets, account_name    
 
 def parse_zenith(full_text: str) -> tuple[dict, str]:
     buckets: dict = {}
