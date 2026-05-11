@@ -340,11 +340,18 @@ def detect_bank(text: str) -> str:
         return "FairMoney"
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
+    # ── Zenith Corporate: MUST be checked before ALL named bank checks ─────
+    # Zenith Corporate e-statements contain "NIP/FCMB/...", "NIP/GTB/...",
+    # etc. in transaction narrations. Any named-bank check that runs first
+    # will misidentify the statement. The "date posted" + "value date" column
+    # pair is unique to Zenith Corporate BOP format; no other bank uses both.
+    # Adding "zenithdirect" OR "zenith" as a tiebreaker so a non-Zenith PDF
+    # that happens to have both column headers doesn't misfire.
+    if "date posted" in t and "value date" in t and             ("zenith" in t or "zenithdirect" in t):
+        return "Zenith_Corporate"
+
     # ── Kuda: MUST be checked before GTBank ──────────────────────────────
-    # Kuda statements contain "Gtbank Plc" in transaction narrations
-    # (NIP transfer counterparty). If GTBank check runs first it fires
-    # on that narration text and misidentifies the statement.
-    # "Kuda MF Bank" and "Kudabank" only appear in the official footer.
+    # Kuda statements contain "Gtbank Plc" in transaction narrations.
     if "kuda mf bank" in t or "kudabank" in t or "kuda technologies" in t:
         return "Kuda"
 
@@ -370,15 +377,15 @@ def detect_bank(text: str) -> str:
         return "Union"
     if "stanbic ibtc" in t or "stanbic" in t:
         return "Stanbic"
-    if "fcmb" in t or "first city monument bank" in t:
+    # FCMB: require mybankstatement watermark OR "first city monument bank"
+    # (the full name). Plain "fcmb" alone appears in Zenith narrations
+    # (NIP/FCMB/...) and must NOT trigger this branch.
+    if "first city monument bank" in t or ("fcmb" in t and "mybankstatement" in t):
         return "FCMB"
     if "wema" in t:
         return "Wema"
     if "sterling bank" in t:
         return "Sterling"
-    # ── Zenith (mybankstatement is Zenith-specific only after above ruled out) ──
-    if "date posted" in t and "value date" in t and "zenith" in t:
-        return "Zenith_Corporate"
     if "mybankstatement" in t or "tran date value date narration" in t:
         return "Zenith"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
