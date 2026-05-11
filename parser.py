@@ -340,6 +340,15 @@ def detect_bank(text: str) -> str:
         return "FairMoney"
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
+
+    # ── Bank-owned e-statement formats must beat counterparty bank names ──
+    if "kuda mf bank" in t or "kudabank" in t:
+        return "Kuda"
+    if ("date posted" in t and "value date" in t and
+            "description" in t and "debit" in t and "credit" in t and
+            "balance" in t):
+        return "Zenith_Corporate"
+
     # ── mybankStatement-format banks ─────────────────────────────────────
     # These banks all share the mybankStatement PDF engine which renders
     # explicit Debit/Credit columns and hyphen or slash date separators.
@@ -366,14 +375,10 @@ def detect_bank(text: str) -> str:
     if "sterling bank" in t:
         return "Sterling"
     # ── Zenith (mybankstatement is Zenith-specific only after above ruled out) ──
-    if "date posted" in t and "value date" in t and "zenith" in t:
-        return "Zenith_Corporate"
     if "mybankstatement" in t or "tran date value date narration" in t:
         return "Zenith"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
         return "Moniepoint"
-    if "kuda mf bank" in t or "kudabank" in t:
-        return "Kuda"
     if "palmpay" in t:
         return "PalmPay"
     if "access bank" in t:
@@ -1062,6 +1067,112 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
+# Format: Tab-separated tokens — PyPDF2 splits each tab into its own line.
+# Sequence per transaction: DD/MM/YY / HH:MM:SS / ₦Amount / category words
+# / To-From info / description / ₦Balance.
+_KUDA_DATE  = re.compile(r"^(\d{2}/\d{2}/\d{2})$")
+_KUDA_TIME  = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+_KUDA_MONEY = re.compile(r"^₦([\d,]+\.\d{2})$")
+_KUDA_OUTWARD = re.compile(
+    r"^(?:outward|paid|payment|bill|airtime|data|electricity|cable|"
+    r"withdrawal|atm|pos charge|bank charge|fee|stamp duty|debit|"
+    r"spend and save|spend\s*\+\s*save)",
+    re.I,
+)
+
+
+def parse_kuda(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Kuda MF Bank PDF statements.
+
+    PyPDF2 extracts Kuda tabs as individual lines. Each transaction block has
+    date, time, amount, category/to-from/description text, and balance.
+    """
+    m = re.search(r"Account Number\s*:\s*\d+\s*\n\s*([A-Z][A-Z\t ]{3,})", full_text)
+    account_name = re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+
+    lines = [ln.strip() for ln in full_text.split("\n")]
+    buckets: dict = {}
+    seen_keys: set = set()
+
+    i = 0
+    while i < len(lines):
+        dm = _KUDA_DATE.match(lines[i])
+        if not dm:
+            i += 1
+            continue
+
+        date_str = dm.group(1)
+        window = []
+        j = i + 1
+        while j < len(lines):
+            wl = lines[j].strip()
+            if _KUDA_DATE.match(wl):
+                break
+            if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF)", wl, re.I):
+                j += 1
+                continue
+            window.append(wl)
+            j += 1
+
+        time_found: str | None = None
+        amounts: list[str] = []
+        text_tokens: list[str] = []
+
+        for wl in window:
+            if not wl:
+                continue
+            mm = _KUDA_MONEY.match(wl)
+            if mm:
+                amounts.append(mm.group(1))
+                continue
+            if _KUDA_TIME.match(wl):
+                time_found = wl
+                continue
+            text_tokens.append(wl)
+
+        if not amounts:
+            i = j
+            continue
+
+        dedup_key = (date_str, time_found or "notime", amounts[0])
+        if dedup_key in seen_keys:
+            i = j
+            continue
+        seen_keys.add(dedup_key)
+
+        category_full = re.sub(r"\t", " ", " ".join(text_tokens)).strip().lower()
+        is_outward = bool(_KUDA_OUTWARD.search(category_full))
+        if not is_outward and text_tokens and re.match(r"^spend$", text_tokens[0].strip(), re.I):
+            is_outward = True
+        if is_outward:
+            i = j
+            continue
+
+        parts = date_str.split("/")
+        if len(parts) != 3:
+            i = j
+            continue
+        _, mon, yr = parts
+        ym = f"{int(yr) + 2000}-{mon}"
+
+        amount = Decimal(amounts[0].replace(",", ""))
+        narration = re.sub(r"\t", " ", " ".join(text_tokens))
+        narration = re.sub(r"\s+", " ", narration).strip()
+
+        if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
+            i = j
+            continue
+        if re.search(r"\bspend\s+and\s+save\b|\bspend\s*\+\s*save\b", narration, re.I):
+            i = j
+            continue
+
+        add_credit(buckets, ym, float(amount), narration, account_name)
+        i = j
+
+    return buckets, account_name
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # FAIRMONEY PARSER
 # ════════════════════════════════════════════════════════════════════════════
@@ -1490,6 +1601,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     elif bank == "Moniepoint_Business":
         # Moniepoint Business — identical ISO-timestamp 3-line layout to OPay Business
         buckets, account_name = parse_opay_business(file_bytes)
+    elif bank == "Kuda":
+        buckets, account_name = parse_kuda(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
