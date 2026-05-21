@@ -4,6 +4,7 @@ import streamlit as st
 from parser import (
     monthly_analysis, parse_transactions, parse_firstcentral,
     ym_label, CreditAccount,
+    extract_stated_totals, verify_extraction_accuracy,
 )
 from sel_rules import calculate_eligibility
 
@@ -203,14 +204,50 @@ with col2:
                 try:
                     buckets, summary, bank, name = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
                     rows = monthly_analysis(buckets, summary)
-                    st.session_state.buckets_a = buckets
-                    st.session_state.summary_a = summary
-                    st.session_state.bank_a    = bank
-                    st.session_state.name_a    = name
-                    st.session_state.rows_a    = rows
+                    st.session_state.buckets_a  = buckets
+                    st.session_state.summary_a  = summary
+                    st.session_state.bank_a     = bank
+                    st.session_state.name_a     = name
+                    st.session_state.rows_a     = rows
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
+
+                    # ── AI Accuracy Verification (free, no API key needed) ──
+                    # Only meaningful for PDF files that carry a stated total.
+                    is_pdf = not file_a.name.lower().endswith((".xlsx", ".xls"))
+                    if is_pdf and buckets:
+                        from parser import extract_pdf_text as _ept
+                        try:
+                            raw_text = _ept(file_a.getvalue(), pw_a)
+                            stated   = extract_stated_totals(raw_text)
+                            verdict  = verify_extraction_accuracy(buckets, stated)
+                            if verdict["pct_match"] is not None:
+                                pct = verdict["pct_match"]
+                                ext = verdict["extracted"]
+                                stl = verdict["stated_total"]
+                                colour = ("#00e676" if pct >= 95
+                                          else "#ff9500" if pct >= 90
+                                          else "#ff4444")
+                                st.markdown(
+                                    f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
+                                    f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
+                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {pct}% match</span>'
+                                    f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
+                                    f'stated ₦{stl:,.0f}</span><br>'
+                                    f'<span style="color:#94a3b8;font-size:11px">{verdict["message"]}</span>'
+                                    f'</div>',
+                                    unsafe_allow_html=True,
+                                )
+                        except Exception:
+                            pass  # Accuracy check is best-effort; never block the main flow
+
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
+                        st.error(
+                            "This PDF appears to be corrupted or incomplete. "
+                            "Please download the bank statement again from your bank app/portal."
+                        )
+                    else:
+                        st.error(f"Error: {e}")
 
 # Show breakdown table for statement A
 if st.session_state.rows_a:
@@ -276,8 +313,43 @@ with col4:
                     st.session_state.name_b    = name_b
                     st.session_state.rows_b    = rows_b
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
+
+                    # ── Accuracy Verification for statement B ──
+                    is_pdf_b = not file_b.name.lower().endswith((".xlsx", ".xls"))
+                    if is_pdf_b and buckets_b:
+                        from parser import extract_pdf_text as _ept2
+                        try:
+                            raw_text_b = _ept2(file_b.getvalue(), pw_b)
+                            stated_b   = extract_stated_totals(raw_text_b)
+                            verdict_b  = verify_extraction_accuracy(buckets_b, stated_b)
+                            if verdict_b["pct_match"] is not None:
+                                pct = verdict_b["pct_match"]
+                                ext = verdict_b["extracted"]
+                                stl = verdict_b["stated_total"]
+                                colour = ("#00e676" if pct >= 95
+                                          else "#ff9500" if pct >= 90
+                                          else "#ff4444")
+                                st.markdown(
+                                    f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
+                                    f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
+                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {pct}% match</span>'
+                                    f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
+                                    f'stated ₦{stl:,.0f}</span><br>'
+                                    f'<span style="color:#94a3b8;font-size:11px">{verdict_b["message"]}</span>'
+                                    f'</div>',
+                                    unsafe_allow_html=True,
+                                )
+                        except Exception:
+                            pass
+
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
+                        st.error(
+                            "This PDF appears to be corrupted or incomplete. "
+                            "Please download the bank statement again from your bank app/portal."
+                        )
+                    else:
+                        st.error(f"Error: {e}")
 
 # Show merged preview
 if st.session_state.rows_a and st.session_state.rows_b:

@@ -312,86 +312,111 @@ def extract_pdf_text_layout(pdf_bytes: bytes) -> str:
 # ════════════════════════════════════════════════════════════════════════════
 def detect_bank(text: str) -> str:
     t = text.lower()
-    # ── OPay v2: new "Account Statement" format with Trans. Time column ──
-    # Must be checked FIRST — before FairMoney — because OPay transaction
-    # narrations often contain "FairMoney MFB" (transfer-from counterparty),
-    # which would otherwise trigger a false FairMoney detection.
-    # The "trans. time" column header is unique to the OPay v2 layout.
+
+    # Header window: first ~1200 chars = bank name / account summary area.
+    # Narrations appear much later, so any bank keyword found here is from
+    # the actual statement header, not a "Transfer to STERLING BANK" narration.
+    t_hdr = t[:1200]
+
+    # ── OPay v2: "Account Statement" with Trans. Time column ─────────────
+    # Checked FIRST: OPay narrations often mention "FairMoney MFB".
     if ("trans. time" in t and
             ("opay digital" in t or "wallet account" in t or "9payment service" in t)):
         return "OPay_v2"
 
-    # ── Moniepoint Business: same ISO-timestamp layout as OPay Business ──
-    # The Moniepoint logo is an image (invisible to PyPDF2) but the MFB
-    # stamp/watermark text IS extracted. Check BEFORE OPay_Business so
-    # Moniepoint statements are never misrouted to OPay_Business.
+    # ── Moniepoint Business: ISO-timestamp layout ─────────────────────────
+    # Checked BEFORE OPay_Business (same ISO layout).
     if ("moniepoint mfb" in t or "moniepoint microfinance" in t) and \
             re.search(r"\d{4}-\d{2}-\d{2}t\d{2}:", t):
         return "Moniepoint_Business"
 
-    # ── OPay Business: ISO-timestamp "Account Statement" format ──────────
-    # Moniepoint check fires first when MFB watermark text is present.
-    # OPay Business: "Business Name" + ISO timestamps + OPay ref patterns.
+    # ── OPay Business: ISO-timestamp "Account Statement" ─────────────────
     if "business name" in t and re.search(r"\d{4}-\d{2}-\d{2}t\d{2}:", t) and \
             ("2mpt" in t or "ap_trsf" in t or "business_credit" in t):
         return "OPay_Business"
 
+    # ── FairMoney ─────────────────────────────────────────────────────────
     if ("fairmoney mfb" in t or "fairmoney microfinance" in t) and "mybankstatement" not in t:
         return "FairMoney"
+
+    # ── OPay legacy ───────────────────────────────────────────────────────
     if "opay digital" in t or "wallet account" in t or "9payment service" in t:
         return "OPay"
-    # ── Zenith Corporate: MUST be checked before ALL named bank checks ─────
-    # Zenith Corporate e-statements contain "NIP/FCMB/...", "NIP/GTB/...",
-    # etc. in transaction narrations. Any named-bank check that runs first
-    # will misidentify the statement. The "date posted" + "value date" column
-    # pair is unique to Zenith Corporate BOP format; no other bank uses both.
-    # Adding "zenithdirect" OR "zenith" as a tiebreaker so a non-Zenith PDF
-    # that happens to have both column headers doesn't misfire.
-    if "date posted" in t and "value date" in t and             ("zenith" in t or "zenithdirect" in t):
+
+    # ── PalmPay NEW format ────────────────────────────────────────────────
+    # Identified by its unique column headers: "Transaction Detail",
+    # "Transaction ID", and "Money In (NGN)". The bank name "PalmPay" may
+    # not appear in the PDF header text, so use format-based detection.
+    if ("transaction detail" in t and "transaction id" in t and
+            ("money in (ngn)" in t or "total money in" in t)):
+        return "PalmPay_New"
+
+    # ── Access Bank Oracle format ─────────────────────────────────────────
+    # Unique column set: "Posted Date" (not "Date Posted") + "Value Date" +
+    # "Debit (NGN)" + "Credit (NGN)". Must be checked BEFORE the generic
+    # "access bank" name check because some Oracle statements omit the bank
+    # name from the extracted text entirely.
+    if ("posted date" in t and "value date" in t and
+            "debit (ngn)" in t and "credit (ngn)" in t):
+        return "Access_Oracle"
+
+    # ── Zenith Corporate: MUST be before ALL named-bank checks ───────────
+    # Zenith Corporate narrations contain "NIP/GTB/...", "NIP/FCMB/..." etc.
+    # "date posted" + "value date" pair is unique to Zenith BOP format.
+    if "date posted" in t and "value date" in t and \
+            ("zenith" in t or "zenithdirect" in t):
         return "Zenith_Corporate"
 
-    # ── Kuda: MUST be checked before GTBank ──────────────────────────────
+    # ── Kuda: MUST be before GTBank ───────────────────────────────────────
     # Kuda statements contain "Gtbank Plc" in transaction narrations.
     if "kuda mf bank" in t or "kudabank" in t or "kuda technologies" in t:
         return "Kuda"
 
-    # ── mybankStatement-format banks ─────────────────────────────────────
-    # These banks all share the mybankStatement PDF engine which renders
-    # explicit Debit/Credit columns and hyphen or slash date separators.
-    # They MUST all be checked BEFORE the generic "mybankstatement" check
-    # below, otherwise they'd get misrouted to parse_zenith().
-    # GTBank check: require "guaranty trust" (header text) OR "gtbank" with
-    # mybankstatement watermark — plain "gtbank" alone can appear in Kuda/
-    # Moniepoint narrations and must NOT trigger this branch.
-    if "guaranty trust" in t or "gtco" in t or             ("gtbank" in t and "mybankstatement" in t) or             ("gt bank" in t and "mybankstatement" in t):
+    # ── mybankStatement-format banks ──────────────────────────────────────
+    # All checks below use t_hdr (header area) for ambiguous keywords so
+    # that NIP narrations ("NIP/STERLING BANK/AMOUNT") never misfire.
+
+    # GTBank: "guaranty trust" / "gtco" are header-only; "gtbank" requires
+    # mybankstatement watermark to avoid false hits in Kuda/Moniepoint narrations.
+    if "guaranty trust" in t or "gtco" in t or \
+            ("gtbank" in t and "mybankstatement" in t) or \
+            ("gt bank" in t and "mybankstatement" in t):
         return "GTBank"
-    if "access bank" in t:
+
+    if "access bank" in t_hdr or ("access bank" in t and "mybankstatement" in t):
         return "Access"
-    if "first bank" in t or "firstbank" in t:
+    if "first bank" in t_hdr or "firstbank" in t_hdr or \
+            (("first bank" in t or "firstbank" in t) and "mybankstatement" in t):
         return "FirstBank"
     if "united bank for africa" in t or ("uba" in t and "mybankstatement" in t):
         return "UBA"
-    if "fidelity bank" in t:
+    if "fidelity bank" in t_hdr or ("fidelity bank" in t and "mybankstatement" in t):
         return "Fidelity"
-    if "union bank" in t:
+    if "union bank" in t_hdr or ("union bank" in t and "mybankstatement" in t):
         return "Union"
-    if "stanbic ibtc" in t or "stanbic" in t:
+    if "stanbic ibtc" in t_hdr or \
+            ("stanbic" in t and ("mybankstatement" in t or "stanbic ibtc" in t)):
         return "Stanbic"
-    # FCMB: require mybankstatement watermark OR "first city monument bank"
-    # (the full name). Plain "fcmb" alone appears in Zenith narrations
-    # (NIP/FCMB/...) and must NOT trigger this branch.
+    # FCMB: full name OR mybankstatement watermark. Plain "fcmb" in Zenith
+    # narrations (NIP/FCMB/...) must NOT fire — Zenith_Corporate already
+    # caught above, but be explicit here too.
     if "first city monument bank" in t or ("fcmb" in t and "mybankstatement" in t):
         return "FCMB"
-    if "wema" in t:
+    # Wema/Sterling: restrict to header area to avoid narration false-positives
+    # (e.g. "Wema : ALAT Salary Loan" appears in ANY bank's statement).
+    if "wema bank" in t_hdr or ("wema" in t_hdr and "mybankstatement" in t):
         return "Wema"
-    if "sterling bank" in t:
+    if "sterling bank" in t_hdr or ("sterling bank" in t and "mybankstatement" in t):
         return "Sterling"
+
     if "mybankstatement" in t or "tran date value date narration" in t:
         return "Zenith"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
         return "Moniepoint"
     if "palmpay" in t:
         return "PalmPay"
+
+    # ── Broad fallbacks (safe because more-specific checks fired first) ───
     if "access bank" in t:
         return "Access"
     if "united bank for africa" in t:
@@ -404,7 +429,7 @@ def detect_bank(text: str) -> str:
         return "Sterling"
     if "fcmb" in t or "first city monument bank" in t:
         return "FCMB"
-    if "wema" in t:
+    if "wema bank" in t:
         return "Wema"
     if "fidelity bank" in t:
         return "Fidelity"
@@ -1309,6 +1334,350 @@ def parse_fairmoney(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# PALMPAY NEW-FORMAT PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_palmpay_new(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for the PalmPay "Account Statement" format.
+
+    Header: Name, Phone Number, Account Number (= phone number), Total Money In/Out
+    Columns: Transaction Date | Transaction Detail | Money In (NGN) | Money Out (NGN) | Transaction ID
+    Date format: MM/DD/YYYY HH:MM:SS AM/PM  (US-style date)
+    Amount sign: immediately precedes the amount — '+' for Money In, '-' for Money Out.
+    The sign and amount may be concatenated directly onto the narration end:
+        "EMMANUEL ONAH+2000.00 6031thor1a907"
+    Transaction ID is always the last token (8+ alphanumeric chars, no spaces).
+
+    Bank name "PalmPay" may be absent from PyPDF2-extracted header text, so
+    this parser is reached via format-based detection in detect_bank().
+    """
+    buckets: dict = {}
+    account_name = ""
+
+    # PalmPay header: "Account StatementName FIRSTNAME LASTNAME" on one line
+    m = re.search(r'(?:Account\s*Statement\s*)?Name\s+([A-Z][A-Z ]{3,})', full_text)
+    if m:
+        account_name = m.group(1).strip()
+    if not account_name:
+        account_name = _extract_account_name(full_text)
+
+    # Date anchor: MM/DD/YYYY HH:MM:SS [AP]M (AM/PM may be glued to narration)
+    DATE_RE = re.compile(
+        r'^(\d{2})/(\d{2})/(\d{4})\s+\d{2}:\d{2}:\d{2}\s*[AP]M\s*(.*)',
+        re.I,
+    )
+    # Amount+sign with trailing Transaction ID at line end
+    AMT_RE = re.compile(r'([+\-])([\d,]+\.\d{2})\s+\S{6,}\s*$')
+
+    in_tx = False
+    pending_ym = ""
+    pending_narr = ""
+
+    def _flush_pending(narr: str) -> None:
+        nonlocal pending_ym, pending_narr
+        am = AMT_RE.search(narr)
+        if am and am.group(1) == "+" and pending_ym:
+            amount = float(am.group(2).replace(",", ""))
+            clean_narr = narr[:am.start()].strip()
+            add_credit(buckets, pending_ym, amount, clean_narr, account_name)
+        pending_ym = ""
+        pending_narr = ""
+
+    for line in full_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if "transaction date" in stripped.lower() and "transaction detail" in stripped.lower():
+            in_tx = True
+            continue
+
+        if not in_tx:
+            continue
+
+        dm = DATE_RE.match(stripped)
+        if dm:
+            # Flush any accumulated pending transaction
+            if pending_ym:
+                _flush_pending(pending_narr)
+
+            month, day, year = dm.group(1), dm.group(2), dm.group(3)
+            pending_ym = f"{year}-{month}"
+            rest = dm.group(4).strip()
+
+            am = AMT_RE.search(rest)
+            if am:
+                if am.group(1) == "+":
+                    amount = float(am.group(2).replace(",", ""))
+                    add_credit(buckets, pending_ym, amount, rest[:am.start()].strip(), account_name)
+                pending_ym = ""
+                pending_narr = ""
+            else:
+                pending_narr = rest
+        elif pending_ym:
+            combined = (pending_narr + " " + stripped).strip()
+            am = AMT_RE.search(combined)
+            if am:
+                if am.group(1) == "+":
+                    amount = float(am.group(2).replace(",", ""))
+                    add_credit(buckets, pending_ym, amount,
+                               combined[:am.start()].strip(), account_name)
+                pending_ym = ""
+                pending_narr = ""
+            else:
+                pending_narr = combined
+
+    if pending_ym:
+        _flush_pending(pending_narr)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ACCESS BANK ORACLE-FORMAT PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_access_oracle(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Access Bank (Oracle-style) PDF statements.
+
+    Column header: Posted Date  Value Date  Description  Debit (NGN)  Credit (NGN)  Balance (NGN)
+    Date format:   DD-MON-YY  (e.g. 09-SEP-25)
+
+    Amount layout per row (two possible patterns):
+      Credit row: [text]-  CREDIT  BALANCE   ← debit column is "-" (may be glued to preceding text)
+      Debit  row: DEBIT  -  BALANCE           ← credit column is "-" (standalone dash)
+
+    PyPDF2 sometimes concatenates the value date onto the description without
+    a space: "09-SEP-25 09-SEP-25NIP Transfer..." — handled by the DATE_RE
+    which strips both date tokens then captures the rest.
+    """
+    buckets: dict = {}
+    account_name = _extract_account_name(full_text)
+
+    _MON3 = {
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+        "may": 5, "jun": 6, "jul": 7, "aug": 8,
+        "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+
+    # Date line: DD-MON-YY  DD-MON-YY  [Description...]
+    # PyPDF2 may insert a stray space inside the date: "OCT -25" → tolerate
+    # with \s* before each two-digit year component.
+    DATE_RE = re.compile(
+        r'^(\d{2})-([A-Za-z]{3})\s*-(\d{2})\s+\d{2}-[A-Za-z]{3}\s*-\d{2}\s*(.*)',
+        re.I,
+    )
+    # Credit: leading dash (debit="-") then AMOUNT BALANCE at end of text
+    # Balance uses [\d, ]+ to tolerate PyPDF2 stray spaces inside large numbers
+    # e.g. "1,500,118.38" → "1,500,1 18.38" (space inserted mid-number)
+    CREDIT_AMT = re.compile(r'-\s*([\d,]+\.\d{2})\s+([\d, ]+\.\d{2})\s*$')
+    # Debit:  AMOUNT then dash then BALANCE at end of text
+    # Same tolerance for stray spaces in balance column
+    DEBIT_AMT  = re.compile(r'([\d,]+\.\d{2})\s+-\s*([\d, ]+\.\d{2})\s*$')
+    # Explicit 3-column: DEBIT  CREDIT  BALANCE (rare in this format)
+    THREE_AMT  = re.compile(
+        r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$'
+    )
+
+    # Lines to skip regardless of in_tx state
+    SKIP_RE = re.compile(
+        r'^(?:posted\s+date|value\s+date|page\s+\d|generated\s+on|'
+        r'account\s+details|financial\s+summary|transactions\s*$|'
+        r'statement\s+period|currency\s*:|account\s+class)',
+        re.I,
+    )
+
+    def _try_credit(text: str) -> tuple[float, str]:
+        """Return (credit_amount, narration) if a credit row; else (0, '')."""
+        m3 = THREE_AMT.search(text)
+        if m3:
+            debit  = float(m3.group(1).replace(",", ""))
+            credit = float(m3.group(2).replace(",", ""))
+            if credit > 0 and debit == 0:
+                return credit, text[:m3.start()].strip()
+            return 0, ""
+        mc = CREDIT_AMT.search(text)
+        if mc:
+            credit = float(mc.group(1).replace(",", ""))
+            return (credit, text[:mc.start()].strip()) if credit > 0 else (0, "")
+        return 0, ""
+
+    def _has_amounts(text: str) -> bool:
+        return bool(
+            THREE_AMT.search(text) or
+            CREDIT_AMT.search(text) or
+            DEBIT_AMT.search(text)
+        )
+
+    in_tx = False
+    pending_ym = ""
+    pending_narr = ""
+
+    for line in full_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # ── Section-start detection MUST fire before SKIP_RE ─────────────
+        # "TRANSACTIONS" and "Posted Date" are both in SKIP_RE but they are
+        # also the markers that enable transaction parsing. Check them first.
+        if re.search(r'\bTRANSACTIONS\b', stripped) or \
+           (re.search(r'\bPosted\s+Date\b', stripped, re.I) and
+                re.search(r'\bValue\s+Date\b', stripped, re.I)):
+            in_tx = True
+            continue
+
+        if SKIP_RE.match(stripped):
+            continue
+
+        if not in_tx:
+            continue
+
+        dm = DATE_RE.match(stripped)
+        if dm:
+            # Flush previous transaction
+            if pending_ym and pending_narr:
+                amt, narr = _try_credit(pending_narr)
+                if amt > 0:
+                    add_credit(buckets, pending_ym, amt, narr, account_name)
+
+            mon_str = dm.group(2).lower()[:3]
+            yr2     = int(dm.group(3))
+            month_num = _MON3.get(mon_str, 0)
+            if not month_num:
+                pending_ym = ""
+                pending_narr = ""
+                continue
+
+            pending_ym = f"{2000 + yr2}-{str(month_num).zfill(2)}"
+            rest = dm.group(4).strip()
+
+            amt, narr = _try_credit(rest)
+            if amt > 0:
+                add_credit(buckets, pending_ym, amt, narr, account_name)
+                pending_ym = ""
+                pending_narr = ""
+            elif _has_amounts(rest):
+                # Debit row — complete, discard
+                pending_ym = ""
+                pending_narr = ""
+            else:
+                pending_narr = rest
+
+        elif pending_ym:
+            combined = (pending_narr + " " + stripped).strip()
+            amt, narr = _try_credit(combined)
+            if amt > 0:
+                add_credit(buckets, pending_ym, amt, narr, account_name)
+                pending_ym = ""
+                pending_narr = ""
+            elif _has_amounts(combined):
+                # Debit row complete — discard
+                pending_ym = ""
+                pending_narr = ""
+            else:
+                pending_narr = combined
+
+    # Flush last pending
+    if pending_ym and pending_narr:
+        amt, narr = _try_credit(pending_narr)
+        if amt > 0:
+            add_credit(buckets, pending_ym, amt, narr, account_name)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ACCURACY VERIFICATION — extract stated totals from PDF header
+# ════════════════════════════════════════════════════════════════════════════
+def extract_stated_totals(full_text: str) -> dict:
+    """
+    Parse the bank-stated summary figures from the top of a PDF statement.
+
+    Returns a dict with any subset of:
+      total_credits    — stated total inflows / deposits / money-in
+      total_debits     — stated total outflows / withdrawals / money-out
+      opening_balance  — opening balance
+      closing_balance  — closing balance
+
+    Only the first 3 000 characters are searched (the header/summary area)
+    to avoid picking up transaction-line amounts.
+    """
+    header = full_text[:3000]
+    result: dict = {}
+
+    patterns = [
+        # Total inflows
+        (r'Total\s+(?:Money\s+In|Deposits?|Credits?|Inflow)\s*[:\s]*[₦\s]*([\d,]+\.\d{2})',
+         "total_credits"),
+        # Total outflows
+        (r'Total\s+(?:Money\s+Out|Withdrawals?|Debits?|Outflow)\s*[:\s]*[₦\s]*([\d,]+\.\d{2})',
+         "total_debits"),
+        # Opening balance
+        (r'Opening\s+Balance\s*[:\s]*[₦\s]*([\d,]+\.\d{2})',
+         "opening_balance"),
+        # Closing / cleared balance
+        (r'(?:Closing|Cleared)\s+Balance\s*[:\s]*[₦\s]*([\d,]+\.\d{2})',
+         "closing_balance"),
+    ]
+    for pat, key in patterns:
+        m = re.search(pat, header, re.I)
+        if m:
+            result[key] = float(m.group(1).replace(",", ""))
+    return result
+
+
+def verify_extraction_accuracy(
+    buckets: dict,
+    stated: dict,
+) -> dict:
+    """
+    Compare extracted gross credits against the bank-stated total credits.
+
+    Returns:
+      matched      — True if within tolerance
+      extracted    — sum of extracted gross credits
+      stated_total — bank-stated total (or None)
+      pct_match    — 0–100 match percentage (or None)
+      message      — human-readable summary
+    """
+    if not stated or "total_credits" not in stated:
+        return {"matched": None, "extracted": None,
+                "stated_total": None, "pct_match": None,
+                "message": "No stated total found in header to verify against."}
+
+    extracted = sum(b.get("gross", 0) for b in buckets.values())
+    stated_total = stated["total_credits"]
+
+    if stated_total == 0:
+        return {"matched": None, "extracted": extracted,
+                "stated_total": 0, "pct_match": None,
+                "message": "Stated total is zero — cannot verify."}
+
+    pct = min(extracted, stated_total) / max(extracted, stated_total) * 100
+    matched = pct >= 90.0  # within 10% is considered a match
+    diff = abs(extracted - stated_total)
+
+    if pct >= 99:
+        msg = f"Extraction matches stated total within 1% — ✓ High confidence"
+    elif pct >= 95:
+        msg = f"Extraction within 5% of stated total — ✓ Good match (₦{diff:,.0f} gap)"
+    elif pct >= 90:
+        msg = f"Extraction within 10% of stated total — ⚠ Acceptable (₦{diff:,.0f} gap)"
+    else:
+        msg = (f"Extracted ₦{extracted:,.0f} vs stated ₦{stated_total:,.0f} — "
+               f"⚠ Large gap (₦{diff:,.0f}). Some transactions may not have been parsed.")
+
+    return {
+        "matched": matched,
+        "extracted": extracted,
+        "stated_total": stated_total,
+        "pct_match": round(pct, 1),
+        "message": msg,
+    }
+
+
 def parse_summary_credits(full_text: str) -> dict[str, float]:
     summary: dict[str, float] = {}
     pat = re.compile(
@@ -1636,17 +2005,17 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     elif bank == "OPay":
         buckets, account_name = parse_opay(full_text)
     elif bank == "OPay_v2":
-        # New OPay "Account Statement" format — requires pdftotext -layout
-        # for accurate column-aligned extraction.
         buckets, account_name = parse_opay_v2(file_bytes)
     elif bank == "OPay_Business":
-        # OPay Business "Account Statement" — ISO timestamp rows, 3-line blocks
         buckets, account_name = parse_opay_business(file_bytes)
     elif bank == "Moniepoint_Business":
-        # Moniepoint Business — identical ISO-timestamp 3-line layout to OPay Business
         buckets, account_name = parse_opay_business(file_bytes)
     elif bank == "Kuda":
         buckets, account_name = parse_kuda(full_text)
+    elif bank == "PalmPay_New":
+        buckets, account_name = parse_palmpay_new(full_text)
+    elif bank == "Access_Oracle":
+        buckets, account_name = parse_access_oracle(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+
+# Debug / dev artifacts
+pdf_extract.json
+access_stmt.json
+*.debug.json
+
+# Claude Code session memory
+.claude/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
