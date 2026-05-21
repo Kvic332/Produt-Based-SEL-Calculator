@@ -388,7 +388,7 @@ def detect_bank(text: str) -> str:
     if "first bank" in t_hdr or "firstbank" in t_hdr or \
             (("first bank" in t or "firstbank" in t) and "mybankstatement" in t):
         return "FirstBank"
-    if "united bank for africa" in t or ("uba" in t and "mybankstatement" in t):
+    if "united bank for africa" in t_hdr or ("uba" in t_hdr and "mybankstatement" in t):
         return "UBA"
     if "fidelity bank" in t_hdr or ("fidelity bank" in t and "mybankstatement" in t):
         return "Fidelity"
@@ -945,9 +945,21 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
     accidentally drops transaction narrations that mention a bank name.
     """
     buckets: dict     = {}
+
+    # ── Wema Bank: PyPDF2 splits DD-MM-YYYY across three lines ───────────
+    # Line 1: "02-10-"   Line 2: "202501-10-"   Line 3: "2025narration..."
+    # Rejoin before parsing so GTB_DATE can see a full date.
+    if re.search(r'^\d{2}-\d{2}-$', full_text, re.M):
+        full_text = re.sub(
+            r'(\d{2}-\d{2}-)\r?\n(\d{4})(\d{2}-\d{2}-)\r?\n(\d{4})',
+            r'\1\2 \3\4 ',
+            full_text,
+        )
+
     account_name: str = _extract_account_name(full_text)
 
-    GTB_DATE = re.compile(r"^(\d{2}[-/]\d{2}[-/]\d{4})")
+    # Handles both numeric months (DD-MM-YYYY) and alpha months (DD-Mon-YYYY)
+    GTB_DATE = re.compile(r"^(\d{2})[-/](\d{2}|[A-Za-z]{3})[-/](\d{4})", re.I)
     MONEY3   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
     MONEY2   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
     DATE_ORDER = "dmy"
@@ -988,26 +1000,38 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
         pending_ym = pending_narr = ""
         pending_cr = 0.0
 
-    def _kind_from_delta(amount: Decimal, balance: Decimal, narr: str = "") -> str:
+    def _kind_from_delta(amount: Decimal, balance: Decimal, narr: str = "") -> tuple:
+        """Return (kind, true_amount) for 2-column (Layout B) transaction rows.
+
+        true_amount is the balance delta, not the raw amount column.
+        Reference numbers are often concatenated to the amount by PyPDF2
+        (e.g. "349347647473500.00" instead of "500.00"), so the amount column
+        is unreliable.  We always use balance - prev_bal as the credit amount.
+
+        When prev_bal is None (first transaction), delta is unknown so we
+        return 0 for the credit amount — no credit is added.  The debit
+        direction is still detected so prev_bal gets set for future rows.
+        """
         nonlocal prev_bal
         if prev_bal is None:
-            # No previous balance — use narration heuristic for first row
             tl = narr.lower()
             if re.search(r"\bfrom\b|\bpayment\b|\bcredit\b|\bdeposit\b|\binflow\b|\breceived\b", tl):
                 kind = "credit"
             elif re.search(r"\bto\b|\btransfer to\b|\bwithdraw\b|\bdebit\b|\boutflow\b|\bcharge\b|\bairtime\b|\bpurchase\b", tl):
                 kind = "debit"
             else:
-                kind = "credit"  # default to credit when truly ambiguous on first row
+                kind = "credit"
+            prev_bal = balance
+            # Amount column may be contaminated — can't compute delta yet
+            return kind, Decimal("0")
         else:
             delta = balance - prev_bal
-            if   abs(delta - amount) <= Decimal("0.02"): kind = "credit"
-            elif abs(delta + amount) <= Decimal("0.02"): kind = "debit"
-            elif delta > 0:                               kind = "credit"
-            elif delta < 0:                               kind = "debit"
-            else:                                         kind = "credit"
-        prev_bal = balance
-        return kind
+            prev_bal = balance
+            if   abs(delta - amount) <= Decimal("0.02"): return "credit", amount
+            elif abs(delta + amount) <= Decimal("0.02"): return "debit",  amount
+            elif delta > 0:  return "credit", delta   # delta is the reliable credit amount
+            elif delta < 0:  return "debit",  -delta
+            else:            return "credit", Decimal("0")
 
     def _process_amounts(m3, m2, narr_prefix: str) -> None:
         """Resolve amounts and set pending_cr / clear it."""
@@ -1029,9 +1053,9 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
             balance = Decimal(m2.group(2).replace(",", ""))
             extra   = narr_prefix.strip()
             pending_narr = (pending_narr + " " + extra).strip() if extra else pending_narr
-            kind = _kind_from_delta(amount, balance, pending_narr)
+            kind, true_amt = _kind_from_delta(amount, balance, pending_narr)
             if kind == "credit":
-                pending_cr = float(amount)
+                pending_cr = float(true_amt)
             else:
                 pending_cr   = 0.0
                 pending_narr = ""
@@ -1058,17 +1082,22 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
 
         if date_m:
             _flush()
-            raw_date   = date_m.group(1).replace("-", "/")
-            p1, p2, yy = raw_date.split("/")
-            if DATE_ORDER == "mdy" or (int(p2) > 12 >= int(p1)):
+            p1 = date_m.group(1)   # DD
+            p2 = date_m.group(2)   # MM (numeric) or Mon (alpha e.g. "Oct")
+            yy = date_m.group(3)   # YYYY
+            if not p2.isdigit():
+                # Alpha month: "Oct" → "10"
+                mm = str(MONTH_MAP.get(p2.lower()[:3], 1)).zfill(2)
+            elif DATE_ORDER == "mdy" or (int(p2) > 12 >= int(p1)):
                 mm = p1
             else:
                 mm = p2
             pending_ym = f"{yy}-{mm}"
 
             # Everything after the transaction date (strip optional value-date)
+            # Value date may also use alpha months (e.g. "05-Nov-2025")
             rest = stripped[date_m.end():].strip()
-            rest = re.sub(r"^\d{2}[-/]\d{2}[-/]\d{4}\s*", "", rest).strip()
+            rest = re.sub(r"^\d{2}[-/](?:\d{2}|[A-Za-z]{3})[-/]\d{4}\s*", "", rest, flags=re.I).strip()
 
             m3 = MONEY3.search(rest)
             m2 = MONEY2.search(rest) if not m3 else None
