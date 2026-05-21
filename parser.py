@@ -10,6 +10,9 @@ from typing import Optional
 
 from PyPDF2 import PdfReader
 
+# ── Transaction log (reset on each parse_transactions call) ─────────────────
+_txn_log: list[dict] = []
+
 # Excel support — openpyxl for .xlsx, xlrd for .xls
 try:
     import openpyxl
@@ -276,6 +279,8 @@ def add_credit(buckets: dict, ym: str, amount: float,
     buckets[ym]["count"]  += 1
     cat, _ = classify_credit(narration, account_name)
     buckets[ym][cat] = buckets[ym].get(cat, 0.0) + amount
+    # Append to global transaction log for search feature
+    _txn_log.append({"ym": ym, "narration": narration, "amount": amount, "category": cat})
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2078,12 +2083,16 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
 # MAIN ENTRY POINT
 # ════════════════════════════════════════════════════════════════════════════
 def parse_transactions(file_bytes: bytes, password: str = "",
-                       filename: str = "") -> tuple[dict, dict, str, str]:
+                       filename: str = "") -> tuple[dict, dict, str, str, list]:
     """
     Auto-detects PDF vs Excel and routes accordingly.
-    Returns (buckets, summary_credits, bank_name, account_name)
+    Returns (buckets, summary_credits, bank_name, account_name, transactions)
     buckets: {ym: {gross, count, self_transfer, reversal, non_business, loan_disbursal, real_credit}}
+    transactions: list of {ym, narration, amount, category} for keyword search
     """
+    global _txn_log
+    _txn_log = []  # Reset for each new parse
+
     # ── Excel detection ───────────────────────────────────────────────────
     is_excel = (filename.lower().endswith((".xlsx", ".xls")) or
                 file_bytes[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0"))
@@ -2091,7 +2100,7 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_excel(file_bytes)
         bank = "Mono Excel"
         summary: dict = {}
-        return buckets, summary, bank, account_name
+        return buckets, summary, bank, account_name, list(_txn_log)
 
     # ── PDF ───────────────────────────────────────────────────────────────
     full_text = extract_pdf_text(pdf_bytes=file_bytes, password=password)
@@ -2130,15 +2139,22 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     else:
         buckets, account_name = parse_generic(full_text)
 
-    return buckets, summary, bank, account_name
+    return buckets, summary, bank, account_name, list(_txn_log)
 
 
 def monthly_analysis(buckets: dict, summary: dict | None = None) -> list[dict]:
+    """
+    Compute per-month eligible income.
+    self_transfer is tracked but NOT deducted — same-name deposits are
+    real deposits to the account and should count towards income.
+    Deductions: reversal + non_business + loan_disbursal only.
+    """
     rows = []
     for ym in sorted(set(buckets) | set(summary or {})):
         b = buckets.get(ym, _empty_bucket())
         gross = (summary or {}).get(ym, b["gross"])
-        deductions = (b.get("self_transfer", 0) + b.get("reversal", 0) +
+        # Self-transfers (same-name deposits) are informational only — not deducted.
+        deductions = (b.get("reversal", 0) +
                       b.get("non_business", 0) + b.get("loan_disbursal", 0))
         rows.append({
             "ym": ym,

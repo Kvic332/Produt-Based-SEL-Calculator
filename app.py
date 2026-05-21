@@ -141,6 +141,47 @@ st.markdown("""
   [data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 10px !important;
                                    letter-spacing: 2px !important; text-transform: uppercase !important; }
   [data-testid="stMetricValue"] { color: var(--accent) !important; font-size: 20px !important; }
+
+  /* Divider */
+  hr { border: none !important; border-top: 1px solid var(--border) !important; margin: 28px 0 !important; }
+
+  /* Caption */
+  [data-testid="stCaptionContainer"] { color: var(--muted) !important; font-size: 11px !important; }
+
+  /* Search input highlight */
+  [data-testid="stTextInput"] input:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px rgba(0,212,255,.15) !important;
+  }
+
+  /* Number input */
+  [data-testid="stNumberInput"] input:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px rgba(0,212,255,.1) !important;
+  }
+
+  /* Spinner */
+  .stSpinner > div { border-top-color: var(--accent) !important; }
+
+  /* Success / error messages */
+  [data-testid="stAlert"] { font-family: 'Space Mono', monospace !important; font-size: 12px !important; }
+
+  /* Column gap tightening for inflow grid */
+  .inflow-grid-header { font-size: 9px; letter-spacing: 2px; color: var(--muted);
+                         text-transform: uppercase; padding-bottom: 4px; }
+
+  /* Download button */
+  [data-testid="stDownloadButton"] button {
+    background: transparent !important;
+    border: 1px solid var(--muted) !important;
+    color: var(--muted) !important;
+    font-size: 10px !important;
+    letter-spacing: 1px !important;
+  }
+  [data-testid="stDownloadButton"] button:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -164,7 +205,7 @@ def section(title: str) -> str:
 # ── Session state init ────────────────────────────────────────────────────────
 for key in ["buckets_a","summary_a","bank_a","name_a",
             "buckets_b","summary_b","bank_b","name_b",
-            "credit_data","rows_a","rows_b"]:
+            "credit_data","rows_a","rows_b","txns_a","txns_b"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -202,13 +243,14 @@ with col2:
         else:
             with st.spinner("Extracting..."):
                 try:
-                    buckets, summary, bank, name = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
+                    buckets, summary, bank, name, txns = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
                     rows = monthly_analysis(buckets, summary)
                     st.session_state.buckets_a  = buckets
                     st.session_state.summary_a  = summary
                     st.session_state.bank_a     = bank
                     st.session_state.name_a     = name
                     st.session_state.rows_a     = rows
+                    st.session_state.txns_a     = txns
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
 
                     # ── AI Accuracy Verification (free, no API key needed) ──
@@ -263,7 +305,7 @@ if st.session_state.rows_a:
         hdr = ('<tr>'
                '<th class="col-gross" style="text-align:left">Month</th>'
                '<th class="col-gross">Total Inflow</th>')
-        if has_self:  hdr += '<th class="col-self">Internal Movements</th>'
+        if has_self:  hdr += '<th class="col-self">Self Deposits</th>'
         if has_rev:   hdr += '<th class="col-rev">Reversals</th>'
         if has_nb:    hdr += '<th class="col-nonbiz">Non-Business</th>'
         if has_loan:  hdr += '<th class="col-loan">Loan Disbursals</th>'
@@ -273,7 +315,7 @@ if st.session_state.rows_a:
         for r in rows_a:
             body += (f'<tr><td>{r["label"]}</td>'
                      f'<td class="col-gross">{money(r["gross"])}</td>')
-            if has_self:  body += f'<td class="col-self">{("-"+money(r["self_transfer"])) if r["self_transfer"] > 0 else "—"}</td>'
+            if has_self:  body += f'<td class="col-self" style="color:var(--orange);font-size:11px">{money(r["self_transfer"]) if r["self_transfer"] > 0 else "—"}</td>'
             if has_rev:   body += f'<td class="col-rev">{("-"+money(r["reversal"])) if r["reversal"] > 0 else "—"}</td>'
             if has_nb:    body += f'<td class="col-nonbiz">{("-"+money(r["non_business"])) if r["non_business"] > 0 else "—"}</td>'
             if has_loan:  body += f'<td class="col-loan">{("-"+money(r["loan_disbursal"])) if r["loan_disbursal"] > 0 else "—"}</td>'
@@ -283,6 +325,70 @@ if st.session_state.rows_a:
             f'<table class="preview-table"><thead>{hdr}</thead><tbody>{body}</tbody></table>',
             unsafe_allow_html=True,
         )
+        if has_self:
+            st.markdown(
+                '<div style="font-size:10px;color:#ff9500;margin-top:4px">'
+                '⚑ Self Deposits are shown for reference only — they are <strong>not deducted</strong> from eligible income.</div>',
+                unsafe_allow_html=True,
+            )
+
+# ── Transaction Search — Statement A ─────────────────────────────────────────
+if st.session_state.txns_a:
+    st.markdown(
+        '<div style="margin-top:16px;font-size:10px;letter-spacing:2px;color:#00d4ff;'
+        'text-transform:uppercase;margin-bottom:6px">Transaction Search</div>',
+        unsafe_allow_html=True,
+    )
+    search_a = st.text_input(
+        "Search keyword",
+        key="search_a",
+        placeholder="e.g. salary, transfer, POS, Flutterwave...",
+        label_visibility="collapsed",
+    )
+    if search_a and search_a.strip():
+        kw = search_a.strip().lower()
+        matches = [t for t in st.session_state.txns_a if kw in t["narration"].lower()]
+        if matches:
+            total_match = sum(t["amount"] for t in matches)
+            st.markdown(
+                f'<div style="font-size:11px;color:#64748b;margin-bottom:6px">'
+                f'Found <span style="color:#00d4ff;font-weight:700">{len(matches)}</span> credit(s) '
+                f'matching <em>"{search_a}"</em> — '
+                f'Total: <span style="color:#00e676;font-weight:700">{money(total_match)}</span></div>',
+                unsafe_allow_html=True,
+            )
+            _CAT_COLOUR = {
+                "real_credit": "#00e676", "self_transfer": "#ff9500",
+                "reversal": "#e040fb", "non_business": "#64748b", "loan_disbursal": "#ffd700",
+            }
+            rows_html = ""
+            for t in matches[:100]:  # cap at 100 rows for performance
+                clr = _CAT_COLOUR.get(t["category"], "#e2e8f0")
+                cat_label = t["category"].replace("_", " ").title()
+                rows_html += (
+                    f'<tr><td style="color:#00d4ff">{t["ym"]}</td>'
+                    f'<td style="color:#00e676;text-align:right">{money(t["amount"])}</td>'
+                    f'<td><span style="background:rgba(255,255,255,.05);padding:1px 6px;'
+                    f'border-radius:3px;font-size:9px;color:{clr}">{cat_label}</span></td>'
+                    f'<td style="color:#94a3b8;font-size:11px">{t["narration"][:80]}</td></tr>'
+                )
+            if len(matches) > 100:
+                rows_html += f'<tr><td colspan="4" style="color:#64748b;font-size:10px;padding-top:6px">... and {len(matches)-100} more</td></tr>'
+            st.markdown(
+                f'<table class="preview-table" style="margin-top:4px">'
+                f'<thead><tr>'
+                f'<th style="text-align:left">Month</th>'
+                f'<th style="text-align:right">Amount</th>'
+                f'<th style="text-align:left">Category</th>'
+                f'<th style="text-align:left">Narration</th>'
+                f'</tr></thead><tbody>{rows_html}</tbody></table>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="color:#64748b;font-size:12px;padding:8px 0">No credit transactions found matching <em>"{search_a}"</em>.</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -305,13 +411,14 @@ with col4:
         else:
             with st.spinner("Extracting second statement..."):
                 try:
-                    buckets_b, summary_b, bank_b, name_b = parse_transactions(file_b.getvalue(), pw_b, filename=file_b.name)
+                    buckets_b, summary_b, bank_b, name_b, txns_b = parse_transactions(file_b.getvalue(), pw_b, filename=file_b.name)
                     rows_b = monthly_analysis(buckets_b, summary_b)
                     st.session_state.buckets_b = buckets_b
                     st.session_state.summary_b = summary_b
                     st.session_state.bank_b    = bank_b
                     st.session_state.name_b    = name_b
                     st.session_state.rows_b    = rows_b
+                    st.session_state.txns_b    = txns_b
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
 
                     # ── Accuracy Verification for statement B ──
@@ -382,6 +489,64 @@ if st.session_state.rows_a and st.session_state.rows_b:
                  f'</tr></tfoot></table>')
         html += f'<div style="font-size:11px;color:#64748b;margin-top:6px">ℹ Showing {len(common)} overlapping months.</div>'
         st.markdown(html, unsafe_allow_html=True)
+
+# ── Transaction Search — Statement B ─────────────────────────────────────────
+if st.session_state.txns_b:
+    st.markdown(
+        '<div style="margin-top:16px;font-size:10px;letter-spacing:2px;color:#ff6b35;'
+        'text-transform:uppercase;margin-bottom:6px">Transaction Search — Statement 2</div>',
+        unsafe_allow_html=True,
+    )
+    search_b = st.text_input(
+        "Search keyword (statement 2)",
+        key="search_b",
+        placeholder="e.g. salary, transfer, POS...",
+        label_visibility="collapsed",
+    )
+    if search_b and search_b.strip():
+        kw_b = search_b.strip().lower()
+        matches_b = [t for t in st.session_state.txns_b if kw_b in t["narration"].lower()]
+        if matches_b:
+            total_b = sum(t["amount"] for t in matches_b)
+            st.markdown(
+                f'<div style="font-size:11px;color:#64748b;margin-bottom:6px">'
+                f'Found <span style="color:#ff6b35;font-weight:700">{len(matches_b)}</span> credit(s) '
+                f'matching <em>"{search_b}"</em> — '
+                f'Total: <span style="color:#00e676;font-weight:700">{money(total_b)}</span></div>',
+                unsafe_allow_html=True,
+            )
+            _CAT_COLOUR = {
+                "real_credit": "#00e676", "self_transfer": "#ff9500",
+                "reversal": "#e040fb", "non_business": "#64748b", "loan_disbursal": "#ffd700",
+            }
+            rows_b_html = ""
+            for t in matches_b[:100]:
+                clr = _CAT_COLOUR.get(t["category"], "#e2e8f0")
+                cat_label = t["category"].replace("_", " ").title()
+                rows_b_html += (
+                    f'<tr><td style="color:#ff6b35">{t["ym"]}</td>'
+                    f'<td style="color:#00e676;text-align:right">{money(t["amount"])}</td>'
+                    f'<td><span style="background:rgba(255,255,255,.05);padding:1px 6px;'
+                    f'border-radius:3px;font-size:9px;color:{clr}">{cat_label}</span></td>'
+                    f'<td style="color:#94a3b8;font-size:11px">{t["narration"][:80]}</td></tr>'
+                )
+            if len(matches_b) > 100:
+                rows_b_html += f'<tr><td colspan="4" style="color:#64748b;font-size:10px;padding-top:6px">... and {len(matches_b)-100} more</td></tr>'
+            st.markdown(
+                f'<table class="preview-table" style="margin-top:4px">'
+                f'<thead><tr>'
+                f'<th style="text-align:left">Month</th>'
+                f'<th style="text-align:right">Amount</th>'
+                f'<th style="text-align:left">Category</th>'
+                f'<th style="text-align:left">Narration</th>'
+                f'</tr></thead><tbody>{rows_b_html}</tbody></table>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="color:#64748b;font-size:12px;padding:8px 0">No credit transactions found matching <em>"{search_b}"</em>.</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -462,7 +627,7 @@ if st.session_state.credit_data:
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.markdown('<div class="sel-section-title">02 — Monthly Inflows (Last 6 Months)</div>', unsafe_allow_html=True)
-st.caption("Gross credits, recycling deductions, and net inflows per month.")
+st.caption("Gross credits auto-filled from bank statement. Adjust deductions or add extra manual deductions below.")
 
 import datetime
 today = datetime.date.today()
@@ -525,6 +690,15 @@ def default_months():
 default_m = default_months()
 inflow_data = []
 
+# ── Column header row ─────────────────────────────────────────────────────────
+h1, h2, h3, h4, h5, h6 = st.columns([1.2, 1.8, 1.5, 1.5, 1.5, 0.8])
+with h1: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Month</div>', unsafe_allow_html=True)
+with h2: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Gross Credit ₦</div>', unsafe_allow_html=True)
+with h3: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Deductions ₦</div>', unsafe_allow_html=True)
+with h4: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#ff9500;text-transform:uppercase">Extra Deduction ₦</div>', unsafe_allow_html=True)
+with h5: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#00e676;text-transform:uppercase">Net Inflow ₦</div>', unsafe_allow_html=True)
+with h6: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Count</div>', unsafe_allow_html=True)
+
 for i in range(6):
     if prefill and i < len(prefill):
         r     = prefill[i]
@@ -532,19 +706,39 @@ for i in range(6):
     else:
         label = default_m[i][1]
 
-    c1, c2, c3, c4, c5 = st.columns([1.2, 2, 2, 1.5, 0.8])
-    with c1: st.markdown(f"**{label}**")
-    with c2: g = st.number_input("Gross Credit (₦)", min_value=0.0, step=1000.0,
-                                  key=f"gross_{i}", label_visibility="collapsed")
-    with c3: d = st.number_input("Deductions (₦)",   min_value=0.0, step=1000.0,
-                                  key=f"deduct_{i}", label_visibility="collapsed")
-    with c4:
-        net = max(g - d, 0)
-        st.markdown(f'<div style="color:#00e676;font-weight:700;padding-top:8px">{money(net)}</div>',
+    c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.8, 1.5, 1.5, 1.5, 0.8])
+    with c1:
+        st.markdown(f'<div style="padding-top:8px;font-weight:700;color:#00d4ff">{label}</div>',
                     unsafe_allow_html=True)
-    with c5: cnt = st.number_input("Count", min_value=1, max_value=9999,
-                                    key=f"count_{i}", label_visibility="collapsed")
-    inflow_data.append({"label": label, "gross": g, "deduct": d, "net": net, "count": cnt})
+    with c2:
+        g = st.number_input("Gross Credit (₦)", min_value=0.0, step=1000.0,
+                            key=f"gross_{i}", label_visibility="collapsed")
+    with c3:
+        d = st.number_input("Deductions (₦)", min_value=0.0, step=1000.0,
+                            key=f"deduct_{i}", label_visibility="collapsed")
+    with c4:
+        x = st.number_input("Extra Deduction (₦)", min_value=0.0, step=1000.0,
+                            key=f"extra_{i}", label_visibility="collapsed")
+    with c5:
+        net = max(g - d - x, 0)
+        st.markdown(
+            f'<div style="color:#00e676;font-weight:700;padding-top:8px;font-size:13px">{money(net)}</div>',
+            unsafe_allow_html=True,
+        )
+    with c6:
+        cnt = st.number_input("Count", min_value=1, max_value=9999,
+                              key=f"count_{i}", label_visibility="collapsed")
+    inflow_data.append({"label": label, "gross": g, "deduct": d, "extra": x, "net": net, "count": cnt})
+
+st.markdown(
+    '<div style="font-size:10px;color:#64748b;margin-top:6px;padding:8px 12px;'
+    'background:rgba(0,0,0,.2);border-left:2px solid #1e3a5f;border-radius:2px">'
+    '<strong style="color:#ff9500">Extra Deduction</strong> — use this to manually subtract any amount you\'ve identified '
+    'from the search above (e.g. a recurring transfer you want excluded from income). '
+    'Auto Deductions are pre-filled from the bank statement parser (reversals, loan disbursals, non-business).'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 03 — LOAN PARAMETERS
@@ -637,7 +831,7 @@ if calc_btn:
         # Deduction audit table
         if st.session_state.rows_a or st.session_state.rows_b:
             st.markdown("---")
-            st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:6px">Deduction Audit — All Classified Credits</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:6px">Classification Audit — All Tagged Credits</div>', unsafe_allow_html=True)
 
             audit_rows = []
             src_rows = (st.session_state.rows_a or [])
@@ -645,24 +839,45 @@ if calc_btn:
             for r in src_rows:
                 if r["ym"] >= today_ym or r["gross"] == 0:
                     continue
-                for cat in ["self_transfer","reversal","non_business","loan_disbursal"]:
+                # Self-transfers are now informational (not deducted)
+                if r.get("self_transfer", 0) > 0:
+                    audit_rows.append({
+                        "Month": r["label"],
+                        "Category": "Self Deposit (info only)",
+                        "Deducted": False,
+                        "Amount": r["self_transfer"],
+                    })
+                for cat in ["reversal", "non_business", "loan_disbursal"]:
                     if r.get(cat, 0) > 0:
                         audit_rows.append({
                             "Month": r["label"],
                             "Category": cat.replace("_", " ").title(),
+                            "Deducted": True,
                             "Amount": r[cat],
                         })
+            # Extra manual deductions from grid
+            for i, row in enumerate(inflow_data):
+                if row.get("extra", 0) > 0:
+                    audit_rows.append({
+                        "Month": row["label"],
+                        "Category": "Manual Deduction",
+                        "Deducted": True,
+                        "Amount": row["extra"],
+                    })
 
             if audit_rows:
                 df = pd.DataFrame(audit_rows)
                 st.dataframe(
                     df, hide_index=True, use_container_width=True,
-                    column_config={"Amount": st.column_config.NumberColumn("Amount", format="₦%d")},
+                    column_config={
+                        "Amount": st.column_config.NumberColumn("Amount", format="₦%d"),
+                        "Deducted": st.column_config.CheckboxColumn("Deducted from Eligible?"),
+                    },
                 )
                 st.download_button(
-                    "Download Deduction Audit CSV",
+                    "Download Classification Audit CSV",
                     df.to_csv(index=False).encode("utf-8"),
-                    file_name="sel_deduction_audit.csv",
+                    file_name="sel_classification_audit.csv",
                     mime="text/csv",
                 )
 
