@@ -226,6 +226,60 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# ── Trademark badge — floats in every 5 minutes ───────────────────────────────
+import streamlit.components.v1 as _components
+_components.html("""
+<script>
+(function() {
+  var p = window.parent;
+  if (p.__kvicBadgeInit) return;
+  p.__kvicBadgeInit = true;
+
+  /* Create badge */
+  var b = p.document.createElement('div');
+  b.id = 'kvic-tm';
+  b.innerHTML =
+    '<span style="font-size:9px;letter-spacing:3px;color:#6b7f74;text-transform:uppercase;display:block;margin-bottom:3px">Powered by</span>' +
+    '<span style="font-size:13px;font-weight:700;color:#10b981;letter-spacing:1px">Kenechukwu Kvic7</span>' +
+    '<span style="font-size:10px;color:#fbbf24;margin-left:4px">&#8482;</span>';
+
+  b.style.cssText = [
+    'position:fixed',
+    'bottom:28px',
+    'right:28px',
+    'background:#0f1a15',
+    'border:1px solid #1a3d2b',
+    'border-left:3px solid #10b981',
+    'border-radius:4px',
+    'padding:10px 16px',
+    'font-family:"Space Mono",monospace',
+    'box-shadow:0 4px 24px rgba(16,185,129,.18)',
+    'z-index:99999',
+    'opacity:0',
+    'transform:translateY(16px)',
+    'transition:opacity .5s ease,transform .5s ease',
+    'pointer-events:none',
+    'min-width:180px',
+  ].join(';');
+
+  p.document.body.appendChild(b);
+
+  function show() {
+    b.style.opacity  = '1';
+    b.style.transform = 'translateY(0)';
+    setTimeout(function() {
+      b.style.opacity  = '0';
+      b.style.transform = 'translateY(16px)';
+    }, 5000);   /* visible for 5 seconds */
+  }
+
+  show();                              /* show on load   */
+  setInterval(show, 5 * 60 * 1000);   /* repeat every 5 min */
+})();
+</script>
+""", height=0)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 00 — FIRST BANK STATEMENT
 # ════════════════════════════════════════════════════════════════════════════
