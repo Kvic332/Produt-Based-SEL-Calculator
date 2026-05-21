@@ -1589,6 +1589,82 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# MONIEPOINT BUSINESS PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_moniepoint_business(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Moniepoint Business account statements (PDF via PyPDF2).
+
+    Column layout: Date | Narration | Reference | Debit | Credit | Balance
+
+    PyPDF2 splits the ISO timestamp across two lines:
+      Line 1:  2025-11-02T11:                        ← YYYY-MM-DDThh: only
+      Line 2:  28:40narration ref  0.00 32,400.00 40,726.03
+
+    Occasionally the narration starts on the date line itself:
+      2025-11-01T21: TRANSFER TO ALICE...
+      01:50 /TRF|..._DEBIT_0  2,920.00  0.00  11,099.82
+
+    Credit rows: Debit column = 0.00, Credit column > 0.
+    """
+    buckets: dict = {}
+
+    # Business name: "Business Name Pearlsom Esthetic - Pearlsom Esthetic"
+    name_m = re.search(
+        r'Business\s+Name\s+(.*?)(?:\n|Account\s+Number)', full_text, re.I | re.S
+    )
+    if name_m:
+        raw = name_m.group(1).strip()
+        account_name = raw.split(' - ')[0].strip()
+    else:
+        account_name = _extract_account_name(full_text)
+
+    # Date-start line: YYYY-MM-DDTHH: (with optional narration after)
+    DATE_RE = re.compile(r'^(\d{4})-(\d{2})-\d{2}T\d{2}:', re.I)
+    # Three amounts at end of line: DEBIT  CREDIT  BALANCE
+    AMT3_RE = re.compile(
+        r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$'
+    )
+    SKIP_RE = re.compile(
+        r'^(?:account\s+statement|business\s+name|account\s+number|currency\s*$|'
+        r'date\s+narration|opening\s+balance|total\s+debits|total\s+credits|'
+        r'closing\s+balance|address)',
+        re.I,
+    )
+
+    current_ym = ""
+
+    for line in full_text.splitlines():
+        stripped = line.strip()
+        if not stripped or SKIP_RE.match(stripped):
+            continue
+
+        dm = DATE_RE.match(stripped)
+        if dm:
+            current_ym = f"{dm.group(1)}-{dm.group(2)}"
+            # Edge case: date line already contains amounts (PyPDF2 merge)
+            m3 = AMT3_RE.search(stripped)
+            if m3 and current_ym:
+                credit = float(m3.group(2).replace(',', ''))
+                if credit > 0:
+                    narr = stripped[:m3.start()].strip()
+                    add_credit(buckets, current_ym, credit, narr, account_name)
+            continue
+
+        if not current_ym:
+            continue
+
+        m3 = AMT3_RE.search(stripped)
+        if m3:
+            credit = float(m3.group(2).replace(',', ''))
+            if credit > 0:
+                narr = stripped[:m3.start()].strip()
+                add_credit(buckets, current_ym, credit, narr, account_name)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # ACCURACY VERIFICATION — extract stated totals from PDF header
 # ════════════════════════════════════════════════════════════════════════════
 def extract_stated_totals(full_text: str) -> dict:
@@ -2009,7 +2085,7 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     elif bank == "OPay_Business":
         buckets, account_name = parse_opay_business(file_bytes)
     elif bank == "Moniepoint_Business":
-        buckets, account_name = parse_opay_business(file_bytes)
+        buckets, account_name = parse_moniepoint_business(full_text)
     elif bank == "Kuda":
         buckets, account_name = parse_kuda(full_text)
     elif bank == "PalmPay_New":
