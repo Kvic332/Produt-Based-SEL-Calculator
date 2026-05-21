@@ -21,12 +21,12 @@ st.markdown("""
   /* Import fonts */
   @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Serif+Display:ital@0;1&display=swap');
 
-  /* Root variables */
+  /* Root variables — Emerald + Gold palette */
   :root {
-    --bg: #0a0f1e; --surface: #111827; --surface2: #1a2235;
-    --border: #1e3a5f; --accent: #00d4ff; --accent2: #ff6b35;
-    --green: #00e676; --red: #ff4444; --text: #e2e8f0;
-    --muted: #64748b; --gold: #ffd700; --orange: #ff9500;
+    --bg: #090e0c; --surface: #0f1a15; --surface2: #162019;
+    --border: #1a3d2b; --accent: #10b981; --accent2: #f59e0b;
+    --green: #34d399; --red: #f87171; --text: #e2e8f0;
+    --muted: #6b7f74; --gold: #fbbf24; --orange: #fb923c;
   }
 
   /* Global */
@@ -49,7 +49,7 @@ st.markdown("""
   /* Metric cards */
   .sel-card { background: var(--surface2); border: 1px solid var(--border);
               border-radius: 3px; padding: 14px; }
-  .sel-card.highlight { border-color: var(--accent); box-shadow: 0 0 20px rgba(0,212,255,.1); }
+  .sel-card.highlight { border-color: var(--accent); box-shadow: 0 0 20px rgba(16,185,129,.1); }
   .sel-label { font-size: 10px; letter-spacing: 2px; color: var(--muted);
                text-transform: uppercase; margin-bottom: 4px; }
   .sel-value { font-size: 20px; font-weight: 700; color: var(--accent); }
@@ -59,29 +59,29 @@ st.markdown("""
   .sel-value.orange { color: var(--orange) !important; }
 
   /* Banners */
-  .banner-approved { background: rgba(0,230,118,.08); border: 1px solid rgba(0,230,118,.3);
+  .banner-approved { background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.3);
                      color: var(--green); padding: 14px 18px; border-radius: 3px;
                      font-size: 14px; letter-spacing: 1px; }
-  .banner-rejected { background: rgba(255,68,68,.08); border: 1px solid rgba(255,68,68,.3);
+  .banner-rejected { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.3);
                      color: var(--red); padding: 14px 18px; border-radius: 3px;
                      font-size: 14px; letter-spacing: 1px; }
-  .banner-info     { background: rgba(0,212,255,.05); border: 1px solid rgba(0,212,255,.2);
+  .banner-info     { background: rgba(16,185,129,.05); border: 1px solid rgba(16,185,129,.2);
                      color: var(--accent); padding: 12px 16px; border-radius: 3px;
                      font-size: 12px; }
-  .banner-bad      { background: rgba(255,68,68,.08); border: 1px solid rgba(255,68,68,.25);
+  .banner-bad      { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.25);
                      color: var(--red); padding: 12px 16px; border-radius: 3px;
                      font-size: 12px; }
-  .banner-good     { background: rgba(0,230,118,.08); border: 1px solid rgba(0,230,118,.25);
+  .banner-good     { background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.25);
                      color: var(--green); padding: 12px 16px; border-radius: 3px;
                      font-size: 12px; }
 
   /* Tags / badges */
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
            font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
-  .badge-blue   { background: rgba(0,212,255,.1); color: var(--accent); border: 1px solid rgba(0,212,255,.2); }
-  .badge-red    { background: rgba(255,68,68,.1);  color: var(--red);    border: 1px solid rgba(255,68,68,.25); }
-  .badge-orange { background: rgba(255,149,0,.1);  color: var(--orange); border: 1px solid rgba(255,149,0,.25); }
-  .badge-green  { background: rgba(0,230,118,.1);  color: var(--green);  border: 1px solid rgba(0,230,118,.25); }
+  .badge-blue   { background: rgba(16,185,129,.1); color: var(--accent); border: 1px solid rgba(16,185,129,.2); }
+  .badge-red    { background: rgba(248,113,113,.1);  color: var(--red);    border: 1px solid rgba(248,113,113,.25); }
+  .badge-orange { background: rgba(251,146,60,.1);  color: var(--orange); border: 1px solid rgba(251,146,60,.25); }
+  .badge-green  { background: rgba(52,211,153,.1);  color: var(--green);  border: 1px solid rgba(52,211,153,.25); }
 
   /* Tables */
   .preview-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
@@ -94,7 +94,7 @@ st.markdown("""
   .preview-table td:first-child { text-align: left; color: var(--accent); font-weight: 700; }
   .col-gross  { color: var(--green); }
   .col-self   { color: var(--orange); }
-  .col-rev    { color: #e040fb; }
+  .col-rev    { color: #a78bfa; }
   .col-nonbiz { color: var(--muted); }
   .col-loan   { color: var(--gold); }
   .col-net    { color: var(--accent); font-weight: 700; }
@@ -104,7 +104,7 @@ st.markdown("""
   .credit-table th { font-size: 9px; letter-spacing: 1px; color: var(--muted);
                      text-transform: uppercase; padding: 8px;
                      border-bottom: 1px solid var(--border); text-align: left; }
-  .credit-table td { padding: 8px; border-bottom: 1px solid rgba(30,58,95,.3); vertical-align: top; }
+  .credit-table td { padding: 8px; border-bottom: 1px solid rgba(26,61,43,.4); vertical-align: top; }
   .credit-table tfoot td { border-top: 1px solid var(--border); font-weight: 700; }
 
   /* Sidebar */
@@ -124,7 +124,7 @@ st.markdown("""
   .stButton button { background: transparent !important; border: 1px solid var(--accent) !important;
                      color: var(--accent) !important; font-family: 'Space Mono', monospace !important;
                      letter-spacing: 2px !important; text-transform: uppercase !important; }
-  .stButton button:hover { background: rgba(0,212,255,.08) !important; }
+  .stButton button:hover { background: rgba(16,185,129,.08) !important; }
 
   /* File uploader */
   [data-testid="stFileUploader"] { background: var(--surface2) !important;
@@ -151,13 +151,13 @@ st.markdown("""
   /* Search input highlight */
   [data-testid="stTextInput"] input:focus {
     border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px rgba(0,212,255,.15) !important;
+    box-shadow: 0 0 0 2px rgba(16,185,129,.15) !important;
   }
 
   /* Number input */
   [data-testid="stNumberInput"] input:focus {
     border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px rgba(0,212,255,.1) !important;
+    box-shadow: 0 0 0 2px rgba(16,185,129,.1) !important;
   }
 
   /* Spinner */
@@ -214,10 +214,10 @@ for key in ["buckets_a","summary_a","bank_a","name_a",
 # HEADER
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("""
-<div style="border-bottom:1px solid #1e3a5f;padding-bottom:24px;margin-bottom:32px">
-  <div style="font-size:10px;letter-spacing:4px;color:#00d4ff;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
+<div style="border-bottom:1px solid #1a3d2b;padding-bottom:24px;margin-bottom:32px">
+  <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
   <h1 style="font-family:DM Serif Display,serif;font-size:clamp(28px,4vw,44px);color:#fff;line-height:1.1">
-    Loan <em style="color:#00d4ff;font-style:italic">Eligibility</em><br>Calculator
+    Loan <em style="color:#10b981;font-style:italic">Eligibility</em><br>Calculator
   </h1>
   <div style="font-size:11px;color:#64748b;margin-top:6px">
     All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection
@@ -266,9 +266,9 @@ with col2:
                                 pct = verdict["pct_match"]
                                 ext = verdict["extracted"]
                                 stl = verdict["stated_total"]
-                                colour = ("#00e676" if pct >= 95
-                                          else "#ff9500" if pct >= 90
-                                          else "#ff4444")
+                                colour = ("#34d399" if pct >= 95
+                                          else "#fb923c" if pct >= 90
+                                          else "#f87171")
                                 st.markdown(
                                     f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
                                     f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
@@ -327,7 +327,7 @@ if st.session_state.rows_a:
         )
         if has_self:
             st.markdown(
-                '<div style="font-size:10px;color:#ff9500;margin-top:4px">'
+                '<div style="font-size:10px;color:#fb923c;margin-top:4px">'
                 '⚑ Self Deposits are shown for reference only — they are <strong>not deducted</strong> from eligible income.</div>',
                 unsafe_allow_html=True,
             )
@@ -335,7 +335,7 @@ if st.session_state.rows_a:
 # ── Transaction Search — Statement A ─────────────────────────────────────────
 if st.session_state.txns_a:
     st.markdown(
-        '<div style="margin-top:16px;font-size:10px;letter-spacing:2px;color:#00d4ff;'
+        '<div style="margin-top:16px;font-size:10px;letter-spacing:2px;color:#10b981;'
         'text-transform:uppercase;margin-bottom:6px">Transaction Search</div>',
         unsafe_allow_html=True,
     )
@@ -352,22 +352,22 @@ if st.session_state.txns_a:
             total_match = sum(t["amount"] for t in matches)
             st.markdown(
                 f'<div style="font-size:11px;color:#64748b;margin-bottom:6px">'
-                f'Found <span style="color:#00d4ff;font-weight:700">{len(matches)}</span> credit(s) '
+                f'Found <span style="color:#10b981;font-weight:700">{len(matches)}</span> credit(s) '
                 f'matching <em>"{search_a}"</em> — '
-                f'Total: <span style="color:#00e676;font-weight:700">{money(total_match)}</span></div>',
+                f'Total: <span style="color:#34d399;font-weight:700">{money(total_match)}</span></div>',
                 unsafe_allow_html=True,
             )
             _CAT_COLOUR = {
-                "real_credit": "#00e676", "self_transfer": "#ff9500",
-                "reversal": "#e040fb", "non_business": "#64748b", "loan_disbursal": "#ffd700",
+                "real_credit": "#34d399", "self_transfer": "#fb923c",
+                "reversal": "#a78bfa", "non_business": "#64748b", "loan_disbursal": "#fbbf24",
             }
             rows_html = ""
             for t in matches[:100]:  # cap at 100 rows for performance
                 clr = _CAT_COLOUR.get(t["category"], "#e2e8f0")
                 cat_label = t["category"].replace("_", " ").title()
                 rows_html += (
-                    f'<tr><td style="color:#00d4ff">{t["ym"]}</td>'
-                    f'<td style="color:#00e676;text-align:right">{money(t["amount"])}</td>'
+                    f'<tr><td style="color:#10b981">{t["ym"]}</td>'
+                    f'<td style="color:#34d399;text-align:right">{money(t["amount"])}</td>'
                     f'<td><span style="background:rgba(255,255,255,.05);padding:1px 6px;'
                     f'border-radius:3px;font-size:9px;color:{clr}">{cat_label}</span></td>'
                     f'<td style="color:#94a3b8;font-size:11px">{t["narration"][:80]}</td></tr>'
@@ -433,9 +433,9 @@ with col4:
                                 pct = verdict_b["pct_match"]
                                 ext = verdict_b["extracted"]
                                 stl = verdict_b["stated_total"]
-                                colour = ("#00e676" if pct >= 95
-                                          else "#ff9500" if pct >= 90
-                                          else "#ff4444")
+                                colour = ("#34d399" if pct >= 95
+                                          else "#fb923c" if pct >= 90
+                                          else "#f87171")
                                 st.markdown(
                                     f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
                                     f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
@@ -467,8 +467,8 @@ if st.session_state.rows_a and st.session_state.rows_b:
     common = sorted(set(rows_a_map) & set(rows_b_map))[-6:]
 
     if common:
-        st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#00e676;text-transform:uppercase;margin:12px 0 6px">▷ Merged Result (Intersection of Both Statements)</div>', unsafe_allow_html=True)
-        html = '<table class="preview-table"><thead><tr><th style="text-align:left">Month</th><th class="col-gross">Statement 1 Net</th><th style="text-align:right;color:#ff6b35">Statement 2 Net</th><th class="col-net">Combined Net</th></tr></thead><tbody>'
+        st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#34d399;text-transform:uppercase;margin:12px 0 6px">▷ Merged Result (Intersection of Both Statements)</div>', unsafe_allow_html=True)
+        html = '<table class="preview-table"><thead><tr><th style="text-align:left">Month</th><th class="col-gross">Statement 1 Net</th><th style="text-align:right;color:#f59e0b">Statement 2 Net</th><th class="col-net">Combined Net</th></tr></thead><tbody>'
         tA = tB = tC = 0
         for ym in common:
             rA = rows_a_map[ym]
@@ -479,12 +479,12 @@ if st.session_state.rows_a and st.session_state.rows_b:
             tA += netA; tB += netB; tC += combined
             html += (f'<tr><td>{ym_label(ym)}</td>'
                      f'<td class="col-gross">{money(netA)}</td>'
-                     f'<td style="text-align:right;color:#ff6b35">{money(netB)}</td>'
+                     f'<td style="text-align:right;color:#f59e0b">{money(netB)}</td>'
                      f'<td class="col-net">{money(combined)}</td></tr>')
         html += (f'</tbody><tfoot><tr>'
                  f'<td style="color:#64748b;font-size:10px;text-transform:uppercase">Total</td>'
                  f'<td class="col-gross">{money(tA)}</td>'
-                 f'<td style="text-align:right;color:#ff6b35">{money(tB)}</td>'
+                 f'<td style="text-align:right;color:#f59e0b">{money(tB)}</td>'
                  f'<td class="col-net">{money(tC)}</td>'
                  f'</tr></tfoot></table>')
         html += f'<div style="font-size:11px;color:#64748b;margin-top:6px">ℹ Showing {len(common)} overlapping months.</div>'
@@ -493,7 +493,7 @@ if st.session_state.rows_a and st.session_state.rows_b:
 # ── Transaction Search — Statement B ─────────────────────────────────────────
 if st.session_state.txns_b:
     st.markdown(
-        '<div style="margin-top:16px;font-size:10px;letter-spacing:2px;color:#ff6b35;'
+        '<div style="margin-top:16px;font-size:10px;letter-spacing:2px;color:#f59e0b;'
         'text-transform:uppercase;margin-bottom:6px">Transaction Search — Statement 2</div>',
         unsafe_allow_html=True,
     )
@@ -510,22 +510,22 @@ if st.session_state.txns_b:
             total_b = sum(t["amount"] for t in matches_b)
             st.markdown(
                 f'<div style="font-size:11px;color:#64748b;margin-bottom:6px">'
-                f'Found <span style="color:#ff6b35;font-weight:700">{len(matches_b)}</span> credit(s) '
+                f'Found <span style="color:#f59e0b;font-weight:700">{len(matches_b)}</span> credit(s) '
                 f'matching <em>"{search_b}"</em> — '
-                f'Total: <span style="color:#00e676;font-weight:700">{money(total_b)}</span></div>',
+                f'Total: <span style="color:#34d399;font-weight:700">{money(total_b)}</span></div>',
                 unsafe_allow_html=True,
             )
             _CAT_COLOUR = {
-                "real_credit": "#00e676", "self_transfer": "#ff9500",
-                "reversal": "#e040fb", "non_business": "#64748b", "loan_disbursal": "#ffd700",
+                "real_credit": "#34d399", "self_transfer": "#fb923c",
+                "reversal": "#a78bfa", "non_business": "#64748b", "loan_disbursal": "#fbbf24",
             }
             rows_b_html = ""
             for t in matches_b[:100]:
                 clr = _CAT_COLOUR.get(t["category"], "#e2e8f0")
                 cat_label = t["category"].replace("_", " ").title()
                 rows_b_html += (
-                    f'<tr><td style="color:#ff6b35">{t["ym"]}</td>'
-                    f'<td style="color:#00e676;text-align:right">{money(t["amount"])}</td>'
+                    f'<tr><td style="color:#f59e0b">{t["ym"]}</td>'
+                    f'<td style="color:#34d399;text-align:right">{money(t["amount"])}</td>'
                     f'<td><span style="background:rgba(255,255,255,.05);padding:1px 6px;'
                     f'border-radius:3px;font-size:9px;color:{clr}">{cat_label}</span></td>'
                     f'<td style="color:#94a3b8;font-size:11px">{t["narration"][:80]}</td></tr>'
@@ -611,12 +611,12 @@ if st.session_state.credit_data:
                      f'<td>{money(r.instalment_amount)}</td>'
                      f'<td>{money(r.outstanding_balance)}</td>'
                      f'<td>{tenor_str}</td>'
-                     f'<td style="color:#ffd700;font-weight:700">{mo_str}</td>'
+                     f'<td style="color:#fbbf24;font-weight:700">{mo_str}</td>'
                      f'<td style="color:#64748b;font-size:10px">{rule}</td>'
                      f'</tr>')
         html += (f'</tbody><tfoot><tr>'
                  f'<td colspan="6" style="color:#64748b">Total monthly external obligations</td>'
-                 f'<td style="color:#ffd700;font-weight:700">{money(total)}</td>'
+                 f'<td style="color:#fbbf24;font-weight:700">{money(total)}</td>'
                  f'<td>{len(data["bad_credit_accounts"])} bad flag(s)' if data["bad_credit_accounts"] else '<td>Clear'
                  + '</td></tr></tfoot></table>')
         st.markdown(html, unsafe_allow_html=True)
@@ -695,8 +695,8 @@ h1, h2, h3, h4, h5, h6 = st.columns([1.2, 1.8, 1.5, 1.5, 1.5, 0.8])
 with h1: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Month</div>', unsafe_allow_html=True)
 with h2: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Gross Credit ₦</div>', unsafe_allow_html=True)
 with h3: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Deductions ₦</div>', unsafe_allow_html=True)
-with h4: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#ff9500;text-transform:uppercase">Extra Deduction ₦</div>', unsafe_allow_html=True)
-with h5: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#00e676;text-transform:uppercase">Net Inflow ₦</div>', unsafe_allow_html=True)
+with h4: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#fb923c;text-transform:uppercase">Extra Deduction ₦</div>', unsafe_allow_html=True)
+with h5: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#34d399;text-transform:uppercase">Net Inflow ₦</div>', unsafe_allow_html=True)
 with h6: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Count</div>', unsafe_allow_html=True)
 
 for i in range(6):
@@ -708,7 +708,7 @@ for i in range(6):
 
     c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.8, 1.5, 1.5, 1.5, 0.8])
     with c1:
-        st.markdown(f'<div style="padding-top:8px;font-weight:700;color:#00d4ff">{label}</div>',
+        st.markdown(f'<div style="padding-top:8px;font-weight:700;color:#10b981">{label}</div>',
                     unsafe_allow_html=True)
     with c2:
         g = st.number_input("Gross Credit (₦)", min_value=0.0, step=1000.0,
@@ -722,7 +722,7 @@ for i in range(6):
     with c5:
         net = max(g - d - x, 0)
         st.markdown(
-            f'<div style="color:#00e676;font-weight:700;padding-top:8px;font-size:13px">{money(net)}</div>',
+            f'<div style="color:#34d399;font-weight:700;padding-top:8px;font-size:13px">{money(net)}</div>',
             unsafe_allow_html=True,
         )
     with c6:
@@ -732,8 +732,8 @@ for i in range(6):
 
 st.markdown(
     '<div style="font-size:10px;color:#64748b;margin-top:6px;padding:8px 12px;'
-    'background:rgba(0,0,0,.2);border-left:2px solid #1e3a5f;border-radius:2px">'
-    '<strong style="color:#ff9500">Extra Deduction</strong> — use this to manually subtract any amount you\'ve identified '
+    'background:rgba(0,0,0,.2);border-left:2px solid #1a3d2b;border-radius:2px">'
+    '<strong style="color:#fb923c">Extra Deduction</strong> — use this to manually subtract any amount you\'ve identified '
     'from the search above (e.g. a recurring transfer you want excluded from income). '
     'Auto Deductions are pre-filled from the bank statement parser (reversals, loan disbursals, non-business).'
     '</div>',
@@ -812,7 +812,7 @@ if calc_btn:
         # Requested loan analysis
         if req_loan > 0 and "requested" in result:
             st.markdown("---")
-            st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#ff6b35;text-transform:uppercase;margin-bottom:8px">Requested Loan Analysis</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px">Requested Loan Analysis</div>', unsafe_allow_html=True)
             req = result["requested"]
             within = req["within_max"]
             r_col1, r_col2 = st.columns(2)
