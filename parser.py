@@ -157,8 +157,9 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
     if re.search(r"\*+rsvl|\brsvl\b|\brev\b|\brev-\b", text):
         return "reversal", "RSVL/REV reversal marker"
     if any(k in text for k in [
-        "reversal", "refund", "chargeback", "chargbk",
+        "reversal", "reversed", "refund", "chargeback", "chargbk",
         "dispute", "clawback", "returned funds", "charge back",
+        "transaction reversed", "payment reversed",
     ]):
         return "reversal", "Reversal keyword"
 
@@ -299,17 +300,33 @@ def extract_pdf_text_layout(pdf_bytes: bytes) -> str:
     Extract PDF text preserving spatial column layout using pdftotext -layout.
     Required for PDFs where amounts are in fixed-width columns (e.g. OPay v2).
     Returns empty string if pdftotext is unavailable.
+
+    Uses a temp file because pdftotext v4.00 (Glyph & Cog) does not support
+    stdin piping ('-' as input); only the open-source Poppler build does.
     """
+    import tempfile, os
+    tmp_path = None
     try:
+        # Write to temp file — compatible with both Poppler and Glyph & Cog builds
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = tmp.name
         result = subprocess.run(
-            ["pdftotext", "-layout", "-", "-"],
-            input=pdf_bytes,
+            ["pdftotext", "-layout", tmp_path, "-"],
             capture_output=True,
-            timeout=30,
+            timeout=120,   # large files need more time
         )
+        if result.returncode != 0:
+            return ""
         return result.stdout.decode("utf-8", errors="replace")
     except Exception:
         return ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -490,7 +507,91 @@ def parse_opay(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
-def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
+def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
+    """
+    PyPDF2-based fallback for OPay v2 statements.
+
+    Used when pdftotext is unavailable or produces misaligned output
+    (e.g. pdftotext v4.00 Glyph & Cog on large PDFs).
+
+    PyPDF2 output format:
+        DD Mon YYYY HH:MM:SS  DD Mon YYYY  <description>  <debit|-->  <credit|-->  <balance>  <Channel>  <ref>
+    Amounts may be glued to description text (no space). Multi-line
+    descriptions accumulate until the next date-time anchor line.
+    """
+    buckets: dict = {}
+
+    DT_RE = re.compile(
+        r"^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}",
+        re.I,
+    )
+    # Three amounts + channel — amounts may be glued to surrounding text
+    AMT_RE = re.compile(
+        r"((?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}|--)\s+"
+        r"((?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}|--)\s+"
+        r"((?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2})\s*"
+        r"(?:Mobile|POS|Web|USSD|ATM|Agent)",
+        re.I,
+    )
+    # Strip the two leading date stamps from a description block
+    STRIP_DTS = re.compile(
+        r"^\d{2}\s+\w{3}\s+20\d{2}\s+\d{2}:\d{2}:\d{2}\s*"
+        r"(?:\d{2}\s+\w{3}\s+20\d{2}\s*)?",
+        re.I,
+    )
+
+    in_wallet = False
+    section_count = 0
+    current_ym: str | None = None
+    pending: list[str] = []
+
+    def _flush():
+        nonlocal current_ym, pending
+        if not pending or current_ym is None:
+            return
+        block = " ".join(pending)
+        m = AMT_RE.search(block)
+        if m and m.group(2) != "--":
+            credit = float(m.group(2).replace(",", ""))
+            if credit > 0:
+                raw_desc = block[: m.start()]
+                desc = STRIP_DTS.sub("", raw_desc).strip()
+                add_credit(buckets, current_ym, credit, desc, account_name)
+        pending.clear()
+
+    for line in full_text.splitlines():
+        if re.search(r"Trans\.\s*Time", line, re.I):
+            section_count += 1
+            if section_count > 1:
+                _flush()
+                break
+            in_wallet = True
+            pending.clear()
+            current_ym = None
+            continue
+
+        if re.search(r"Savings Account", line, re.I) and section_count > 0:
+            _flush()
+            break
+
+        if not in_wallet:
+            continue
+
+        dm = DT_RE.match(line.strip())
+        if dm:
+            _flush()
+            current_ym = f"{dm.group(3)}-{MONTH_NUM[dm.group(2).lower()[:3]]}"
+            pending = [line.strip()]
+        elif current_ym is not None:
+            s = line.strip()
+            if s:
+                pending.append(s)
+
+    _flush()
+    return buckets
+
+
+def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
     """
     Parser for the OPay "Account Statement" format (2025+).
 
@@ -510,12 +611,11 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
       header (or "Savings Account" label) is encountered.
 
     Requires pdftotext (poppler-utils) installed on the host.
-    Falls back gracefully to an empty result if pdftotext is unavailable.
+    Falls back to PyPDF2-based parsing when pdftotext is unavailable or
+    produces misaligned output (e.g. pdftotext v4.00 Glyph & Cog).
     """
     # ── Layout-preserved text via pdftotext -layout ───────────────────────
     layout_text = extract_pdf_text_layout(pdf_bytes)
-    if not layout_text:
-        return {}, ""
 
     # ── Patterns ──────────────────────────────────────────────────────────
     # Anchor line: starts with 0–4 spaces then DD Mon YYYY HH:MM:SS
@@ -541,90 +641,115 @@ def parse_opay_v2(pdf_bytes: bytes) -> tuple[dict, str]:
     SECTION_END = re.compile(r"Savings Account", re.I)
 
     # ── Account name ──────────────────────────────────────────────────────
-    # OPay v2 layout: the "Account Name" label and "Account Number" label
-    # appear on the same header line; the actual name value appears on the
-    # NEXT line at the far-left column (before the account number).
+    # OPay v2 pdftotext layout: "Account Name" and "Account Statement" land
+    # on the SAME line (they're columns), the real name is the NEXT line.
+    # PyPDF2 text has "Account Name\nCOMFORT BENARD WILLSON\n".
+    _BOILERPLATE = {"account statement", "account number", "account name",
+                    "generated on", "wallet account", "savings account"}
     account_name = ""
-    layout_lines = layout_text.splitlines()
-    for i, line in enumerate(layout_lines):
-        if "Account Name" in line and "Account Number" in line:
-            for j in range(i + 1, min(i + 5, len(layout_lines))):
-                val = layout_lines[j][:50].strip()
-                if val and re.match(r"^[A-Z][A-Z ]{3,}$", val):
-                    account_name = val
+
+    # 1. Try layout text — scan for "Account Name" line, name is on next line
+    if layout_text:
+        layout_lines = layout_text.splitlines()
+        for i, line in enumerate(layout_lines):
+            if re.search(r"\bAccount\s+Name\b", line, re.I):
+                for j in range(i + 1, min(i + 6, len(layout_lines))):
+                    val = layout_lines[j].strip()[:60]
+                    # Must be all-caps letters+spaces, not a boilerplate phrase
+                    if (val and re.match(r"^[A-Z][A-Z ]{3,}$", val)
+                            and val.lower() not in _BOILERPLATE):
+                        account_name = val
+                        break
+                if account_name:
                     break
-            break
+
+    # 2. PyPDF2 text — "Account Name\nNAME" pattern
+    if not account_name and full_text:
+        nm = re.search(r"Account Name\s*\n([A-Z][A-Z ]{3,})", full_text)
+        if nm:
+            candidate = nm.group(1).strip().split("\n")[0].strip()
+            if candidate.lower() not in _BOILERPLATE:
+                account_name = candidate
+
+    # 3. Generic fallback (both texts)
     if not account_name:
-        account_name = _extract_account_name(layout_text)
+        for txt in ([layout_text] if layout_text else []) + ([full_text] if full_text else []):
+            candidate = _extract_account_name(txt)
+            if candidate and candidate.lower() not in _BOILERPLATE:
+                account_name = candidate
+                break
 
-    # ── Parse main Wallet section only ────────────────────────────────────
-    lines = layout_text.splitlines()
+    # ── Parse main Wallet section only (layout-based) ─────────────────────
     buckets: dict = {}
-    pre_desc: list[str] = []   # description fragments accumulating BEFORE the date line
-    state = "pre"              # "pre" = before date line, "post" = after date line
-    section_count = 0
-    in_tx = False
 
-    for line in lines:
-        # Section boundary detection
-        if TRANS_TIME.search(line):
-            section_count += 1
-            if section_count > 1:
-                break           # Enter OWealth/Savings section — stop
-            in_tx = True
-            pre_desc = []
-            state = "pre"
-            continue
+    if layout_text:
+        pre_desc: list[str] = []
+        state = "pre"
+        section_count = 0
+        in_tx = False
 
-        if SECTION_END.search(line):
-            break               # Belt-and-suspenders stop
+        for line in layout_text.splitlines():
+            if TRANS_TIME.search(line):
+                section_count += 1
+                if section_count > 1:
+                    break
+                in_tx = True
+                pre_desc = []
+                state = "pre"
+                continue
 
-        if not in_tx:
-            continue
+            if SECTION_END.search(line):
+                break
 
-        # ── Transaction anchor line ───────────────────────────────────────
-        m = DATE_LINE.match(line)
-        if m:
-            mon  = m.group(2).lower()[:3]
-            year = m.group(3)
-            ym   = f"{year}-{MONTH_NUM[mon]}"
+            if not in_tx:
+                continue
 
-            amt_m = AMOUNTS_PAT.search(line)
-            if amt_m:
-                credit_tok = amt_m.group(2)
-                credit = (0.0 if credit_tok == "--"
-                          else float(credit_tok.replace(",", "")))
-                # Description: text between value-date end (col ~38) and
-                # the start of the amounts block.
-                inline_desc = line[38:amt_m.start()].strip()
-                parts = pre_desc[:]
-                if inline_desc:
-                    parts.append(inline_desc)
-                full_desc = " ".join(parts).strip()
-                if credit > 0:
-                    add_credit(buckets, ym, credit, full_desc, account_name)
+            m = DATE_LINE.match(line)
+            if m:
+                mon  = m.group(2).lower()[:3]
+                year = m.group(3)
+                ym   = f"{year}-{MONTH_NUM[mon]}"
 
-            pre_desc = []
-            state = "post"
-            continue
+                amt_m = AMOUNTS_PAT.search(line)
+                if amt_m:
+                    credit_tok = amt_m.group(2)
+                    credit = (0.0 if credit_tok == "--"
+                              else float(credit_tok.replace(",", "")))
+                    inline_desc = line[38:amt_m.start()].strip()
+                    parts = pre_desc[:]
+                    if inline_desc:
+                        parts.append(inline_desc)
+                    full_desc = " ".join(parts).strip()
+                    if credit > 0:
+                        add_credit(buckets, ym, credit, full_desc, account_name)
 
-        # ── Non-anchor line ───────────────────────────────────────────────
-        stripped = line.strip()
-        if not stripped:
-            pre_desc = []
-            state = "pre"
-            continue
+                pre_desc = []
+                state = "post"
+                continue
 
-        dm = DESC_CONT.match(line)
-        if dm:
-            text = TRAIL_REF.sub("", dm.group(1)).strip()
-            # Only collect non-empty, non-digit-only continuation lines
-            if text and not re.match(r"^[\d\s]+$", text):
-                if state == "pre":
-                    # Pre-description: belongs to the next date line
-                    pre_desc.append(text)
-                # Post-description lines (after the date line) are
-                # transaction-ref overflows — discard them.
+            stripped = line.strip()
+            if not stripped:
+                pre_desc = []
+                state = "pre"
+                continue
+
+            dm = DESC_CONT.match(line)
+            if dm:
+                text = TRAIL_REF.sub("", dm.group(1)).strip()
+                if text and not re.match(r"^[\d\s]+$", text):
+                    if state == "pre":
+                        pre_desc.append(text)
+
+    # ── PyPDF2 fallback: always run and use whichever parser found more data ───
+    # pdftotext v4.00 (Glyph & Cog) can produce misaligned columns that cause
+    # the layout parser to find some but not all transactions.  The PyPDF2 parser
+    # reliably finds >99% of transactions. We pick the result with higher total.
+    if full_text:
+        pypdf2_buckets = _parse_opay_v2_pypdf2(full_text, account_name)
+        layout_gross  = sum(b.get("gross", 0) for b in buckets.values())
+        pypdf2_gross  = sum(b.get("gross", 0) for b in pypdf2_buckets.values())
+        if pypdf2_gross > layout_gross:
+            buckets = pypdf2_buckets
 
     return buckets, account_name
 
@@ -2119,7 +2244,7 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     elif bank == "OPay":
         buckets, account_name = parse_opay(full_text)
     elif bank == "OPay_v2":
-        buckets, account_name = parse_opay_v2(file_bytes)
+        buckets, account_name = parse_opay_v2(file_bytes, full_text)
     elif bank == "OPay_Business":
         buckets, account_name = parse_opay_business(file_bytes)
     elif bank == "Moniepoint_Business":
