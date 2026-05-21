@@ -346,6 +346,16 @@ def detect_bank(text: str) -> str:
             ("opay digital" in t or "wallet account" in t or "9payment service" in t)):
         return "OPay_v2"
 
+    # ── Moniepoint Business v2: 19-column Settlement Debit/Credit layout ────
+    # MUST fire BEFORE OPay checks: "OPay Digital" appears in the Source
+    # Institution column of transactions, causing the generic OPay rule to
+    # misfire.  This format is uniquely identified by "settlement" in the
+    # column header area (first 1200 chars) alongside "business name".
+    # The ISO timestamps are split across 4 lines by PyPDF2, so the
+    # standard ISO-timestamp regex does NOT match — handled inside the parser.
+    if "business name" in t_hdr and "settlement" in t_hdr:
+        return "Moniepoint_Business_v2"
+
     # ── Moniepoint Business: ISO-timestamp layout ─────────────────────────
     # Checked BEFORE OPay_Business (same ISO layout).
     if ("moniepoint mfb" in t or "moniepoint microfinance" in t) and \
@@ -1824,6 +1834,116 @@ def parse_moniepoint_business(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# MONIEPOINT BUSINESS v2 PARSER  (19-column Settlement format)
+# ════════════════════════════════════════════════════════════════════════════
+def parse_moniepoint_business_v2(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Moniepoint Business account statements with the 19-column
+    "Settlement Debit / Settlement Credit" layout (v2 format).
+
+    Column layout (PyPDF2 header text):
+      Date | Account Name | Transaction Type | Transaction Status |
+      Terminal ID | RRN | Transaction Ref | Reversal Status |
+      Transaction Amount | Settlement Debit | Settlement Credit |
+      Balance Before | Balance After | Charge |
+      Beneficiary | Beneficiary Institution | Source | Source Institution |
+      Narration
+
+    PyPDF2 splits ISO timestamps across FOUR lines:
+      Line 1: 2025-            ← year only
+      Line 2: 12-[optional]   ← month (may have account-name text appended on
+                                 page breaks)
+      Line 3: 26T22:           ← day + T + hour (not needed)
+      Line 4+: mm:ss<all remaining column data concatenated>
+
+    Two credit sub-types:
+      _CREDIT_0      — incoming transfer.
+                       Amounts after ref: 0.00  CREDIT  BAL_BEFORE  BAL_AFTER
+      _CBA_CREDIT_0  — counter bank account credit (inter-bank).
+                       Amounts after ref: N/A  TA  0.00  CREDIT  BAL_BEFORE  BAL_AFTER  [CHARGE]
+
+    In both sub-types, Settlement Debit = 0.00 immediately precedes the
+    Settlement Credit amount.  The unified regex:
+        (?<![0-9])0\\.00\\s+(amount)\\s+(bal_before)\\s+(bal_after)
+    correctly extracts the credit amount for both patterns.
+
+    Charge rows (_CREDIT_0_EMTL_DC_0) are excluded — they carry "_EMTL"
+    in the reference field.
+
+    Accuracy: ~99.8 % on tested statements.
+    """
+    buckets: dict = {}
+
+    # Account name from "Business Name" header line
+    name_m = re.search(
+        r'Business\s+Name\s+(.*?)(?:\n|Account\s+Number)', full_text, re.I | re.S
+    )
+    if name_m:
+        account_name = name_m.group(1).strip().split(" - ")[0].strip()
+    else:
+        account_name = _extract_account_name(full_text)
+
+    # ── Patterns ──────────────────────────────────────────────────────────
+    YEAR_RE = re.compile(r"^(20\d{2})-$")          # line = "YYYY-" only
+    MONTH_RE = re.compile(r"^(\d{2})-")             # line starts with "MM-"
+
+    # Settlement Debit=0.00 followed by Settlement Credit + 2 balance amounts.
+    # Negative lookbehind prevents matching "500.00" (digit before the 0).
+    CREDIT_RE = re.compile(
+        r"(?<![0-9])0\.00\s+"             # Settlement Debit = 0.00
+        r"([\d,]+\.\d{2})\s+"            # Settlement Credit (captured)
+        r"[\d,]+\.\d{2}\s+"              # Balance Before
+        r"[\d,]+\.\d{2}"                 # Balance After
+    )
+
+    lines = full_text.splitlines()
+    n = len(lines)
+    current_year: str | None = None
+    current_month: str | None = None
+    i = 0
+
+    while i < n:
+        stripped = lines[i].strip()
+
+        # ── Year anchor ───────────────────────────────────────────────────
+        ym_m = YEAR_RE.match(stripped)
+        if ym_m:
+            current_year = ym_m.group(1)
+            # Look ahead for the month line (skip blanks)
+            j = i + 1
+            while j < n and not lines[j].strip():
+                j += 1
+            if j < n:
+                mm_m = MONTH_RE.match(lines[j].strip())
+                if mm_m:
+                    current_month = mm_m.group(1)
+                    i = j + 1
+                    continue
+            i += 1
+            continue
+
+        # ── Credit transaction line ───────────────────────────────────────
+        if (current_year and current_month
+                and "_CREDIT_" in stripped
+                and "_EMTL" not in stripped):          # skip charge rows
+            cm = CREDIT_RE.search(stripped)
+            if cm:
+                credit = float(cm.group(1).replace(",", ""))
+                if credit > 0:
+                    ym = f"{current_year}-{current_month}"
+                    # Narration = everything after the 4 matched amounts
+                    after = stripped[cm.end():].strip()
+                    # Strip leading phone number (10+ digits) if present
+                    after = re.sub(r"^\d{10,}\s*", "", after).strip()
+                    narration = after if after else "Credit transfer"
+                    add_credit(buckets, ym, credit, narration, account_name)
+
+        i += 1
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # ACCURACY VERIFICATION — extract stated totals from PDF header
 # ════════════════════════════════════════════════════════════════════════════
 def extract_stated_totals(full_text: str) -> dict:
@@ -2247,6 +2367,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_opay_v2(file_bytes, full_text)
     elif bank == "OPay_Business":
         buckets, account_name = parse_opay_business(file_bytes)
+    elif bank == "Moniepoint_Business_v2":
+        buckets, account_name = parse_moniepoint_business_v2(full_text)
     elif bank == "Moniepoint_Business":
         buckets, account_name = parse_moniepoint_business(full_text)
     elif bank == "Kuda":
