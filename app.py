@@ -366,7 +366,14 @@ if st.session_state.rows_a:
         hdr += '<th class="col-net">Eligible Income</th></tr>'
 
         body = ""
+        t_gross = t_self = t_rev = t_nb = t_loan = t_net = 0.0
         for r in rows_a:
+            t_gross += r["gross"]
+            t_self  += r["self_transfer"]
+            t_rev   += r["reversal"]
+            t_nb    += r["non_business"]
+            t_loan  += r["loan_disbursal"]
+            t_net   += r["eligible_income"]
             body += (f'<tr><td>{r["label"]}</td>'
                      f'<td class="col-gross">{money(r["gross"])}</td>')
             if has_self:  body += f'<td class="col-self" style="color:var(--orange);font-size:11px">{money(r["self_transfer"]) if r["self_transfer"] > 0 else "—"}</td>'
@@ -375,8 +382,19 @@ if st.session_state.rows_a:
             if has_loan:  body += f'<td class="col-loan">{("-"+money(r["loan_disbursal"])) if r["loan_disbursal"] > 0 else "—"}</td>'
             body += f'<td class="col-net">{money(r["eligible_income"])}</td></tr>'
 
+        # ── Totals footer ─────────────────────────────────────────────────
+        foot = (f'<tfoot><tr>'
+                f'<td style="color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:1px">Total</td>'
+                f'<td class="col-gross" style="border-top:1px solid #1a3d2b">{money(t_gross)}</td>')
+        if has_self:  foot += f'<td class="col-self" style="border-top:1px solid #1a3d2b">{money(t_self) if t_self > 0 else "—"}</td>'
+        if has_rev:   foot += f'<td class="col-rev"  style="border-top:1px solid #1a3d2b">{("-"+money(t_rev))  if t_rev  > 0 else "—"}</td>'
+        if has_nb:    foot += f'<td class="col-nonbiz" style="border-top:1px solid #1a3d2b">{("-"+money(t_nb))   if t_nb   > 0 else "—"}</td>'
+        if has_loan:  foot += f'<td class="col-loan" style="border-top:1px solid #1a3d2b">{("-"+money(t_loan)) if t_loan > 0 else "—"}</td>'
+        foot += (f'<td class="col-net" style="border-top:1px solid #1a3d2b;font-size:14px">{money(t_net)}</td>'
+                 f'</tr></tfoot>')
+
         st.markdown(
-            f'<table class="preview-table"><thead>{hdr}</thead><tbody>{body}</tbody></table>',
+            f'<table class="preview-table"><thead>{hdr}</thead><tbody>{body}</tbody>{foot}</table>',
             unsafe_allow_html=True,
         )
         if has_self:
