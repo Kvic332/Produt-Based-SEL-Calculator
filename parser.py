@@ -438,6 +438,10 @@ def detect_bank(text: str) -> str:
         return "FirstBank"
     if "united bank for africa" in t_hdr or ("uba" in t_hdr and "mybankstatement" in t):
         return "UBA"
+    # Fidelity Direct: native Fidelity Bank statement (has fidelitybank.ng URL
+    # in the page header and uses DD-Mon-YY dates — NOT a mybankStatement PDF).
+    if "fidelitybank.ng" in t_hdr and "mybankstatement" not in t:
+        return "Fidelity_Direct"
     if "fidelity bank" in t_hdr or ("fidelity bank" in t and "mybankstatement" in t):
         return "Fidelity"
     if "union bank" in t_hdr or ("union bank" in t and "mybankstatement" in t):
@@ -479,6 +483,8 @@ def detect_bank(text: str) -> str:
         return "FCMB"
     if "wema bank" in t:
         return "Wema"
+    if "fidelitybank.ng" in t and "mybankstatement" not in t:
+        return "Fidelity_Direct"
     if "fidelity bank" in t:
         return "Fidelity"
     if "stanbic ibtc" in t or "stanbic" in t:
@@ -2638,6 +2644,144 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# FIDELITY DIRECT PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
+    """
+    Fidelity Bank native (non-mybankStatement) statement parser.
+
+    Column layout:  TRANSACTION DATE | VALUE DATE | REFERENCE |
+                    CHANNEL | DESCRIPTION | PAY IN | PAY OUT | BALANCE
+
+    Date format: DD-Mon-YY (2-digit year, e.g. 17-Feb-26 → 2026-02).
+
+    Credit detection: balance-delta method — a transaction is a credit
+    when curr_balance > prev_balance.  Opening Balance seeds prev_balance.
+
+    Channel "Online Banking" is split by PyPDF2:
+      Line 1:  DD-Mon-YY  DD-Mon-YY[Online]   (no space before "Online")
+      Line 2+: Banking<description>[amounts]
+    Single-word channels (Others, POS, ATM …) appear on the date line itself.
+    """
+    buckets: dict = {}
+
+    # ── 1. Account name ───────────────────────────────────────────────────
+    # After the internal YYN code line, the next consecutive ALL-CAPS
+    # letter-only lines are the account name (e.g. "CNM ENTERTAINMENT\nLIMITED").
+    account_name = "Unknown"
+    m_name = re.search(
+        r'YYN[^\n]*\n([A-Z][A-Z ]+(?:\n[A-Z][A-Z ]+)*)',
+        full_text,
+    )
+    if m_name:
+        account_name = " ".join(m_name.group(1).split())
+    if len(account_name) < 3 or account_name == "Unknown":
+        account_name = _extract_account_name(full_text) or "Unknown"
+
+    # ── 2. Opening balance ────────────────────────────────────────────────
+    ob_m = re.search(r'Opening Balance\s+([\d,]+\.\d{2})', full_text)
+    prev_bal = float(ob_m.group(1).replace(',', '')) if ob_m else 0.0
+
+    # ── 3. Regexes ────────────────────────────────────────────────────────
+    # Date line: DD-Mon-YY  DD-Mon-YY  [optional "Online" concatenated]  [rest]
+    FID_DATE = re.compile(
+        r'^(\d{2}-[A-Za-z]{3}-\d{2})\s+(\d{2}-[A-Za-z]{3}-\d{2})(Online)?(.*)',
+        re.I,
+    )
+    # Last two decimal amounts on a line = (transaction_amount, closing_balance)
+    AMTS_END = re.compile(r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$')
+    # Channel prefixes to strip from the start of narration text
+    CHANNEL_RE = re.compile(
+        r'^(Banking|Online\s+Banking|POS|Others|ATM|Internet|Cheque|Transfer|'
+        r'Cash|Interest|Bank\s+Charges|Instant\s+Banking)\s*',
+        re.I,
+    )
+
+    def _to_ym(date_str: str) -> str:
+        """'DD-Mon-YY' → 'YYYY-MM'  (century always 20xx)"""
+        parts = date_str.split('-')
+        mm = MONTH_NUM.get(parts[1].lower(), "00")
+        return f"20{parts[2]}-{mm}"
+
+    # ── 4. Find start of transactions section ─────────────────────────────
+    lines = full_text.splitlines()
+    start_idx = 0
+    for idx, ln in enumerate(lines):
+        if 'opening balance' in ln.lower() and re.search(r'[\d,]+\.\d{2}', ln):
+            start_idx = idx + 1
+            break
+
+    # ── 5. Main parse loop ────────────────────────────────────────────────
+    i = start_idx
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        dm = FID_DATE.match(line)
+        if not dm:
+            i += 1
+            continue
+
+        tx_date = dm.group(1)                    # e.g. "17-Feb-26"
+        ym      = _to_ym(tx_date)
+        rest    = dm.group(4).strip()            # text after value-date (and any "Online")
+
+        # ── Case A: all amounts on this date line (Others / POS / ATM …) ─
+        am = AMTS_END.search(rest) if rest else None
+        if am:
+            curr_bal  = float(am.group(2).replace(',', ''))
+            narr_raw  = rest[:am.start()].strip()
+            narration = CHANNEL_RE.sub('', narr_raw).strip()
+            delta     = curr_bal - prev_bal
+            if delta > 0:
+                add_credit(buckets, ym, round(delta, 2), narration, account_name)
+            prev_bal = curr_bal
+            i += 1
+            continue
+
+        # ── Case B: multi-line (Online Banking / page-split) ─────────────
+        i += 1
+        acc = rest        # may be empty when line ended with "Online"
+
+        for _ in range(8):          # guard — max 8 continuation lines
+            if i >= len(lines):
+                break
+            nxt = lines[i].strip()
+
+            # New date line → abandon this incomplete tx (page-split)
+            if FID_DATE.match(nxt):
+                break
+
+            # Strip channel prefix ("Banking" / "Others" / etc.)
+            nxt_clean = CHANNEL_RE.sub('', nxt, count=1).strip()
+            if not nxt_clean:       # "Banking" alone → page-boundary artefact
+                i += 1
+                continue
+
+            acc = (acc + ' ' + nxt_clean).strip()
+
+            am = AMTS_END.search(acc)
+            if am:
+                curr_bal  = float(am.group(2).replace(',', ''))
+                narr_raw  = acc[:am.start()].strip()
+                narration = CHANNEL_RE.sub('', narr_raw).strip()
+                delta     = curr_bal - prev_bal
+                if delta > 0:
+                    add_credit(buckets, ym, round(delta, 2), narration, account_name)
+                prev_bal = curr_bal
+                i += 1
+                break
+
+            i += 1
+        # If the guard exhausted without finding amounts, i has already
+        # advanced past the continuation lines; next iteration resumes normally.
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ════════════════════════════════════════════════════════════════════════════
 def parse_transactions(file_bytes: bytes, password: str = "",
@@ -2694,6 +2838,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_palmpay_new(full_text)
     elif bank == "Access_Oracle":
         buckets, account_name = parse_access_oracle(full_text)
+    elif bank == "Fidelity_Direct":
+        buckets, account_name = parse_fidelity_direct(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
