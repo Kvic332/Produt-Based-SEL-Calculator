@@ -1,5 +1,6 @@
 from __future__ import annotations
 import datetime
+import math
 import pandas as pd
 import streamlit as st
 from parser import (
@@ -7,7 +8,7 @@ from parser import (
     ym_label, CreditAccount,
     extract_stated_totals, verify_extraction_accuracy,
 )
-from sel_rules import calculate_eligibility
+from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ st.markdown("""
     --bg: #090e0c; --surface: #0f1a15; --surface2: #162019;
     --border: #1a3d2b; --accent: #10b981; --accent2: #f59e0b;
     --green: #34d399; --red: #f87171; --text: #e2e8f0;
-    --muted: #6b7f74; --gold: #fbbf24; --orange: #fb923c;
+    --muted: #94a3b8; --gold: #fbbf24; --orange: #fb923c;
   }
 
   /* Global */
@@ -39,21 +40,21 @@ st.markdown("""
   h1 { font-family: 'DM Serif Display', serif !important; color: #fff !important; }
   h1 em { color: var(--accent) !important; }
   h2, h3 { font-family: 'Space Mono', monospace !important; color: var(--accent) !important;
-           font-size: 11px !important; letter-spacing: 3px !important; text-transform: uppercase !important; }
+           font-size: 12px !important; letter-spacing: 3px !important; text-transform: uppercase !important; font-weight: 700 !important; }
 
   /* Sections */
   .sel-section { background: var(--surface); border: 1px solid var(--border);
                  border-radius: 4px; padding: 24px; margin-bottom: 20px; }
-  .sel-section-title { font-size: 11px; letter-spacing: 3px; color: var(--accent);
+  .sel-section-title { font-size: 12px; letter-spacing: 3px; color: var(--accent);
                        text-transform: uppercase; border-bottom: 1px solid var(--border);
-                       padding-bottom: 10px; margin-bottom: 16px; }
+                       padding-bottom: 10px; margin-bottom: 16px; font-weight: 700; }
 
   /* Metric cards */
   .sel-card { background: var(--surface2); border: 1px solid var(--border);
               border-radius: 3px; padding: 14px; }
   .sel-card.highlight { border-color: var(--accent); box-shadow: 0 0 20px rgba(16,185,129,.1); }
-  .sel-label { font-size: 10px; letter-spacing: 2px; color: var(--muted);
-               text-transform: uppercase; margin-bottom: 4px; }
+  .sel-label { font-size: 11px; letter-spacing: 2px; color: var(--muted);
+               text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }
   .sel-value { font-size: 20px; font-weight: 700; color: var(--accent); }
   .sel-value.green  { color: var(--green) !important; }
   .sel-value.gold   { color: var(--gold) !important; }
@@ -87,8 +88,8 @@ st.markdown("""
 
   /* Tables */
   .preview-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
-  .preview-table th { font-size: 9px; letter-spacing: 1px; color: var(--muted);
-                      text-transform: uppercase; padding: 6px 10px;
+  .preview-table th { font-size: 10px; letter-spacing: 1px; color: var(--muted);
+                      text-transform: uppercase; padding: 7px 10px; font-weight: 700;
                       border-bottom: 1px solid var(--border); text-align: right; }
   .preview-table th:first-child { text-align: left; }
   .preview-table td { padding: 6px 10px; border-bottom: 1px solid rgba(30,58,95,.3);
@@ -103,8 +104,8 @@ st.markdown("""
 
   /* Credit table */
   .credit-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
-  .credit-table th { font-size: 9px; letter-spacing: 1px; color: var(--muted);
-                     text-transform: uppercase; padding: 8px;
+  .credit-table th { font-size: 10px; letter-spacing: 1px; color: var(--muted);
+                     text-transform: uppercase; padding: 8px; font-weight: 700;
                      border-bottom: 1px solid var(--border); text-align: left; }
   .credit-table td { padding: 8px; border-bottom: 1px solid rgba(26,61,43,.4); vertical-align: top; }
   .credit-table tfoot td { border-top: 1px solid var(--border); font-weight: 700; }
@@ -112,8 +113,8 @@ st.markdown("""
   /* Sidebar */
   [data-testid="stSidebar"] { background: var(--surface) !important;
                                border-right: 1px solid var(--border) !important; }
-  [data-testid="stSidebar"] label { color: var(--muted) !important; font-size: 10px !important;
-                                    letter-spacing: 1px !important; text-transform: uppercase !important; }
+  [data-testid="stSidebar"] label { color: var(--muted) !important; font-size: 11px !important;
+                                    letter-spacing: 1px !important; text-transform: uppercase !important; font-weight: 600 !important; }
 
   /* Inputs */
   input, select, textarea, [data-testid="stTextInput"] input,
@@ -140,15 +141,15 @@ st.markdown("""
   [data-testid="stMetric"] { background: var(--surface2) !important;
                               border: 1px solid var(--border) !important;
                               border-radius: 3px !important; padding: 12px !important; }
-  [data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 10px !important;
-                                   letter-spacing: 2px !important; text-transform: uppercase !important; }
+  [data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 11px !important;
+                                   letter-spacing: 2px !important; text-transform: uppercase !important; font-weight: 600 !important; }
   [data-testid="stMetricValue"] { color: var(--accent) !important; font-size: 20px !important; }
 
   /* Divider */
   hr { border: none !important; border-top: 1px solid var(--border) !important; margin: 28px 0 !important; }
 
   /* Caption */
-  [data-testid="stCaptionContainer"] { color: var(--muted) !important; font-size: 11px !important; }
+  [data-testid="stCaptionContainer"] { color: var(--muted) !important; font-size: 12px !important; }
 
   /* Search input highlight */
   [data-testid="stTextInput"] input:focus {
@@ -174,13 +175,15 @@ st.markdown("""
 
   /* Download button */
   [data-testid="stDownloadButton"] button {
-    background: transparent !important;
-    border: 1px solid var(--muted) !important;
-    color: var(--muted) !important;
-    font-size: 10px !important;
+    background: rgba(16,185,129,.06) !important;
+    border: 1px solid rgba(16,185,129,.35) !important;
+    color: var(--green) !important;
+    font-size: 11px !important;
     letter-spacing: 1px !important;
+    font-weight: 600 !important;
   }
   [data-testid="stDownloadButton"] button:hover {
+    background: rgba(16,185,129,.12) !important;
     border-color: var(--accent) !important;
     color: var(--accent) !important;
   }
@@ -202,6 +205,180 @@ def card(label: str, value: str, cls: str = "") -> str:
 
 def section(title: str) -> str:
     return f'<div class="sel-section-title">{title}</div>'
+
+
+# ── Excel Export Helper ────────────────────────────────────────────────────────
+def generate_xlsx(rows: list[dict], result: dict | None = None,
+                  account_name: str = "", bank: str = "") -> bytes:
+    """Generate a formatted .xlsx with monthly breakdown + optional eligibility sheet."""
+    from io import BytesIO
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+
+    # ── Palette ──────────────────────────────────────────────────────────────
+    DARK   = "0D2818"
+    MID    = "0F1A15"
+    LIGHT  = "162019"
+    ACCENT = "10B981"
+    GREEN  = "34D399"
+    GOLD   = "F59E0B"
+    ORANGE = "FB923C"
+    PURPLE = "A78BFA"
+    MUTED  = "64748B"
+    WHITE  = "E2E8F0"
+    RED    = "F87171"
+
+    def hdr_font(color=WHITE):  return Font(name="Calibri", bold=True, color=color, size=10)
+    def body_font(color=WHITE): return Font(name="Calibri", color=color, size=10)
+    def bold_font(color=WHITE): return Font(name="Calibri", bold=True, color=color, size=10)
+    def fill(hex_color):        return PatternFill("solid", fgColor=hex_color)
+    def center():               return Alignment(horizontal="center", vertical="center")
+    def right():                return Alignment(horizontal="right", vertical="center")
+    def left():                 return Alignment(horizontal="left",  vertical="center")
+    def thin_border():
+        s = Side(style="thin", color="1A3D2B")
+        return Border(bottom=s)
+
+    today_ym = datetime.date.today().strftime("%Y-%m")
+    display_rows = [r for r in rows if r.get("ym","") < today_ym and r.get("gross",0) > 0][-6:]
+
+    # ── Sheet 1: Monthly Breakdown ────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "Monthly Breakdown"
+    ws.sheet_properties.tabColor = ACCENT
+
+    # Info rows
+    ws["A1"] = "SEL Loan Eligibility Calculator"
+    ws["A1"].font = Font(name="Calibri", bold=True, color=ACCENT, size=13)
+    ws["A2"] = f"Account: {account_name}   |   Bank: {bank}   |   Generated: {datetime.date.today()}"
+    ws["A2"].font = body_font(MUTED)
+    ws.merge_cells("A1:H1")
+    ws.merge_cells("A2:H2")
+
+    # Column headers
+    has_self  = any(r.get("self_transfer",0)  > 0 for r in display_rows)
+    has_rev   = any(r.get("reversal",0)       > 0 for r in display_rows)
+    has_nb    = any(r.get("non_business",0)   > 0 for r in display_rows)
+    has_loan  = any(r.get("loan_disbursal",0) > 0 for r in display_rows)
+
+    base_cols = ["Month", "Total Inflow (NGN)"]
+    col_colors = [WHITE, GREEN]
+    if has_self:  base_cols.append("Self Deposits (NGN)");  col_colors.append(ORANGE)
+    if has_rev:   base_cols.append("Reversals (NGN)");      col_colors.append(PURPLE)
+    if has_nb:    base_cols.append("Non-Business (NGN)");   col_colors.append(MUTED)
+    if has_loan:  base_cols.append("Loan Disbursals (NGN)");col_colors.append(GOLD)
+    base_cols.append("Eligible Income (NGN)")
+    col_colors.append(ACCENT)
+
+    HDR_ROW = 4
+    for ci, (colname, colclr) in enumerate(zip(base_cols, col_colors), 1):
+        cell = ws.cell(row=HDR_ROW, column=ci, value=colname)
+        cell.fill = fill(DARK)
+        cell.font = hdr_font(colclr)
+        cell.alignment = right() if ci > 1 else left()
+        cell.border = thin_border()
+        ws.column_dimensions[get_column_letter(ci)].width = 22 if ci > 1 else 12
+
+    # Data rows
+    t_gross = t_self = t_rev = t_nb = t_loan = t_net = 0.0
+    for ri, r in enumerate(display_rows):
+        row_num = HDR_ROW + 1 + ri
+        row_fill = fill(MID) if ri % 2 == 0 else fill(LIGHT)
+        vals = [r.get("label", r.get("ym","")), r.get("gross",0)]
+        if has_self:  vals.append(r.get("self_transfer",0))
+        if has_rev:   vals.append(r.get("reversal",0))
+        if has_nb:    vals.append(r.get("non_business",0))
+        if has_loan:  vals.append(r.get("loan_disbursal",0))
+        vals.append(r.get("eligible_income",0))
+        t_gross += r.get("gross",0); t_self += r.get("self_transfer",0)
+        t_rev   += r.get("reversal",0); t_nb += r.get("non_business",0)
+        t_loan  += r.get("loan_disbursal",0); t_net += r.get("eligible_income",0)
+        for ci, (val, clr) in enumerate(zip(vals, col_colors), 1):
+            cell = ws.cell(row=row_num, column=ci, value=val)
+            cell.fill = row_fill
+            cell.font = body_font(clr)
+            cell.alignment = right() if ci > 1 else left()
+            if ci > 1 and isinstance(val, (int, float)):
+                cell.number_format = '#,##0.00'
+
+    # Totals row
+    tot_row = HDR_ROW + 1 + len(display_rows)
+    tot_vals = ["TOTAL", t_gross]
+    if has_self:  tot_vals.append(t_self)
+    if has_rev:   tot_vals.append(t_rev)
+    if has_nb:    tot_vals.append(t_nb)
+    if has_loan:  tot_vals.append(t_loan)
+    tot_vals.append(t_net)
+    for ci, (val, clr) in enumerate(zip(tot_vals, col_colors), 1):
+        cell = ws.cell(row=tot_row, column=ci, value=val)
+        cell.fill = fill("0A2E1F")
+        cell.font = bold_font(ACCENT if ci == len(tot_vals) else clr)
+        cell.alignment = right() if ci > 1 else left()
+        if ci > 1 and isinstance(val, (int, float)):
+            cell.number_format = '#,##0.00'
+
+    # ── Sheet 2: Eligibility Summary (if result provided) ──────────────────
+    if result:
+        ws2 = wb.create_sheet("Eligibility Summary")
+        ws2.sheet_properties.tabColor = GOLD
+        pairs = [
+            ("Decision",             "Approved" if result.get("approved") else "Below Minimum"),
+            ("Max Loan Amount",      result.get("max_loan", 0)),
+            ("Applicable Turnover",  result.get("applicable_turnover", 0)),
+            ("Total Eligible Net",   result.get("total_net", 0)),
+            ("DTI",                  f"{result.get('dti',0)*100:.2f}%"),
+            ("Interest Rate",        f"{(result.get('interest_rate') or 0)*100:.2f}%"),
+            ("Repayment Frequency",  result.get("repayment_frequency","")),
+            ("Max Repayment/Period", result.get("max_repayment_display", 0)),
+            ("Max Total Repayment",  result.get("max_total_repayment", 0)),
+        ]
+        ws2["A1"] = "Eligibility Summary"
+        ws2["A1"].font = Font(name="Calibri", bold=True, color=ACCENT, size=13)
+        ws2.column_dimensions["A"].width = 28
+        ws2.column_dimensions["B"].width = 20
+        for ri2, (label, val) in enumerate(pairs, 3):
+            lc = ws2.cell(row=ri2, column=1, value=label)
+            vc = ws2.cell(row=ri2, column=2, value=val)
+            lc.font = body_font(MUTED); lc.fill = fill(MID)
+            row_clr = GREEN if (label == "Decision" and result.get("approved")) else (RED if label == "Decision" else WHITE)
+            vc.font = bold_font(row_clr); vc.fill = fill(LIGHT)
+            vc.alignment = right()
+            if isinstance(val, (int, float)) and val > 1:
+                vc.number_format = '#,##0.00'
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ── What-if Reverse Calculator ────────────────────────────────────────────────
+def required_income_for_loan(target_loan: float, tenor: int,
+                              location: str, product_type: str,
+                              other_loans: float = 0,
+                              manual_rate_pct: float | None = None) -> dict:
+    """Reverse-calculate the monthly income needed to qualify for target_loan."""
+    rate = (manual_rate_pct / 100) if (manual_rate_pct and manual_rate_pct > 0) \
+           else get_interest_rate(target_loan, location, product_type)
+    if not rate:
+        return {"ok": False, "reason": "Rate unavailable for this amount/product combo"}
+    min_loan, max_loan = loan_limits(location, product_type)
+    if target_loan < min_loan or target_loan > max_loan:
+        return {"ok": False, "reason": f"Target ₦{target_loan:,.0f} outside product range {money(min_loan)}–{money(max_loan)}"}
+    pmt = target_loan * rate / (1 - math.pow(1 + rate, -tenor))
+    # Use a safe total_net=5M to get non-zero DTI (avoids 0.0 from RENEWAL <801k edge case)
+    dti = get_dti(total_net=5_000_000, product_type=product_type, location=location)
+    if not dti:
+        return {"ok": False, "reason": "DTI is zero for this product — check product/location combo"}
+    required_turnover = (pmt + other_loans) / dti
+    freq = "Weekly (est.)" if required_turnover >= 200_000 else "Monthly"
+    return {
+        "ok": True, "rate": rate, "pmt": pmt, "dti": dti,
+        "required_turnover": required_turnover,
+        "repayment_frequency": freq,
+    }
 
 
 # ── Session state init ────────────────────────────────────────────────────────
@@ -508,21 +685,37 @@ if st.session_state.rows_a:
             unsafe_allow_html=True,
         )
 
-        # ── Download Statement Analysis PDF ───────────────────────────────
+        # ── Download buttons ──────────────────────────────────────────────
         _pdf_stmt = generate_pdf_report(
             account_name = st.session_state.name_a or "Account Holder",
             bank         = st.session_state.bank_a or "Bank",
             rows         = rows_a,
         )
-        _safe_stmt = (st.session_state.name_a or "statement").replace(" ", "_").lower()
-        st.download_button(
-            label               = "⬇  Download Statement Analysis (PDF)",
-            data                = _pdf_stmt,
-            file_name           = f"SEL_Statement_{_safe_stmt}_{datetime.date.today():%Y%m%d}.pdf",
-            mime                = "application/pdf",
-            use_container_width = True,
-            key                 = "dl_statement_pdf",
+        _xlsx_stmt = generate_xlsx(
+            rows         = rows_a,
+            account_name = st.session_state.name_a or "Account Holder",
+            bank         = st.session_state.bank_a or "Bank",
         )
+        _safe_stmt = (st.session_state.name_a or "statement").replace(" ", "_").lower()
+        _dl1, _dl2 = st.columns(2)
+        with _dl1:
+            st.download_button(
+                label     = "⬇  Download Statement Analysis (PDF)",
+                data      = _pdf_stmt,
+                file_name = f"SEL_Statement_{_safe_stmt}_{datetime.date.today():%Y%m%d}.pdf",
+                mime      = "application/pdf",
+                key       = "dl_statement_pdf",
+                use_container_width=True,
+            )
+        with _dl2:
+            st.download_button(
+                label     = "⬇  Download Monthly Breakdown (Excel)",
+                data      = _xlsx_stmt,
+                file_name = f"SEL_Breakdown_{_safe_stmt}_{datetime.date.today():%Y%m%d}.xlsx",
+                mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key       = "dl_statement_xlsx",
+                use_container_width=True,
+            )
 
         # ── Income Consistency Score ──────────────────────────────────────
         import statistics as _stat_mod
@@ -714,23 +907,45 @@ if st.session_state.txns_a:
         )
 
     # ── Loan Cycling Flag ─────────────────────────────────────────────────
-    _loan_kw = ["loan","disburs","credit facility","lending","overdraft","cash advance","borrow"]
+    # Signal 1: narration keywords in credit transactions
+    _loan_kw = ["loan","disburs","credit facility","lending","overdraft","cash advance","borrow","float"]
     _loan_txns = [t for t in _txns_i if any(k in t["narration"].lower() for k in _loan_kw)]
     _loan_mos: dict = _ddict_intel(float)
     for _lt in _loan_txns:
         _loan_mos[_lt["ym"]] += _lt["amount"]
 
-    if len(_loan_mos) >= 2:
-        _loan_total = sum(_loan_mos.values())
+    # Signal 2: parser already flagged loan_disbursal category in rows
+    _parser_loan_months = {
+        r["ym"]: r["loan_disbursal"]
+        for r in (st.session_state.rows_a or [])
+        if r.get("loan_disbursal", 0) > 0
+    }
+    _all_loan_mos = set(_loan_mos) | set(_parser_loan_months)
+    _loan_total = sum(_loan_mos.values()) + sum(_parser_loan_months.values())
+
+    if len(_all_loan_mos) >= 2:
+        # Show per-month detail
+        _detail_rows = ""
+        for _ym in sorted(_all_loan_mos):
+            _narr_amt  = _loan_mos.get(_ym, 0)
+            _parse_amt = _parser_loan_months.get(_ym, 0)
+            _mo_total  = max(_narr_amt, _parse_amt)  # avoid double-counting same txns
+            _lbl = ym_label(_ym)
+            _detail_rows += (
+                f'<tr>'
+                f'<td style="color:#94a3b8;font-size:11px;padding:2px 4px">{_lbl}</td>'
+                f'<td style="color:#f87171;font-weight:700;text-align:right;padding:2px 4px;white-space:nowrap">{money(_mo_total)}</td>'
+                f'</tr>'
+            )
         _intel.append(
             f'<div style="flex:1;min-width:240px">'
             f'<div style="padding:10px 14px;background:rgba(248,113,113,.07);'
             f'border-left:3px solid #f87171;border-radius:4px">'
-            f'<div style="font-size:9px;letter-spacing:2px;color:#f87171;text-transform:uppercase;margin-bottom:4px">⚠ Loan Cycling Signal</div>'
-            f'<div style="font-size:11px;color:#94a3b8">'
-            f'Loan-related credits in <span style="color:#f87171;font-weight:700">{len(_loan_mos)} months</span> '
-            f'totalling <span style="color:#f87171;font-weight:700">{money(_loan_total)}</span>. '
-            f'Verify these are not disbursements recycling through the account.</div>'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#f87171;text-transform:uppercase;margin-bottom:6px">⚠ Loan Cycling Signal</div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:8px">'
+            f'Loan-like credits detected in <span style="color:#f87171;font-weight:700">{len(_all_loan_mos)} months</span>. '
+            f'Verify disbursements are not recycling through the account.</div>'
+            f'<table style="width:100%;border-collapse:collapse">{_detail_rows}</table>'
             f'</div></div>'
         )
 
@@ -1117,6 +1332,47 @@ with r1: req_loan   = st.number_input("Requested Loan Amount (₦) — Optional"
 with r2: manual_rate= st.number_input("Manual Interest Rate (%) — Optional Override", min_value=0.0, value=0.0, step=0.01,
                                        help="If entered, overrides the rate grid. Leave at 0 to use rate grid.")
 
+# ── What-if Reverse Calculator ────────────────────────────────────────────────
+with st.expander("🔁  What-if: How much income is needed to qualify for ₦X?", expanded=False):
+    st.markdown(
+        '<div style="font-size:11px;color:#94a3b8;margin-bottom:10px">'
+        'Enter a target loan amount below. The table shows the minimum monthly income '
+        'required to qualify, across all tenors — using the product/location settings above.</div>',
+        unsafe_allow_html=True,
+    )
+    wi_target = st.number_input("Target Loan Amount (₦)", min_value=0.0, value=1_000_000.0,
+                                 step=50_000.0, key="wi_target")
+    if wi_target > 0:
+        wi_rows = []
+        for _wt in range(2, 13):
+            _wr = required_income_for_loan(
+                target_loan=wi_target, tenor=_wt,
+                location=location, product_type=prod_type,
+                other_loans=other_loans,
+                manual_rate_pct=manual_rate if manual_rate > 0 else None,
+            )
+            if _wr["ok"]:
+                wi_rows.append({
+                    "Tenor": f"{'▶ ' if _wt == tenor else ''}{_wt} mo{'  ◀' if _wt == tenor else ''}",
+                    "Rate":             f"{_wr['rate']*100:.2f}%",
+                    "Monthly PMT":      money(_wr["pmt"]),
+                    "Min Monthly Income": money(_wr["required_turnover"]),
+                    "DTI Used":         f"{_wr['dti']*100:.0f}%",
+                })
+            else:
+                wi_rows.append({
+                    "Tenor":              f"{_wt} mo",
+                    "Rate":               "—",
+                    "Monthly PMT":        "—",
+                    "Min Monthly Income": _wr["reason"],
+                    "DTI Used":           "—",
+                })
+        st.dataframe(pd.DataFrame(wi_rows), hide_index=True, use_container_width=True)
+        st.caption(
+            f"Min Monthly Income = (PMT + other loans) ÷ DTI  |  "
+            f"NTB note: applicable turnover uses trimmed mean — actual income may need to be higher."
+        )
+
 calc_btn = st.button("▶   Calculate Eligibility", key="calc", use_container_width=True)
 
 
@@ -1258,12 +1514,32 @@ if calc_btn:
                         "Deducted": st.column_config.CheckboxColumn("Deducted from Eligible?"),
                     },
                 )
-                st.download_button(
-                    "Download Classification Audit CSV",
-                    df.to_csv(index=False).encode("utf-8"),
-                    file_name="sel_classification_audit.csv",
-                    mime="text/csv",
+                _xlsx_full = generate_xlsx(
+                    rows         = st.session_state.rows_a or [],
+                    result       = result,
+                    account_name = st.session_state.name_a or "",
+                    bank         = st.session_state.bank_a or "",
                 )
+                _safe_xl = (st.session_state.name_a or "report").replace(" ", "_").lower()
+                _cav1, _cav2 = st.columns(2)
+                with _cav1:
+                    st.download_button(
+                        "⬇  Download Full Report (Excel)",
+                        _xlsx_full,
+                        file_name=f"SEL_Report_{_safe_xl}_{datetime.date.today():%Y%m%d}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_audit_xlsx",
+                        use_container_width=True,
+                    )
+                with _cav2:
+                    st.download_button(
+                        "⬇  Download Audit (CSV)",
+                        df.to_csv(index=False).encode("utf-8"),
+                        file_name="sel_classification_audit.csv",
+                        mime="text/csv",
+                        key="dl_audit_csv",
+                        use_container_width=True,
+                    )
 
         # ── Download Full Eligibility Report PDF ──────────────────────────
         st.markdown("---")
