@@ -356,6 +356,13 @@ def detect_bank(text: str) -> str:
     if "business name" in t_hdr and "settlement" in t_hdr:
         return "Moniepoint_Business_v2"
 
+    # ── Carbon MFB: getcarbon.co domain or "Carbon MFB" in statement header ─
+    # MUST fire before FairMoney and OPay checks: Carbon narrations can
+    # contain "FairMoney MFB" (e.g. incoming transfers) or "OPay" merchant
+    # names, both of which would cause earlier rules to mismatch.
+    if "getcarbon" in t_hdr or "carbon mfb" in t_hdr:
+        return "Carbon"
+
     # ── Moniepoint Business: ISO-timestamp layout ─────────────────────────
     # Checked BEFORE OPay_Business (same ISO layout).
     if ("moniepoint mfb" in t or "moniepoint microfinance" in t) and \
@@ -403,6 +410,15 @@ def detect_bank(text: str) -> str:
     # Kuda statements contain "Gtbank Plc" in transaction narrations.
     if "kuda mf bank" in t or "kudabank" in t or "kuda technologies" in t:
         return "Kuda"
+
+    # ── Providus Bank: MUST be before named-bank checks ──────────────────
+    # Providus narrations reference other banks ("FROM STANBIC/...", "FROM
+    # ACCESS/..."). The Stanbic check below uses t_hdr and "STANBIC IBTC"
+    # appears inside the first 1200 chars of a Providus statement (transaction
+    # narration), which would cause a mismatch. Detected by the unique
+    # "CUST. NAME" + "TXN DATE" header combination.
+    if "cust. name" in t_hdr and "txn date" in t_hdr:
+        return "Providus"
 
     # ── mybankStatement-format banks ──────────────────────────────────────
     # All checks below use t_hdr (header area) for ambiguous keywords so
@@ -1944,6 +1960,289 @@ def parse_moniepoint_business_v2(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# CARBON MFB PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_carbon(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Carbon MFB (getcarbon.co) PDF statements.
+
+    PyPDF2 format per transaction block:
+      DD/MM/YYYY                           ← date (standalone line)
+      HH:MM AM/PM[Narration start]         ← time + narration start (concatenated)
+      [narration continuation lines]       ← 0–N optional lines
+      Carbon Account[CREDIT] [BALANCE]     ← credit row (no '-' prefix)
+      Carbon Account- [DEBIT] [BALANCE]    ← debit row  ('-' prefix)
+      Carbon Account- 10 -                 ← service charge (balance unchanged)
+
+    Credits: rest after "Carbon Account" does NOT start with '-'.
+    Amounts in credits: "amount balance" — amount may lack decimals (e.g. "13,000").
+    Debits and service charges are skipped.
+
+    Page headers (Page N of N, Licensed by CBN, DATETRANSACTION DETAILS, etc.)
+    are skipped unconditionally so they never contaminate narration text.
+    """
+    buckets: dict = {}
+    account_name = ""
+
+    # ── Account name: line following "Currency:" ──────────────────────────
+    lines = full_text.splitlines()
+    for i, ln in enumerate(lines):
+        if re.search(r'\bCurrency:\s*$', ln.strip(), re.I):
+            for j in range(i + 1, min(i + 5, len(lines))):
+                cand = lines[j].strip()
+                # Title-case multi-word name: "Firstname Middlename Lastname"
+                if cand and re.match(r'^[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+$', cand):
+                    account_name = cand
+                    break
+            if account_name:
+                break
+    # Fallback: find first Title-case multi-word line in header area
+    if not account_name:
+        _skip_exact = {
+            'account statement', 'transaction summary', 'account balance',
+            'opening balance', 'closing balance', 'total income', 'total expenses',
+        }
+        for ln in lines[:60]:
+            cand = ln.strip()
+            if (cand and re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}$', cand)
+                    and len(cand.split()) >= 2
+                    and cand.lower() not in _skip_exact):
+                account_name = cand
+                break
+
+    # ── Patterns ──────────────────────────────────────────────────────────
+    DATE_RE    = re.compile(r'^(\d{2})/(\d{2})/(\d{4})$')
+    TIME_RE    = re.compile(r'^\d{2}:\d{2}\s*[AP]M(.*)', re.I)
+    CHANNEL_RE = re.compile(r'^Carbon\s+Account(.*)', re.I)
+    # Credit: "AMOUNT BALANCE" — amount may have no decimal places; balance may
+    # show only 1 decimal digit when the cents value ends in 0 (e.g. "562,336.2"
+    # instead of "562,336.20") — accept 1–2 decimal places on both fields.
+    CREDIT_RE  = re.compile(r'^([\d,]+(?:\.\d{1,2})?)\s+([\d,]+\.\d{1,2})$')
+    # Page-header lines to skip unconditionally (never narration content)
+    SKIP_RE    = re.compile(
+        r'^(?:Page \d+ of \d+|Licensed by CBN|^Deposits$|Insured by NDIC|'
+        r'Carbon is a financial|P: \d|DATETRANSACTION|ChannelDEBITS|'
+        r'Account Statement|Here\'s the account|Disclaimer:|www\.getcarbon|'
+        r'Transaction Summary|Account Balance|YOUR ACCOUNT STATEMENT|'
+        r'Account No:|Period:|Client ID:|Currency:|Total Income|Total Expenses|'
+        r'Opening balance|Closing balance|NGN[\d,])',
+        re.I,
+    )
+
+    state        = 'idle'   # 'idle' | 'date' | 'narration'
+    current_ym   = ""
+    current_narr = ""
+
+    def _flush_channel(rest: str) -> None:
+        """Parse amounts from 'Carbon Account<rest>'; add credit if applicable."""
+        r = rest.strip()
+        if not r or r.startswith('-'):
+            return   # debit or service charge — skip
+        m = CREDIT_RE.match(r)
+        if m and current_ym:
+            amount = float(m.group(1).replace(',', ''))
+            if amount > 0:
+                add_credit(buckets, current_ym, amount,
+                           current_narr.strip(), account_name)
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Skip page-header boilerplate (safe regardless of state)
+        if SKIP_RE.match(stripped):
+            continue
+
+        # Channel line → ends current transaction
+        cm = CHANNEL_RE.match(stripped)
+        if cm:
+            _flush_channel(cm.group(1))
+            state        = 'idle'
+            current_narr = ""
+            current_ym   = ""
+            continue
+
+        # Date line → starts new transaction
+        dm = DATE_RE.match(stripped)
+        if dm:
+            state        = 'date'
+            day, mon, yr = dm.group(1), dm.group(2), dm.group(3)
+            current_ym   = f"{yr}-{mon}"
+            current_narr = ""
+            continue
+
+        if state == 'idle':
+            continue
+
+        # Time line (may have narration text concatenated immediately after)
+        tm = TIME_RE.match(stripped)
+        if tm:
+            current_narr = tm.group(1).strip()
+            state        = 'narration'
+            continue
+
+        # Narration continuation
+        if state in ('date', 'narration'):
+            current_narr = (current_narr + ' ' + stripped).strip() if current_narr else stripped
+            state        = 'narration'
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# PROVIDUS BANK PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_providus(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for Providus Bank PDF statements.
+
+    Column header: TXN DATE  VAL DATE  REMARKS  DEBIT  CREDIT  BALANCE
+    Date format:   DD-MM-YYYY
+
+    PyPDF2 concatenates the value date directly to the narration start:
+        DD-MM-YYYY DD-MM-YYYYNarration text...AMOUNT BALANCE
+
+    Debit vs credit detection uses the balance-delta method (no separate debit/
+    credit columns are reliably extractable from the collapsed PyPDF2 layout):
+        delta > 0  → credit with amount = delta
+        delta ≤ 0  → debit or charge, skip
+
+    The opening balance from the PDF header initialises the tracking chain so
+    the very first transaction (if a credit) is not missed.
+
+    Multi-line transactions: narration + amount may span 2–3 physical lines.
+    A row is considered complete when the combined text ends with an amount.
+    """
+    buckets: dict = {}
+
+    # ── Account name ──────────────────────────────────────────────────────
+    account_name = ""
+    name_m = re.search(r'CUST\.?\s+NAME\s+([A-Z][A-Z .&\-]+)', full_text)
+    if name_m:
+        account_name = name_m.group(1).strip()
+    if not account_name:
+        account_name = _extract_account_name(full_text)
+
+    # ── Opening balance (initialises delta tracking) ──────────────────────
+    prev_balance: Optional[float] = None
+    ob_m = re.search(r'OPENING\s+BAL\.\s+([\d,]+\.\d{2})', full_text, re.I)
+    if ob_m:
+        prev_balance = float(ob_m.group(1).replace(',', ''))
+
+    # ── Patterns ──────────────────────────────────────────────────────────
+    # Transaction anchor: DD-MM-YYYY followed by DD-MM-YYYY (value date)
+    DATE_RE  = re.compile(r'^(\d{2})-(\d{2})-(\d{4})\s+\d{2}-\d{2}-\d{4}(.*)', re.S)
+    # Balance = last money amount at end of line
+    LAST_AMT = re.compile(r'([\d,]+\.\d{2})\s*$')
+    # Lines to skip unconditionally
+    SKIP_RE  = re.compile(
+        r'^(?:STATEMENT\s+OF\s+ACCOUNT|CUST\.?\s+NAME|ADDRESS\s+|ACC\.?\s+NO|'
+        r'ACC\.?\s+TYPE|CURRENCY\s+NGN|START\s+DATE|END\s+DATE|'
+        r'OPENING\s+BAL|CLOSING\s+BAL|PRINTED\s+(?:ON|BY)|'
+        r'TXN\s+DATE\s+VAL\s+DATE|Page\s+\d)',
+        re.I,
+    )
+    # Explicit debit narration keywords — double-check to skip obvious charges
+    # (balance delta is the primary filter; these are a safety net)
+    DEBIT_NARR = re.compile(
+        r'^(?:OUTWARD TRANSFER|COMMISSION TO|VAT TO|STAMP DUTY FROM|'
+        r'BANK CHARGE|CHARGE RECOVERY|SMS ALERT|MAINTENANCE FEE|COT CHARGE)',
+        re.I,
+    )
+
+    in_tx        = False
+    pending_ym   = ""
+    pending_narr = ""
+
+    def _try_process(ym: str, text: str) -> bool:
+        """
+        Extract balance from text, compute delta, and add credit if applicable.
+        Returns True if a balance was found (row is complete), False otherwise.
+        """
+        nonlocal prev_balance
+        bal_m = LAST_AMT.search(text)
+        if not bal_m:
+            return False
+
+        balance = float(bal_m.group(1).replace(',', ''))
+
+        # Build clean narration: remove balance + trailing transaction amount
+        raw_narr = text[:bal_m.start()].strip()
+        # Strip the transaction amount (second-to-last money value)
+        raw_narr = re.sub(r'[\d,]+\.\d{2}\s*$', '', raw_narr).strip()
+        # Strip trailing reference codes: long digit strings, /XXXXX, \s+XXXXX
+        raw_narr = re.sub(r'/\d{8,}\s*$', '', raw_narr).strip()
+        raw_narr = re.sub(r'\s\d{10,}\s*$', '', raw_narr).strip()
+        # Strip trailing pipe + digits (e.g. "| 0000232501...")
+        raw_narr = re.sub(r'\s*\|\s*\d{6,}\s*$', '', raw_narr).strip()
+
+        if prev_balance is not None:
+            delta = balance - prev_balance
+        else:
+            delta = None
+
+        prev_balance = balance   # always update chain
+
+        if delta is not None and delta > 0.01:
+            # Credit: use delta as the authoritative amount
+            amount = delta
+            if not DEBIT_NARR.match(raw_narr):
+                add_credit(buckets, ym, amount, raw_narr, account_name)
+
+        return True
+
+    for line in full_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Enable transaction parsing once column header is seen
+        if re.search(r'TXN\s+DATE\s+VAL\s+DATE', stripped, re.I):
+            in_tx = True
+            continue
+
+        if SKIP_RE.match(stripped):
+            continue
+
+        if not in_tx:
+            continue
+
+        dm = DATE_RE.match(stripped)
+        if dm:
+            # Flush any incomplete previous accumulation (no balance found yet
+            # on the previous row — treat as a discarded fragment)
+            if pending_ym and pending_narr:
+                _try_process(pending_ym, pending_narr)
+
+            day, month, year = dm.group(1), dm.group(2), dm.group(3)
+            pending_ym = f"{year}-{month}"
+            rest = dm.group(4).strip()
+            # Strip value date that PyPDF2 concatenates to narration start
+            rest = re.sub(r'^\d{2}-\d{2}-\d{4}', '', rest).strip()
+
+            if _try_process(pending_ym, rest):
+                pending_ym   = ""
+                pending_narr = ""
+            else:
+                pending_narr = rest
+
+        elif pending_ym:
+            combined = (pending_narr + ' ' + stripped).strip()
+            if _try_process(pending_ym, combined):
+                pending_ym   = ""
+                pending_narr = ""
+            else:
+                pending_narr = combined
+
+    # Final flush
+    if pending_ym and pending_narr:
+        _try_process(pending_ym, pending_narr)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # ACCURACY VERIFICATION — extract stated totals from PDF header
 # ════════════════════════════════════════════════════════════════════════════
 def extract_stated_totals(full_text: str) -> dict:
@@ -2359,7 +2658,11 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         "Fidelity", "Union", "Stanbic", "FCMB", "Wema", "Sterling",
     }
 
-    if bank == "FairMoney":
+    if bank == "Carbon":
+        buckets, account_name = parse_carbon(full_text)
+    elif bank == "Providus":
+        buckets, account_name = parse_providus(full_text)
+    elif bank == "FairMoney":
         buckets, account_name = parse_fairmoney(full_text)
     elif bank == "OPay":
         buckets, account_name = parse_opay(full_text)
