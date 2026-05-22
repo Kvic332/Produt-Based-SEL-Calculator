@@ -1,4 +1,5 @@
 from __future__ import annotations
+import datetime
 import pandas as pd
 import streamlit as st
 from parser import (
@@ -7,6 +8,7 @@ from parser import (
     extract_stated_totals, verify_extraction_accuracy,
 )
 from sel_rules import calculate_eligibility
+from report_generator import generate_pdf_report
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -473,6 +475,22 @@ if st.session_state.rows_a:
             f'</div></div>'
             f'</div>',
             unsafe_allow_html=True,
+        )
+
+        # ── Download Statement Analysis PDF ───────────────────────────────
+        _pdf_stmt = generate_pdf_report(
+            account_name = st.session_state.name_a or "Account Holder",
+            bank         = st.session_state.bank_a or "Bank",
+            rows         = rows_a,
+        )
+        _safe_stmt = (st.session_state.name_a or "statement").replace(" ", "_").lower()
+        st.download_button(
+            label               = "⬇  Download Statement Analysis (PDF)",
+            data                = _pdf_stmt,
+            file_name           = f"SEL_Statement_{_safe_stmt}_{datetime.date.today():%Y%m%d}.pdf",
+            mime                = "application/pdf",
+            use_container_width = True,
+            key                 = "dl_statement_pdf",
         )
 
 # ── Transaction Search — Statement A ─────────────────────────────────────────
@@ -1024,6 +1042,27 @@ if calc_btn:
                     mime="text/csv",
                 )
 
+        # ── Download Full Eligibility Report PDF ──────────────────────────
+        st.markdown("---")
+        _r_rows = [r for r in (st.session_state.rows_a or [])
+                   if r["ym"] < datetime.date.today().strftime("%Y-%m")
+                   and r["gross"] > 0][-6:]
+        _pdf_full = generate_pdf_report(
+            account_name = st.session_state.name_a or "Account Holder",
+            bank         = st.session_state.bank_a or "Bank",
+            rows         = _r_rows if _r_rows else [],
+            result       = result,
+            req_loan     = req_loan,
+        )
+        _safe_full = (st.session_state.name_a or "report").replace(" ", "_").lower()
+        st.download_button(
+            label               = "⬇  Download Full Eligibility Report (PDF)",
+            data                = _pdf_full,
+            file_name           = f"SEL_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
+            mime                = "application/pdf",
+            use_container_width = True,
+            key                 = "dl_full_pdf",
+        )
 
 
 
