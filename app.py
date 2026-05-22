@@ -404,6 +404,77 @@ if st.session_state.rows_a:
                 unsafe_allow_html=True,
             )
 
+        # ── Income Trend Chart ────────────────────────────────────────────
+        _scale = max(
+            max(r["gross"]            for r in rows_a),
+            max(r["eligible_income"]  for r in rows_a),
+        ) or 1
+        BAR_H = 110  # max bar height in px
+
+        def _fmt_v(v: float) -> str:
+            return f"₦{v/1_000_000:.1f}m" if v >= 1_000_000 else f"₦{v/1_000:.0f}k"
+
+        avg6 = sum(r["eligible_income"] for r in rows_a) / len(rows_a)
+        avg3 = sum(r["eligible_income"] for r in rows_a[-3:]) / min(3, len(rows_a))
+
+        # Trend: compare last month to first month
+        trend_delta = rows_a[-1]["eligible_income"] - rows_a[0]["eligible_income"]
+        trend_icon  = "▲" if trend_delta > 0 else "▼" if trend_delta < 0 else "▬"
+        trend_col   = "#34d399" if trend_delta > 0 else "#f87171" if trend_delta < 0 else "#6b7f74"
+
+        bars_html = ""
+        for r in rows_a:
+            g_px = int(r["gross"]           / _scale * BAR_H) if r["gross"]           > 0 else 0
+            e_px = int(r["eligible_income"] / _scale * BAR_H) if r["eligible_income"] > 0 else 0
+            bars_html += (
+                f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
+                # amount label
+                f'<div style="font-size:9px;color:#34d399;margin-bottom:4px;white-space:nowrap">'
+                f'{_fmt_v(r["eligible_income"])}</div>'
+                # bar stack
+                f'<div style="width:70%;height:{BAR_H}px;position:relative">'
+                f'<div style="position:absolute;bottom:0;left:0;right:0;height:{g_px}px;'
+                f'background:rgba(16,185,129,.13);border-radius:2px 2px 0 0"></div>'
+                f'<div style="position:absolute;bottom:0;left:0;right:0;height:{e_px}px;'
+                f'background:linear-gradient(180deg,#34d399 0%,#10b981 100%);border-radius:2px 2px 0 0"></div>'
+                f'</div>'
+                # month label
+                f'<div style="font-size:9px;color:#6b7f74;margin-top:6px;white-space:nowrap">'
+                f'{r["label"]}</div>'
+                f'</div>'
+            )
+
+        st.markdown(
+            f'<div style="margin-top:20px;padding:16px 14px 14px;background:rgba(0,0,0,.18);'
+            f'border:1px solid #1a3d2b;border-radius:4px">'
+            # header
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#6b7f74;text-transform:uppercase">Income Trend</div>'
+            f'<div style="font-size:10px;color:{trend_col};letter-spacing:1px">'
+            f'{trend_icon} {_fmt_v(abs(trend_delta))} vs first month</div>'
+            f'</div>'
+            # bars row
+            f'<div style="display:flex;align-items:flex-end;gap:6px">{bars_html}</div>'
+            # averages + legend footer
+            f'<div style="display:flex;gap:24px;margin-top:12px;padding-top:10px;border-top:1px solid #1a3d2b;align-items:center">'
+            f'<div><div style="font-size:8px;letter-spacing:2px;color:#6b7f74;text-transform:uppercase;margin-bottom:2px">6-mo avg</div>'
+            f'<div style="font-size:13px;font-weight:700;color:#10b981">{_fmt_v(avg6)}</div></div>'
+            f'<div><div style="font-size:8px;letter-spacing:2px;color:#6b7f74;text-transform:uppercase;margin-bottom:2px">3-mo avg</div>'
+            f'<div style="font-size:13px;font-weight:700;color:#fbbf24">{_fmt_v(avg3)}</div></div>'
+            f'<div style="margin-left:auto;display:flex;gap:12px;align-items:center">'
+            f'<span style="font-size:9px;color:#6b7f74">'
+            f'<span style="display:inline-block;width:8px;height:8px;'
+            f'background:linear-gradient(180deg,#34d399,#10b981);border-radius:1px;'
+            f'margin-right:3px;vertical-align:middle"></span>Eligible</span>'
+            f'<span style="font-size:9px;color:#6b7f74">'
+            f'<span style="display:inline-block;width:8px;height:8px;'
+            f'background:rgba(16,185,129,.2);border-radius:1px;'
+            f'margin-right:3px;vertical-align:middle"></span>Gross</span>'
+            f'</div></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
 # ── Transaction Search — Statement A ─────────────────────────────────────────
 if st.session_state.txns_a:
     st.markdown(
