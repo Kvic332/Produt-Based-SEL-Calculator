@@ -358,6 +358,37 @@ if st.session_state.rows_a:
         has_nb    = any(r["non_business"]   > 0 for r in rows_a)
         has_loan  = any(r["loan_disbursal"] > 0 for r in rows_a)
 
+        # ── Business Type Inference ───────────────────────────────────────
+        if st.session_state.txns_a:
+            _narr_lc = [t["narration"].lower() for t in st.session_state.txns_a]
+            _biz_scores: dict[str, tuple] = {
+                "Salary Earner":       (["salary","payroll","wage","payslip","staff pay"],              "💼"),
+                "E-commerce":          (["flutterwave","paystack","stripe","shopify","jumia","konga","selar","paypal","remita"], "🛒"),
+                "Food & Beverage":     (["food","restaurant","kitchen","catering","eatery","canteen","bakery","snack","meal","chop"], "🍽"),
+                "Logistics":           (["delivery","dispatch","logistics","courier","shipping","transport","freight"], "🚚"),
+                "POS / Agent Banking": (["pos ","mpos","terminal","agent banking"],                     "🏧"),
+                "Professional Svcs":   (["consulting","invoice","professional","retainer","service fee","legal fee"], "📋"),
+                "Real Estate":         (["rent","property","estate","tenancy","lease","landlord"],      "🏢"),
+                "Trader / Market":     (["market","goods","supply","wholesale","retail","merchandise","dealer"], "🛍"),
+            }
+            _scored = {
+                label: (sum(1 for n in _narr_lc if any(k in n for k in kws)), icon)
+                for label, (kws, icon) in _biz_scores.items()
+            }
+            _best_biz  = max(_scored, key=lambda x: _scored[x][0])
+            _best_cnt, _best_icon = _scored[_best_biz]
+            if _best_cnt >= 3:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+                    f'<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Business Type</div>'
+                    f'<div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);'
+                    f'border-radius:20px;padding:3px 14px;font-size:12px;font-weight:700;color:#10b981">'
+                    f'{_best_icon} {_best_biz}</div>'
+                    f'<div style="font-size:10px;color:#64748b">{_best_cnt} matching narrations</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
         hdr = ('<tr>'
                '<th class="col-gross" style="text-align:left">Month</th>'
                '<th class="col-gross">Total Inflow</th>')
@@ -493,6 +524,42 @@ if st.session_state.rows_a:
             key                 = "dl_statement_pdf",
         )
 
+        # ── Income Consistency Score ──────────────────────────────────────
+        import statistics as _stat_mod
+        _ei_vals = [r["eligible_income"] for r in rows_a if r["eligible_income"] > 0]
+        if len(_ei_vals) >= 2:
+            _ei_mean = sum(_ei_vals) / len(_ei_vals)
+            _ei_std  = _stat_mod.stdev(_ei_vals)
+            _cv      = _ei_std / _ei_mean if _ei_mean else 0
+            _peak    = max(_ei_vals)
+            _trough  = min(_ei_vals)
+            _cliff   = _peak / _trough if _trough > 0 else 99
+            if _cv < 0.30:
+                _cs_label, _cs_col = "Stable",   "#34d399"
+            elif _cv < 0.60:
+                _cs_label, _cs_col = "Moderate", "#f59e0b"
+            else:
+                _cs_label, _cs_col = "Volatile", "#f87171"
+            _cliff_html = ""
+            if _cliff > 5 and len(_ei_vals) >= 3:
+                _cliff_html = (
+                    f'<span style="margin-left:8px;background:rgba(248,113,113,.12);'
+                    f'border:1px solid rgba(248,113,113,.3);border-radius:4px;'
+                    f'padding:2px 8px;font-size:10px;color:#f87171">⚠ Cliff {_cliff:.1f}× peak vs trough</span>'
+                )
+            st.markdown(
+                f'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:10px 0;'
+                f'padding:10px 14px;background:rgba(255,255,255,.03);border-radius:6px;'
+                f'border-left:3px solid {_cs_col}">'
+                f'<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Income Consistency</div>'
+                f'<div style="font-size:13px;font-weight:700;color:{_cs_col}">● {_cs_label}</div>'
+                f'<div style="font-size:11px;color:#6b7f74">CV {_cv:.0%}</div>'
+                f'<div style="font-size:11px;color:#6b7f74">Peak/Trough {_cliff:.1f}×</div>'
+                f'{_cliff_html}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
 # ── Transaction Search — Statement A ─────────────────────────────────────────
 if st.session_state.txns_a:
     st.markdown(
@@ -551,6 +618,133 @@ if st.session_state.txns_a:
                 unsafe_allow_html=True,
             )
 
+
+# ── Statement Intelligence Panel ─────────────────────────────────────────────
+if st.session_state.txns_a:
+    import re as _re_intel, statistics as _stat_intel
+    from collections import defaultdict as _ddict_intel
+
+    _txns_i  = st.session_state.txns_a
+    _intel   = []   # each item is an HTML string for a panel card
+
+    # ── Income Source Breakdown ───────────────────────────────────────────
+    _tot_amt = sum(t["amount"] for t in _txns_i)
+    if _tot_amt > 0:
+        _src = [
+            ("Bank Transfers",     ["transfer","trf/"," nip "," neft ","instant payment","mobile transfer"], "#34d399"),
+            ("Aggregator/Fintech", ["settlement","flutterwave","paystack","remita","interswitch","nibss","squad","stripe","selar"], "#a78bfa"),
+            ("Salary / Payroll",   ["salary","payroll","wage","payslip"], "#fbbf24"),
+            ("POS / Terminal",     ["pos ","mpos","terminal","agent banking"], "#fb923c"),
+        ]
+        _src_amts = []
+        _accounted = 0.0
+        for _lbl, _kws, _clr in _src:
+            _a = sum(t["amount"] for t in _txns_i if any(k in t["narration"].lower() for k in _kws))
+            _src_amts.append((_lbl, _a, _clr))
+            _accounted += _a
+        _src_amts.append(("Other", max(_tot_amt - _accounted, 0), "#64748b"))
+        _src_amts = [x for x in _src_amts if x[1] > 0]
+
+        _pos_pct = next((a / _tot_amt for l, a, c in _src_amts if l == "POS / Terminal"), 0)
+        _bars = ""
+        for _lbl, _amt, _clr in _src_amts:
+            _p = _amt / _tot_amt
+            _bars += (
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+                f'<div style="width:120px;font-size:10px;color:#94a3b8;text-align:right">{_lbl}</div>'
+                f'<div style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:9px">'
+                f'<div style="width:{_p:.0%};background:{_clr};border-radius:3px;height:9px"></div></div>'
+                f'<div style="width:34px;font-size:10px;color:{_clr};font-weight:700">{_p:.0%}</div>'
+                f'</div>'
+            )
+        _pos_flag = ""
+        if _pos_pct >= 0.5:
+            _pos_flag = (
+                f'<div style="margin-top:8px;padding:6px 10px;background:rgba(251,146,60,.08);'
+                f'border-left:3px solid #fb923c;border-radius:3px;font-size:10px;color:#fb923c">'
+                f'⚠ POS-heavy — {_pos_pct:.0%} from terminal settlements. '
+                f'Confirm business operations drive these credits, not float cycling.</div>'
+            )
+        _intel.append(
+            f'<div style="flex:1;min-width:240px">'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:8px">Income Source Breakdown</div>'
+            f'{_bars}{_pos_flag}</div>'
+        )
+
+    # ── Recurring Income Detection ────────────────────────────────────────
+    def _nkey(n: str) -> str:
+        n = _re_intel.sub(r"[\d/\-:.,]", "", n.lower()).strip()
+        return _re_intel.sub(r"\s+", " ", n)[:35]
+
+    _grp_i: dict = _ddict_intel(lambda: _ddict_intel(float))
+    for _t in _txns_i:
+        _k = _nkey(_t["narration"])
+        if len(_k) >= 6:
+            _grp_i[_k][_t["ym"]] += _t["amount"]
+
+    _recur = []
+    for _k, _ym_map in _grp_i.items():
+        if len(_ym_map) >= 3:
+            _amts = list(_ym_map.values())
+            _mean_a = sum(_amts) / len(_amts)
+            if _mean_a > 0 and all(abs(a - _mean_a) / _mean_a <= 0.45 for a in _amts):
+                _rep = next((t["narration"] for t in _txns_i if _nkey(t["narration"]) == _k), _k)
+                _recur.append({"narr": _rep[:45], "months": len(_ym_map), "avg": _mean_a})
+    _recur.sort(key=lambda x: -x["avg"])
+
+    if _recur:
+        _rrows = "".join(
+            f'<tr>'
+            f'<td style="color:#94a3b8;font-size:11px;padding:3px 4px">{rx["narr"]}</td>'
+            f'<td style="color:#34d399;text-align:right;font-weight:700;padding:3px 4px;white-space:nowrap">{money(rx["avg"])}/mo</td>'
+            f'<td style="color:#10b981;text-align:center;padding:3px 4px">{rx["months"]}mo</td>'
+            f'</tr>'
+            for rx in _recur[:8]
+        )
+        _intel.append(
+            f'<div style="flex:1;min-width:240px">'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#34d399;text-transform:uppercase;margin-bottom:8px">Recurring Income Detected</div>'
+            f'<table style="width:100%;border-collapse:collapse">'
+            f'<thead><tr>'
+            f'<th style="font-size:9px;color:#64748b;text-align:left;padding-bottom:4px">Narration</th>'
+            f'<th style="font-size:9px;color:#64748b;text-align:right;padding-bottom:4px">Avg/Month</th>'
+            f'<th style="font-size:9px;color:#64748b;text-align:center;padding-bottom:4px">Seen</th>'
+            f'</tr></thead><tbody>{_rrows}</tbody></table>'
+            f'</div>'
+        )
+
+    # ── Loan Cycling Flag ─────────────────────────────────────────────────
+    _loan_kw = ["loan","disburs","credit facility","lending","overdraft","cash advance","borrow"]
+    _loan_txns = [t for t in _txns_i if any(k in t["narration"].lower() for k in _loan_kw)]
+    _loan_mos: dict = _ddict_intel(float)
+    for _lt in _loan_txns:
+        _loan_mos[_lt["ym"]] += _lt["amount"]
+
+    if len(_loan_mos) >= 2:
+        _loan_total = sum(_loan_mos.values())
+        _intel.append(
+            f'<div style="flex:1;min-width:240px">'
+            f'<div style="padding:10px 14px;background:rgba(248,113,113,.07);'
+            f'border-left:3px solid #f87171;border-radius:4px">'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#f87171;text-transform:uppercase;margin-bottom:4px">⚠ Loan Cycling Signal</div>'
+            f'<div style="font-size:11px;color:#94a3b8">'
+            f'Loan-related credits in <span style="color:#f87171;font-weight:700">{len(_loan_mos)} months</span> '
+            f'totalling <span style="color:#f87171;font-weight:700">{money(_loan_total)}</span>. '
+            f'Verify these are not disbursements recycling through the account.</div>'
+            f'</div></div>'
+        )
+
+    if _intel:
+        st.markdown("---")
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:2px;color:#f59e0b;'
+            'text-transform:uppercase;margin-bottom:14px">Statement Intelligence</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div style="display:flex;flex-wrap:wrap;gap:24px">{"".join(_intel)}</div>',
+            unsafe_allow_html=True,
+        )
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 00B — SECOND BANK STATEMENT
@@ -969,6 +1163,35 @@ if calc_btn:
         m6.metric("Repayment Frequency",    result["repayment_frequency"])
         m7.metric("Max Repayment / Period", money(result["max_repayment_display"]))
         m8.metric("Max Total Repayment",    money(result["max_total_repayment"]))
+
+        # ── Tenor Comparison Table ────────────────────────────────────────
+        st.markdown("---")
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:2px;color:#f59e0b;'
+            'text-transform:uppercase;margin-bottom:8px">Tenor Comparison — all tenors</div>',
+            unsafe_allow_html=True,
+        )
+        _tenor_data = []
+        for _t in range(2, 13):
+            _tr = calculate_eligibility(
+                nets=nets, counts=counts,
+                location=location, product_type=prod_type,
+                tenor=_t, other_loans=other_loans,
+                manual_rate_percent=manual_rate if manual_rate > 0 else None,
+            )
+            _tenor_data.append({
+                "Tenor":              f"{'▶ ' if _t == tenor else ''}{_t} mo{'  ◀' if _t == tenor else ''}",
+                "Max Loan":           money(_tr["max_loan"]) if _tr["approved"] else "—",
+                "Repayment / Period": money(_tr["max_repayment_display"]),
+                "Rate":               pct(_tr["interest_rate"]) if _tr["interest_rate"] else "—",
+                "Frequency":          _tr["repayment_frequency"],
+                "Status":             "Approved" if _tr["approved"] else "Below min",
+            })
+        st.dataframe(
+            pd.DataFrame(_tenor_data),
+            hide_index=True,
+            use_container_width=True,
+        )
 
         # Requested loan analysis
         if req_loan > 0 and "requested" in result:
