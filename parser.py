@@ -1114,20 +1114,34 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
 
     account_name: str = _extract_account_name(full_text)
 
-    # Handles both numeric months (DD-MM-YYYY) and alpha months (DD-Mon-YYYY)
-    GTB_DATE = re.compile(r"^(\d{2})[-/](\d{2}|[A-Za-z]{3})[-/](\d{4})", re.I)
+    # Handles both numeric months (DD-MM-YYYY / M/D/YYYY) and alpha (DD-Mon-YYYY).
+    # \d{1,2} accepts both zero-padded (DD/MM) and bare (M/D) single-digit components.
+    GTB_DATE = re.compile(r"^(\d{1,2})[-/](\d{1,2}|[A-Za-z]{3})[-/](\d{4})", re.I)
     MONEY3   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
     MONEY2   = re.compile(r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$")
     DATE_ORDER = "dmy"
+
+    # ── MDY detection pass 1: "Period Mon D, YYYY" alpha-month format ─────
     period_m = re.search(
         r"\bPeriod\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s*20\d{2}",
         full_text,
         re.I,
     )
     if period_m:
-        first_date_m = re.search(r"\n\s*(\d{2})[-/](\d{2})[-/](20\d{2})", full_text)
+        first_date_m = re.search(r"\n\s*(\d{1,2})[-/](\d{1,2})[-/](20\d{2})", full_text)
         if first_date_m and int(first_date_m.group(1)) == MONTH_MAP[period_m.group(1).lower()[:3]]:
             DATE_ORDER = "mdy"
+
+    # ── MDY detection pass 2: numeric-Period format (e.g. UBA mybankStatement)
+    # Scan the first 2000 chars for any slash-separated date where the SECOND
+    # field (day position in M/D/YYYY) exceeds 12 — impossible as a month,
+    # therefore confirming M/D/YYYY order.  Restricted to the header area so
+    # that reference strings in narrations cannot trigger false positives.
+    if DATE_ORDER == "dmy":
+        for _dm in re.finditer(r'\b(\d{1,2})/(\d{1,2})/(20\d{2})\b', full_text[:2000]):
+            if int(_dm.group(2)) > 12:
+                DATE_ORDER = "mdy"
+                break
 
     # Skip lines that ARE page headers — anchored so narrations mentioning
     # "GTBank" or "Access Bank" in the text are NOT accidentally dropped.
@@ -1245,15 +1259,15 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
                 # Alpha month: "Oct" → "10"
                 mm = str(MONTH_MAP.get(p2.lower()[:3], 1)).zfill(2)
             elif DATE_ORDER == "mdy" or (int(p2) > 12 >= int(p1)):
-                mm = p1
+                mm = p1.zfill(2)
             else:
-                mm = p2
+                mm = p2.zfill(2)
             pending_ym = f"{yy}-{mm}"
 
             # Everything after the transaction date (strip optional value-date)
             # Value date may also use alpha months (e.g. "05-Nov-2025")
             rest = stripped[date_m.end():].strip()
-            rest = re.sub(r"^\d{2}[-/](?:\d{2}|[A-Za-z]{3})[-/]\d{4}\s*", "", rest, flags=re.I).strip()
+            rest = re.sub(r"^\d{1,2}[-/](?:\d{1,2}|[A-Za-z]{3})[-/]\d{4}\s*", "", rest, flags=re.I).strip()
 
             m3 = MONEY3.search(rest)
             m2 = MONEY2.search(rest) if not m3 else None
