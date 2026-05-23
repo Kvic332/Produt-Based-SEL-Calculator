@@ -340,6 +340,14 @@ def detect_bank(text: str) -> str:
     # the actual statement header, not a "Transfer to STERLING BANK" narration.
     t_hdr = t[:1200]
 
+    # ── Jaiz Bank: checked FIRST — narrations mention "OPAY DIGITAL" ──────
+    # PyPDF2 merges the adjacent column headers "DATE" + "NARRATION" into the
+    # single token "DATENARRATION", which is unique to Jaiz's layout and never
+    # appears in narration text of any other bank.  Must fire before OPay
+    # because Jaiz narrations include "OPAY DIGITAL SERVICES LIMITED" credits.
+    if "datenarration" in t:
+        return "Jaiz"
+
     # ── OPay v2: "Account Statement" with Trans. Time column ─────────────
     # Checked FIRST: OPay narrations often mention "FairMoney MFB".
     if ("trans. time" in t and
@@ -2644,6 +2652,97 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# JAIZ BANK PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_jaiz(full_text: str) -> tuple[dict, str]:
+    """
+    Jaiz Bank statement parser.
+
+    Column layout: TRANS DATE | NARRATION | VALUE DATE | DEBIT | CREDIT
+    Date format: DD-Mon-YY (2-digit year, e.g. 21-May-26 → 2026-05).
+
+    Each transaction takes 1 or 2 text lines:
+      Line 1:  DD-Mon-YY  narration_part1
+      Line 2:  narration_part2[VALUE_DATE DEBIT CREDIT]  (concatenated)
+    Credit is read directly from the CREDIT column (DEBIT = 0.00 for credits).
+    No BALANCE column, so no balance-delta needed.
+    """
+    buckets: dict = {}
+
+    # ── 1. Account name ───────────────────────────────────────────────────
+    # CUSTOMER NAME field is often blank; derive from "IFO [NAME] Self" tx.
+    account_name = "Unknown"
+    m_self = re.search(r'\bIFO\s+([A-Z][A-Z ]{3,}?)\s+Self\b', full_text)
+    if m_self:
+        account_name = m_self.group(1).strip()
+    else:
+        m_name = re.search(
+            r'CUSTOMER NAME:\s+(?!ACCOUNT)([A-Z][A-Z ]{3,})', full_text
+        )
+        if m_name:
+            account_name = m_name.group(1).strip()
+
+    # ── 2. Regexes ────────────────────────────────────────────────────────
+    # Line that starts a new transaction: DD-Mon-YY followed by narration
+    TX_START = re.compile(r'^(\d{2}-[A-Za-z]{3}-\d{2})\s+(.*)')
+    # End of a complete row: VALUE_DATE  DEBIT  CREDIT at end of accumulated text
+    ROW_END = re.compile(
+        r'\d{2}-[A-Za-z]{3}-\d{2}\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$'
+    )
+    # Page-header boilerplate lines to skip
+    JAIZ_HDR = re.compile(
+        r'^(?:CUSTOMER NAME:|ADDRESS:|UNCLEARED BAL|BRANCH:|ACCOUNT TYPE:|'
+        r'CURRENCY:|TRANS$|DATENARRATION|DATEDEBIT|Page\s+\d)',
+        re.I,
+    )
+
+    def _to_ym(date_str: str) -> str:
+        """'DD-Mon-YY' → 'YYYY-MM'"""
+        parts = date_str.split('-')
+        mm = MONTH_NUM.get(parts[1].lower(), "00")
+        return f"20{parts[2]}-{mm}"
+
+    # ── 3. Parse ──────────────────────────────────────────────────────────
+    lines = full_text.splitlines()
+
+    pending_ym: str | None = None
+    pending_acc: list[str] = []
+
+    def _flush() -> None:
+        nonlocal pending_ym, pending_acc
+        if pending_ym and pending_acc:
+            combined = ' '.join(pending_acc)
+            m = ROW_END.search(combined)
+            if m:
+                credit = float(m.group(2).replace(',', ''))
+                if credit > 0:
+                    narration = combined[:m.start()].strip()
+                    add_credit(buckets, pending_ym, credit, narration, account_name)
+        pending_ym  = None
+        pending_acc = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if JAIZ_HDR.match(line):
+            _flush()   # page break — current tx should already be complete
+            continue
+
+        dm = TX_START.match(line)
+        if dm:
+            _flush()                              # save previous transaction
+            pending_ym  = _to_ym(dm.group(1))
+            pending_acc = [dm.group(2).strip()]
+        elif pending_ym is not None:
+            pending_acc.append(line)              # continuation line
+
+    _flush()   # handle final transaction
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FIDELITY DIRECT PARSER
 # ════════════════════════════════════════════════════════════════════════════
 def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
@@ -2840,6 +2939,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_access_oracle(full_text)
     elif bank == "Fidelity_Direct":
         buckets, account_name = parse_fidelity_direct(full_text)
+    elif bank == "Jaiz":
+        buckets, account_name = parse_jaiz(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
