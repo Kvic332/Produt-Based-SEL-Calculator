@@ -154,8 +154,8 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
         return "loan_disbursal", "Facility/OD drawdown"
 
     # ── 4. Reversals ──────────────────────────────────────────────────────
-    if re.search(r"\*+rsvl|\brsvl\b|\brev\b|\brev-\b", text):
-        return "reversal", "RSVL/REV reversal marker"
+    if re.search(r"\*+rsvl|\brsvl\b|\brvsl\b|\brev\b|\brev-\b", text):
+        return "reversal", "RSVL/RVSL/REV reversal marker"
     if any(k in text for k in [
         "reversal", "reversed", "refund", "chargeback", "chargbk",
         "dispute", "clawback", "returned funds", "charge back",
@@ -347,6 +347,14 @@ def detect_bank(text: str) -> str:
     # because Jaiz narrations include "OPAY DIGITAL SERVICES LIMITED" credits.
     if "datenarration" in t:
         return "Jaiz"
+
+    # ── Parallex Bank ────────────────────────────────────────────────────
+    # "parallex savings" appears in the statement header (account type label).
+    # "parallexbank" is from the footer email customercare@parallexbank.com.
+    # Both are unique to Parallex and will not appear in the header area of
+    # any other bank's statement.
+    if "parallex savings" in t_hdr or "parallexbank" in t or "parallex bank" in t_hdr:
+        return "Parallex"
 
     # ── OPay v2: "Account Statement" with Trans. Time column ─────────────
     # Checked FIRST: OPay narrations often mention "FairMoney MFB".
@@ -2743,6 +2751,75 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# PARALLEX BANK PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_parallex(full_text: str) -> tuple[dict, str]:
+    """
+    Parallex Bank native statement parser.
+
+    Column layout:  Trans Date | Value Date | Debit | Credit | Balance | Narration
+    Date format:    DD/MM/YYYY
+    Credit rows:    Debit = 0.00, Credit > 0
+
+    Account name is the first Title-Case proper-name line at the top of the
+    document (e.g. "Rita Onyeka Ute"), appearing before the statement header.
+    """
+    buckets: dict = {}
+    account_name = "Unknown"
+
+    # Account name: first line that looks like a proper name —
+    # 2–4 Title-Case words, no digits, no punctuation.
+    # Appears before "This is your Account statement" on page 1.
+    # PyPDF2 uses non-breaking spaces (\xa0) inside the name — normalise first.
+    for raw in full_text.splitlines():
+        line = re.sub(r'[\xa0 ]', ' ', raw).strip()
+        if re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}$', line):
+            account_name = line
+            break
+
+    # Transaction row:
+    #   DD/MM/YYYY  DD/MM/YYYY  <debit>  <credit>  <balance>[narration...]
+    # PyPDF2 sometimes omits the space between balance and narration, so
+    # \s* (zero or more spaces) is used instead of \s+ after the balance.
+    TX_ROW = re.compile(
+        r'^(\d{2}/\d{2}/\d{4})\s+\d{2}/\d{2}/\d{4}\s+'
+        r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+[\d,]+\.\d{2}'
+        r'\s*(.*)?$'
+    )
+
+    def _to_ym(date_str: str) -> str:
+        # DD/MM/YYYY → YYYY-MM
+        parts = date_str.split('/')
+        return f"{parts[2]}-{parts[1]}"
+
+    # PyPDF2 repeats every transaction line once per PDF page for Parallex
+    # statements; deduplicate by exact line content (the running balance is
+    # included in the line so genuine same-day same-amount credits from
+    # different senders will have different balances and thus unique lines).
+    seen_lines: set[str] = set()
+
+    for raw in full_text.splitlines():
+        line = raw.strip()
+        if not line or line in seen_lines:
+            continue
+        seen_lines.add(line)
+
+        m = TX_ROW.match(line)
+        if not m:
+            continue
+        trans_date = m.group(1)
+        debit     = float(m.group(2).replace(',', ''))
+        credit    = float(m.group(3).replace(',', ''))
+        narration = (m.group(4) or '').strip()
+
+        if credit > 0 and debit == 0:
+            ym = _to_ym(trans_date)
+            add_credit(buckets, ym, credit, narration, account_name)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FIDELITY DIRECT PARSER
 # ════════════════════════════════════════════════════════════════════════════
 def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
@@ -2941,6 +3018,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_fidelity_direct(full_text)
     elif bank == "Jaiz":
         buckets, account_name = parse_jaiz(full_text)
+    elif bank == "Parallex":
+        buckets, account_name = parse_parallex(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
