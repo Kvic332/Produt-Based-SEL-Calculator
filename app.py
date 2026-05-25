@@ -243,7 +243,7 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
         return Border(bottom=s)
 
     today_ym = datetime.date.today().strftime("%Y-%m")
-    display_rows = [r for r in rows if r.get("ym","") < today_ym and r.get("gross",0) > 0][-6:]
+    display_rows = [r for r in rows if r.get("ym","") < today_ym and r.get("gross",0) > 0][-12:]
 
     # ── Sheet 1: Monthly Breakdown ────────────────────────────────────────────
     ws = wb.active
@@ -460,6 +460,31 @@ _components.html("""
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# PRODUCT SELECTOR
+# ════════════════════════════════════════════════════════════════════════════
+st.markdown(
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">'
+    '<span style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Product</span>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+_product = st.radio(
+    "Product",
+    options=["SEL", "SME"],
+    horizontal=True,
+    key="product",
+    help="SEL uses 6 months of bank statement data. SME uses 12 months.",
+)
+N_MONTHS = 6 if _product == "SEL" else 12
+st.markdown(
+    f'<div style="font-size:11px;color:#64748b;margin:-12px 0 24px 0;">'
+    f'{"6-month analysis window" if _product == "SEL" else "12-month analysis window"}'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # SECTION 00 — FIRST BANK STATEMENT
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown('<div class="sel-section-title">00 — Bank Statement Auto-Fill &nbsp;<span style="color:#64748b;font-size:10px">— Optional</span></div>', unsafe_allow_html=True)
@@ -528,7 +553,7 @@ with col2:
 if st.session_state.rows_a:
     rows_a = [r for r in st.session_state.rows_a
               if r["ym"] < __import__("datetime").date.today().strftime("%Y-%m")
-              and r["gross"] > 0][-6:]
+              and r["gross"] > 0][-N_MONTHS:]
     if rows_a:
         has_self  = any(r["self_transfer"]  > 0 for r in rows_a)
         has_rev   = any(r["reversal"]       > 0 for r in rows_a)
@@ -1032,7 +1057,7 @@ with col4:
 if st.session_state.rows_b:
     import datetime as _dt2
     _today_b = _dt2.date.today().strftime("%Y-%m")
-    rows_b_own = [r for r in st.session_state.rows_b if r["ym"] < _today_b and r["gross"] > 0][-6:]
+    rows_b_own = [r for r in st.session_state.rows_b if r["ym"] < _today_b and r["gross"] > 0][-N_MONTHS:]
     if rows_b_own:
         _bname = st.session_state.bank_b or "Statement 2"
         _bacco = st.session_state.name_b or ""
@@ -1082,7 +1107,7 @@ if st.session_state.rows_a and st.session_state.rows_b:
     rows_a_map = {r["ym"]: r for r in st.session_state.rows_a if r["ym"] < today and r["gross"] > 0}
     rows_b_map = {r["ym"]: r for r in st.session_state.rows_b if r["ym"] < today and r["gross"] > 0}
     # Union — keep all months from either statement
-    all_months = sorted(set(rows_a_map) | set(rows_b_map))[-6:]
+    all_months = sorted(set(rows_a_map) | set(rows_b_map))[-N_MONTHS:]
 
     if all_months:
         st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#34d399;text-transform:uppercase;margin:12px 0 6px">▷ Merged Result (Union of Both Statements)</div>', unsafe_allow_html=True)
@@ -1264,7 +1289,7 @@ today = datetime.date.today()
 
 # Determine which rows to pre-fill
 def get_prefill_rows():
-    """Get last 6 completed months from merged or single statement.
+    """Get last N_MONTHS completed months from merged or single statement.
     Uses UNION of both statements so that months present in only one
     statement are still included (not dropped by an intersection filter).
     """
@@ -1273,7 +1298,7 @@ def get_prefill_rows():
         rows_a_map = {r["ym"]: r for r in st.session_state.rows_a if r["ym"] < today_ym and r["gross"] > 0}
         rows_b_map = {r["ym"]: r for r in st.session_state.rows_b if r["ym"] < today_ym and r["gross"] > 0}
         # Union — include every month present in either statement
-        all_months = sorted(set(rows_a_map) | set(rows_b_map))[-6:]
+        all_months = sorted(set(rows_a_map) | set(rows_b_map))[-N_MONTHS:]
         if all_months:
             merged = []
             for ym in all_months:
@@ -1289,7 +1314,7 @@ def get_prefill_rows():
                 })
             return merged
     elif st.session_state.rows_a:
-        return [r for r in st.session_state.rows_a if r["ym"] < today_ym and r["gross"] > 0][-6:]
+        return [r for r in st.session_state.rows_a if r["ym"] < today_ym and r["gross"] > 0][-N_MONTHS:]
     return None
 
 prefill = get_prefill_rows()
@@ -1312,11 +1337,11 @@ if prefill:
             st.session_state[count_key]  = max(1, int(r.get("count", 12)))
             st.session_state[f"fp_{i}"]  = fp
 
-# Build default month labels
+# Build default month labels (N_MONTHS entries, oldest first)
 def default_months():
     months = []
-    for i in range(1, 7):
-        month = today.month - (7 - i)
+    for i in range(1, N_MONTHS + 1):
+        month = today.month - (N_MONTHS + 1 - i)
         year  = today.year
         while month <= 0:
             month += 12
@@ -1336,7 +1361,7 @@ with h4: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#fb923c
 with h5: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#34d399;text-transform:uppercase">Net Inflow ₦</div>', unsafe_allow_html=True)
 with h6: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Count</div>', unsafe_allow_html=True)
 
-for i in range(6):
+for i in range(N_MONTHS):
     if prefill and i < len(prefill):
         r     = prefill[i]
         label = r["label"]
@@ -1467,7 +1492,7 @@ if calc_btn:
                        for r in (st.session_state.rows_b or [])
                        if r["ym"] < _today_ym and r["gross"] > 0}
             # Union — keep all months from either statement
-            _all_months = sorted(set(_rA_map) | set(_rB_map))[-6:]
+            _all_months = sorted(set(_rA_map) | set(_rB_map))[-N_MONTHS:]
             _report_rows = []
             for _ym in _all_months:
                 rA = _rA_map.get(_ym)
@@ -1495,7 +1520,7 @@ if calc_btn:
             _report_bank = f"{_bank_a} + {_bank_b}".strip(" +")
         else:
             _report_rows = [r for r in (st.session_state.rows_a or [])
-                            if r["ym"] < _today_ym and r["gross"] > 0][-6:]
+                            if r["ym"] < _today_ym and r["gross"] > 0][-N_MONTHS:]
             _report_name = st.session_state.name_a or "Account Holder"
             _report_bank = st.session_state.bank_a or "Bank"
 
