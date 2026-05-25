@@ -45,9 +45,11 @@ st.markdown("""
   /* Sections */
   .sel-section { background: var(--surface); border: 1px solid var(--border);
                  border-radius: 4px; padding: 24px; margin-bottom: 20px; }
-  .sel-section-title { font-size: 12px; letter-spacing: 3px; color: var(--accent);
-                       text-transform: uppercase; border-bottom: 1px solid var(--border);
-                       padding-bottom: 10px; margin-bottom: 16px; font-weight: 700; }
+  .sel-section-title { font-size: 15px; letter-spacing: 2px; color: #e2e8f0;
+                       text-transform: uppercase; border-bottom: 2px solid var(--accent);
+                       padding-bottom: 10px; margin-bottom: 16px; font-weight: 800; }
+  .sel-caption { font-size: 13px; color: #cbd5e1; font-weight: 600;
+                 margin: -8px 0 14px 0; line-height: 1.6; }
 
   /* Metric cards */
   .sel-card { background: var(--surface2); border: 1px solid var(--border);
@@ -88,9 +90,9 @@ st.markdown("""
 
   /* Tables */
   .preview-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
-  .preview-table th { font-size: 10px; letter-spacing: 1px; color: var(--muted);
-                      text-transform: uppercase; padding: 7px 10px; font-weight: 700;
-                      border-bottom: 1px solid var(--border); text-align: right; }
+  .preview-table th { font-size: 12px; letter-spacing: 1px; color: #e2e8f0;
+                      text-transform: uppercase; padding: 7px 10px; font-weight: 800;
+                      border-bottom: 2px solid var(--accent); text-align: right; }
   .preview-table th:first-child { text-align: left; }
   .preview-table td { padding: 6px 10px; border-bottom: 1px solid rgba(30,58,95,.3);
                       text-align: right; }
@@ -169,9 +171,32 @@ st.markdown("""
   /* Success / error messages */
   [data-testid="stAlert"] { font-family: 'Space Mono', monospace !important; font-size: 12px !important; }
 
-  /* Column gap tightening for inflow grid */
-  .inflow-grid-header { font-size: 9px; letter-spacing: 2px; color: var(--muted);
-                         text-transform: uppercase; padding-bottom: 4px; }
+  /* Widget labels — Location, Product Type, Tenor, Loan Amount, etc. */
+  [data-testid="stWidgetLabel"] p,
+  [data-testid="stWidgetLabel"] label,
+  .stSelectbox label, .stNumberInput label,
+  .stTextInput label, .stRadio label > div > p,
+  div[data-testid="stSelectbox"] > label,
+  div[data-testid="stNumberInput"] > label {
+    font-size: 12px !important; font-weight: 700 !important;
+    color: #e2e8f0 !important; letter-spacing: 0.5px !important;
+  }
+
+  /* Inflow grid header (legacy class — kept for compatibility) */
+  .inflow-grid-header { font-size: 12px; letter-spacing: 1.5px; color: #e2e8f0;
+                        text-transform: uppercase; font-weight: 800; padding-bottom: 4px; }
+
+  /* Radio option labels (SEL / SME toggle) */
+  [data-testid="stRadio"] label span,
+  [data-testid="stRadio"] > div > label > div > p {
+    font-size: 14px !important; font-weight: 700 !important;
+    color: #e2e8f0 !important; letter-spacing: 1px !important;
+  }
+  /* Radio group title (hidden but keep consistent) */
+  [data-testid="stRadio"] > label { display: none !important; }
+
+  /* Selectbox option text */
+  [data-testid="stSelectbox"] > div > div { color: #e2e8f0 !important; font-weight: 600 !important; }
 
   /* Download button */
   [data-testid="stDownloadButton"] button {
@@ -398,7 +423,7 @@ st.markdown("""
   <h1 style="font-family:DM Serif Display,serif;font-size:clamp(28px,4vw,44px);color:#fff;line-height:1.1">
     Loan <em style="color:#10b981;font-style:italic">Eligibility</em><br>Calculator
   </h1>
-  <div style="font-size:11px;color:#64748b;margin-top:6px">
+  <div style="font-size:13px;color:#cbd5e1;margin-top:6px;font-weight:700;letter-spacing:0.5px">
     All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection
   </div>
 </div>
@@ -463,9 +488,8 @@ _components.html("""
 # PRODUCT SELECTOR
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown(
-    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">'
-    '<span style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Product</span>'
-    '</div>',
+    '<div style="font-size:15px;font-weight:800;color:#e2e8f0;letter-spacing:1px;'
+    'text-transform:uppercase;margin-bottom:6px">Product</div>',
     unsafe_allow_html=True,
 )
 _product = st.radio(
@@ -477,8 +501,8 @@ _product = st.radio(
 )
 N_MONTHS = 6 if _product == "SEL" else 12
 st.markdown(
-    f'<div style="font-size:11px;color:#64748b;margin:-12px 0 24px 0;">'
-    f'{"6-month analysis window" if _product == "SEL" else "12-month analysis window"}'
+    f'<div style="font-size:13px;font-weight:700;color:#34d399;margin:-8px 0 24px 0;">'
+    f'{"▶ 6-month analysis window" if _product == "SEL" else "▶ 12-month analysis window"}'
     f'</div>',
     unsafe_allow_html=True,
 )
@@ -487,8 +511,8 @@ st.markdown(
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 00 — FIRST BANK STATEMENT
 # ════════════════════════════════════════════════════════════════════════════
-st.markdown('<div class="sel-section-title">00 — Bank Statement Auto-Fill &nbsp;<span style="color:#64748b;font-size:10px">— Optional</span></div>', unsafe_allow_html=True)
-st.caption("Upload PDF bank statement. Credits are automatically classified into real income vs recycled amounts.")
+st.markdown('<div class="sel-section-title">00 — Bank Statement Auto-Fill &nbsp;<span style="color:#94a3b8;font-size:11px">— Optional</span></div>', unsafe_allow_html=True)
+st.markdown('<div class="sel-caption">Upload PDF bank statement. Credits are automatically classified into real income vs recycled amounts.</div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 with col1:
@@ -990,8 +1014,8 @@ if st.session_state.txns_a:
 # SECTION 00B — SECOND BANK STATEMENT
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
-st.markdown('<div class="sel-section-title">00B — Second Bank Statement &nbsp;<span style="color:#64748b;font-size:10px">— Optional</span></div>', unsafe_allow_html=True)
-st.caption("Upload a second bank statement. Nets are merged month-by-month across all available months from either statement.")
+st.markdown('<div class="sel-section-title">00B — Second Bank Statement &nbsp;<span style="color:#94a3b8;font-size:11px">— Optional</span></div>', unsafe_allow_html=True)
+st.markdown('<div class="sel-caption">Upload a second bank statement. Nets are merged month-by-month across all available months from either statement.</div>', unsafe_allow_html=True)
 
 col3, col4 = st.columns(2)
 with col3:
@@ -1208,8 +1232,8 @@ if st.session_state.txns_b:
 # SECTION 01 — FIRSTCENTRAL CREDIT REPORT
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
-st.markdown('<div class="sel-section-title">01 — FirstCentral Credit Report &nbsp;<span style="color:#64748b;font-size:10px">— External obligations</span></div>', unsafe_allow_html=True)
-st.caption("Upload the FirstCentral consumer credit report. Closed accounts are ignored. Open performing accounts feed into monthly obligations.")
+st.markdown('<div class="sel-section-title">01 — FirstCentral Credit Report &nbsp;<span style="color:#94a3b8;font-size:11px">— External obligations</span></div>', unsafe_allow_html=True)
+st.markdown('<div class="sel-caption">Upload the FirstCentral consumer credit report. Closed accounts are ignored. Open performing accounts feed into monthly obligations.</div>', unsafe_allow_html=True)
 
 col5, col6 = st.columns(2)
 with col5:
@@ -1281,8 +1305,8 @@ if st.session_state.credit_data:
 # SECTION 02 — MONTHLY INFLOWS (editable)
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
-st.markdown('<div class="sel-section-title">02 — Monthly Inflows (Last 6 Months)</div>', unsafe_allow_html=True)
-st.caption("Gross credits auto-filled from bank statement. Adjust deductions or add extra manual deductions below.")
+st.markdown(f'<div class="sel-section-title">02 — Monthly Inflows (Last {N_MONTHS} Months)</div>', unsafe_allow_html=True)
+st.markdown('<div class="sel-caption">Gross credits auto-filled from bank statement. Adjust deductions or add extra manual deductions below.</div>', unsafe_allow_html=True)
 
 import datetime
 today = datetime.date.today()
@@ -1354,12 +1378,12 @@ inflow_data = []
 
 # ── Column header row ─────────────────────────────────────────────────────────
 h1, h2, h3, h4, h5, h6 = st.columns([1.2, 1.8, 1.5, 1.5, 1.5, 0.8])
-with h1: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Month</div>', unsafe_allow_html=True)
-with h2: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Gross Credit ₦</div>', unsafe_allow_html=True)
-with h3: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Deductions ₦</div>', unsafe_allow_html=True)
-with h4: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#fb923c;text-transform:uppercase">Extra Deduction ₦</div>', unsafe_allow_html=True)
-with h5: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#34d399;text-transform:uppercase">Net Inflow ₦</div>', unsafe_allow_html=True)
-with h6: st.markdown('<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Count</div>', unsafe_allow_html=True)
+with h1: st.markdown('<div style="font-size:12px;letter-spacing:1.5px;color:#e2e8f0;text-transform:uppercase;font-weight:800;padding-bottom:4px;border-bottom:2px solid #10b981">Month</div>', unsafe_allow_html=True)
+with h2: st.markdown('<div style="font-size:12px;letter-spacing:1.5px;color:#e2e8f0;text-transform:uppercase;font-weight:800;padding-bottom:4px;border-bottom:2px solid #10b981">Gross Credit ₦</div>', unsafe_allow_html=True)
+with h3: st.markdown('<div style="font-size:12px;letter-spacing:1.5px;color:#e2e8f0;text-transform:uppercase;font-weight:800;padding-bottom:4px;border-bottom:2px solid #10b981">Deductions ₦</div>', unsafe_allow_html=True)
+with h4: st.markdown('<div style="font-size:12px;letter-spacing:1.5px;color:#fb923c;text-transform:uppercase;font-weight:800;padding-bottom:4px;border-bottom:2px solid #fb923c">Extra Deduction ₦</div>', unsafe_allow_html=True)
+with h5: st.markdown('<div style="font-size:12px;letter-spacing:1.5px;color:#34d399;text-transform:uppercase;font-weight:800;padding-bottom:4px;border-bottom:2px solid #34d399">Net Inflow ₦</div>', unsafe_allow_html=True)
+with h6: st.markdown('<div style="font-size:12px;letter-spacing:1.5px;color:#e2e8f0;text-transform:uppercase;font-weight:800;padding-bottom:4px;border-bottom:2px solid #10b981">Count</div>', unsafe_allow_html=True)
 
 for i in range(N_MONTHS):
     if prefill and i < len(prefill):
@@ -1393,9 +1417,9 @@ for i in range(N_MONTHS):
     inflow_data.append({"label": label, "gross": g, "deduct": d, "extra": x, "net": net, "count": cnt})
 
 st.markdown(
-    '<div style="font-size:10px;color:#64748b;margin-top:6px;padding:8px 12px;'
-    'background:rgba(0,0,0,.2);border-left:2px solid #1a3d2b;border-radius:2px">'
-    '<strong style="color:#fb923c">Extra Deduction</strong> — use this to manually subtract any amount you\'ve identified '
+    '<div style="font-size:12px;color:#cbd5e1;font-weight:600;margin-top:8px;padding:10px 14px;'
+    'background:rgba(0,0,0,.25);border-left:3px solid #fb923c;border-radius:3px;line-height:1.6">'
+    '<strong style="color:#fb923c;font-size:13px">Extra Deduction</strong> — use this to manually subtract any amount you\'ve identified '
     'from the search above (e.g. a recurring transfer you want excluded from income). '
     'Auto Deductions are pre-filled from the bank statement parser (reversals, loan disbursals, non-business).'
     '</div>',
@@ -1427,7 +1451,7 @@ with r2: manual_rate= st.number_input("Manual Interest Rate (%) — Optional Ove
 # ── What-if Reverse Calculator ────────────────────────────────────────────────
 with st.expander("🔁  What-if: How much income is needed to qualify for ₦X?", expanded=False):
     st.markdown(
-        '<div style="font-size:11px;color:#94a3b8;margin-bottom:10px">'
+        '<div style="font-size:12px;color:#cbd5e1;font-weight:600;margin-bottom:12px;line-height:1.6">'
         'Enter a target loan amount below. The table shows the minimum monthly income '
         'required to qualify, across all tenors — using the product/location settings above.</div>',
         unsafe_allow_html=True,
@@ -1460,9 +1484,10 @@ with st.expander("🔁  What-if: How much income is needed to qualify for ₦X?"
                     "DTI Used":           "—",
                 })
         st.dataframe(pd.DataFrame(wi_rows), hide_index=True, use_container_width=True)
-        st.caption(
-            f"Min Monthly Income = (PMT + other loans) ÷ DTI  |  "
-            f"NTB note: applicable turnover uses trimmed mean — actual income may need to be higher."
+        st.markdown(
+            f'<div class="sel-caption">Min Monthly Income = (PMT + other loans) ÷ DTI &nbsp;|&nbsp; '
+            f'NTB note: applicable turnover uses trimmed mean — actual income may need to be higher.</div>',
+            unsafe_allow_html=True,
         )
 
 calc_btn = st.button("▶   Calculate Eligibility", key="calc", use_container_width=True)
