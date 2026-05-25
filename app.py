@@ -966,7 +966,7 @@ if st.session_state.txns_a:
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.markdown('<div class="sel-section-title">00B — Second Bank Statement &nbsp;<span style="color:#64748b;font-size:10px">— Optional</span></div>', unsafe_allow_html=True)
-st.caption("Upload a second bank statement. Nets are merged month-by-month. Only months present in **both** statements are used.")
+st.caption("Upload a second bank statement. Nets are merged month-by-month across all available months from either statement.")
 
 col3, col4 = st.columns(2)
 with col3:
@@ -1028,28 +1028,87 @@ with col4:
                     else:
                         st.error(f"Error: {e}")
 
+# Show Statement B own analysis
+if st.session_state.rows_b:
+    import datetime as _dt2
+    _today_b = _dt2.date.today().strftime("%Y-%m")
+    rows_b_own = [r for r in st.session_state.rows_b if r["ym"] < _today_b and r["gross"] > 0][-6:]
+    if rows_b_own:
+        _bname = st.session_state.bank_b or "Statement 2"
+        _bacco = st.session_state.name_b or ""
+        st.markdown(
+            f'<div style="font-size:10px;letter-spacing:2px;color:#f59e0b;text-transform:uppercase;'
+            f'margin:16px 0 6px">▷ Statement 2 Breakdown — {_bname}'
+            f'{(" — " + _bacco) if _bacco else ""}</div>',
+            unsafe_allow_html=True,
+        )
+        _b_has_rev  = any(r["reversal"]       > 0 for r in rows_b_own)
+        _b_has_nb   = any(r["non_business"]   > 0 for r in rows_b_own)
+        _b_has_loan = any(r["loan_disbursal"] > 0 for r in rows_b_own)
+        _b_hdr = ('<tr>'
+                  '<th class="col-gross" style="text-align:left">Month</th>'
+                  '<th class="col-gross">Total Inflow</th>')
+        if _b_has_rev:   _b_hdr += '<th class="col-rev">Reversals</th>'
+        if _b_has_nb:    _b_hdr += '<th class="col-nonbiz">Non-Business</th>'
+        if _b_has_loan:  _b_hdr += '<th class="col-loan">Loan Disbursals</th>'
+        _b_hdr += '<th class="col-net">Eligible Income</th></tr>'
+        _b_body = ""
+        _btg = _btr = _btn = _btl = _bte = 0.0
+        for r in rows_b_own:
+            _btg += r["gross"]; _btr += r["reversal"]; _btn += r["non_business"]
+            _btl += r["loan_disbursal"]; _bte += r["eligible_income"]
+            _b_body += f'<tr><td>{r["label"]}</td><td class="col-gross">{money(r["gross"])}</td>'
+            if _b_has_rev:   _b_body += f'<td class="col-rev">{("-"+money(r["reversal"])) if r["reversal"] > 0 else "—"}</td>'
+            if _b_has_nb:    _b_body += f'<td class="col-nonbiz">{("-"+money(r["non_business"])) if r["non_business"] > 0 else "—"}</td>'
+            if _b_has_loan:  _b_body += f'<td class="col-loan">{("-"+money(r["loan_disbursal"])) if r["loan_disbursal"] > 0 else "—"}</td>'
+            _b_body += f'<td class="col-net">{money(r["eligible_income"])}</td></tr>'
+        _b_foot = (f'<tfoot><tr>'
+                   f'<td style="color:#64748b;font-size:10px;text-transform:uppercase">Total</td>'
+                   f'<td class="col-gross" style="border-top:1px solid #1a3d2b">{money(_btg)}</td>')
+        if _b_has_rev:   _b_foot += f'<td class="col-rev" style="border-top:1px solid #1a3d2b">{("-"+money(_btr)) if _btr > 0 else "—"}</td>'
+        if _b_has_nb:    _b_foot += f'<td class="col-nonbiz" style="border-top:1px solid #1a3d2b">{("-"+money(_btn)) if _btn > 0 else "—"}</td>'
+        if _b_has_loan:  _b_foot += f'<td class="col-loan" style="border-top:1px solid #1a3d2b">{("-"+money(_btl)) if _btl > 0 else "—"}</td>'
+        _b_foot += (f'<td class="col-net" style="border-top:1px solid #1a3d2b;font-size:14px">{money(_bte)}</td>'
+                    f'</tr></tfoot>')
+        st.markdown(
+            f'<table class="preview-table"><thead>{_b_hdr}</thead><tbody>{_b_body}</tbody>{_b_foot}</table>',
+            unsafe_allow_html=True,
+        )
+
 # Show merged preview
 if st.session_state.rows_a and st.session_state.rows_b:
     import datetime
     today = datetime.date.today().strftime("%Y-%m")
     rows_a_map = {r["ym"]: r for r in st.session_state.rows_a if r["ym"] < today and r["gross"] > 0}
     rows_b_map = {r["ym"]: r for r in st.session_state.rows_b if r["ym"] < today and r["gross"] > 0}
-    common = sorted(set(rows_a_map) & set(rows_b_map))[-6:]
+    # Union — keep all months from either statement
+    all_months = sorted(set(rows_a_map) | set(rows_b_map))[-6:]
 
-    if common:
-        st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#34d399;text-transform:uppercase;margin:12px 0 6px">▷ Merged Result (Intersection of Both Statements)</div>', unsafe_allow_html=True)
-        html = '<table class="preview-table"><thead><tr><th style="text-align:left">Month</th><th class="col-gross">Statement 1 Net</th><th style="text-align:right;color:#f59e0b">Statement 2 Net</th><th class="col-net">Combined Net</th></tr></thead><tbody>'
+    if all_months:
+        st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#34d399;text-transform:uppercase;margin:12px 0 6px">▷ Merged Result (Union of Both Statements)</div>', unsafe_allow_html=True)
+        html = ('<table class="preview-table"><thead><tr>'
+                '<th style="text-align:left">Month</th>'
+                '<th class="col-gross">Statement 1 Net</th>'
+                '<th style="text-align:right;color:#f59e0b">Statement 2 Net</th>'
+                '<th class="col-net">Combined Net</th>'
+                '</tr></thead><tbody>')
         tA = tB = tC = 0
-        for ym in common:
-            rA = rows_a_map[ym]
-            rB = rows_b_map[ym]
-            netA = rA["eligible_income"]
-            netB = rB["eligible_income"]
+        for ym in all_months:
+            rA = rows_a_map.get(ym)
+            rB = rows_b_map.get(ym)
+            netA = rA["eligible_income"] if rA else 0
+            netB = rB["eligible_income"] if rB else 0
             combined = netA + netB
             tA += netA; tB += netB; tC += combined
-            html += (f'<tr><td>{ym_label(ym)}</td>'
-                     f'<td class="col-gross">{money(netA)}</td>'
-                     f'<td style="text-align:right;color:#f59e0b">{money(netB)}</td>'
+            # Mark months where only one statement has data
+            _src = ""
+            if rA and not rB:
+                _src = ' <span style="font-size:9px;color:#64748b">(Stmt 1 only)</span>'
+            elif rB and not rA:
+                _src = ' <span style="font-size:9px;color:#f59e0b">(Stmt 2 only)</span>'
+            html += (f'<tr><td>{ym_label(ym)}{_src}</td>'
+                     f'<td class="col-gross">{money(netA) if netA else "—"}</td>'
+                     f'<td style="text-align:right;color:#f59e0b">{money(netB) if netB else "—"}</td>'
                      f'<td class="col-net">{money(combined)}</td></tr>')
         html += (f'</tbody><tfoot><tr>'
                  f'<td style="color:#64748b;font-size:10px;text-transform:uppercase">Total</td>'
@@ -1057,7 +1116,8 @@ if st.session_state.rows_a and st.session_state.rows_b:
                  f'<td style="text-align:right;color:#f59e0b">{money(tB)}</td>'
                  f'<td class="col-net">{money(tC)}</td>'
                  f'</tr></tfoot></table>')
-        html += f'<div style="font-size:11px;color:#64748b;margin-top:6px">ℹ Showing {len(common)} overlapping months.</div>'
+        html += (f'<div style="font-size:11px;color:#64748b;margin-top:6px">'
+                 f'ℹ {len(all_months)} months shown — all months from either statement are included.</div>')
         st.markdown(html, unsafe_allow_html=True)
 
 # ── Transaction Search — Statement B ─────────────────────────────────────────
@@ -1204,21 +1264,28 @@ today = datetime.date.today()
 
 # Determine which rows to pre-fill
 def get_prefill_rows():
-    """Get last 6 completed months from merged or single statement."""
+    """Get last 6 completed months from merged or single statement.
+    Uses UNION of both statements so that months present in only one
+    statement are still included (not dropped by an intersection filter).
+    """
     today_ym = today.strftime("%Y-%m")
     if st.session_state.rows_a and st.session_state.rows_b:
         rows_a_map = {r["ym"]: r for r in st.session_state.rows_a if r["ym"] < today_ym and r["gross"] > 0}
         rows_b_map = {r["ym"]: r for r in st.session_state.rows_b if r["ym"] < today_ym and r["gross"] > 0}
-        common = sorted(set(rows_a_map) & set(rows_b_map))[-6:]
-        if common:
+        # Union — include every month present in either statement
+        all_months = sorted(set(rows_a_map) | set(rows_b_map))[-6:]
+        if all_months:
             merged = []
-            for ym in common:
-                rA = rows_a_map[ym]
-                rB = rows_b_map[ym]
+            for ym in all_months:
+                rA = rows_a_map.get(ym)
+                rB = rows_b_map.get(ym)
+                eiA = rA["eligible_income"] if rA else 0
+                eiB = rB["eligible_income"] if rB else 0
                 merged.append({
                     "ym": ym, "label": ym_label(ym),
-                    "gross": rA["eligible_income"] + rB["eligible_income"],
-                    "deductions": 0, "count": max(rA["count"], rB["count"]),
+                    "gross": eiA + eiB,
+                    "deductions": 0,
+                    "count": max(rA["count"] if rA else 0, rB["count"] if rB else 0),
                 })
             return merged
     elif st.session_state.rows_a:
@@ -1399,23 +1466,26 @@ if calc_btn:
             _rB_map = {r["ym"]: r
                        for r in (st.session_state.rows_b or [])
                        if r["ym"] < _today_ym and r["gross"] > 0}
-            _common = sorted(set(_rA_map) & set(_rB_map))[-6:]
+            # Union — keep all months from either statement
+            _all_months = sorted(set(_rA_map) | set(_rB_map))[-6:]
             _report_rows = []
-            for _ym in _common:
-                rA = _rA_map[_ym]
-                rB = _rB_map[_ym]
+            for _ym in _all_months:
+                rA = _rA_map.get(_ym)
+                rB = _rB_map.get(_ym)
+                eiA = rA["eligible_income"] if rA else 0
+                eiB = rB["eligible_income"] if rB else 0
                 _report_rows.append({
                     "ym":            _ym,
-                    "label":         rA["label"],
-                    "gross":         rA["eligible_income"] + rB["eligible_income"],
-                    "parsed_gross":  rA.get("parsed_gross", 0) + rB.get("parsed_gross", 0),
-                    "eligible_income": rA["eligible_income"] + rB["eligible_income"],
-                    "self_transfer": rA.get("self_transfer", 0) + rB.get("self_transfer", 0),
-                    "reversal":      rA.get("reversal", 0)      + rB.get("reversal", 0),
-                    "non_business":  rA.get("non_business", 0)  + rB.get("non_business", 0),
-                    "loan_disbursal":rA.get("loan_disbursal", 0)+ rB.get("loan_disbursal", 0),
-                    "deductions":    rA.get("deductions", 0)    + rB.get("deductions", 0),
-                    "count":         rA.get("count", 0)         + rB.get("count", 0),
+                    "label":         ym_label(_ym),
+                    "gross":         eiA + eiB,
+                    "parsed_gross":  (rA.get("parsed_gross", 0) if rA else 0) + (rB.get("parsed_gross", 0) if rB else 0),
+                    "eligible_income": eiA + eiB,
+                    "self_transfer": (rA.get("self_transfer", 0) if rA else 0) + (rB.get("self_transfer", 0) if rB else 0),
+                    "reversal":      (rA.get("reversal", 0)      if rA else 0) + (rB.get("reversal", 0)      if rB else 0),
+                    "non_business":  (rA.get("non_business", 0)  if rA else 0) + (rB.get("non_business", 0)  if rB else 0),
+                    "loan_disbursal":(rA.get("loan_disbursal", 0)if rA else 0) + (rB.get("loan_disbursal", 0)if rB else 0),
+                    "deductions":    (rA.get("deductions", 0)    if rA else 0) + (rB.get("deductions", 0)    if rB else 0),
+                    "count":         (rA.get("count", 0)         if rA else 0) + (rB.get("count", 0)         if rB else 0),
                 })
             _name_a = st.session_state.name_a or ""
             _name_b = st.session_state.name_b or ""
