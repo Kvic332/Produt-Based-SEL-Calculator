@@ -1699,9 +1699,27 @@ if calc_btn:
                         use_container_width=True,
                     )
                 with _cav2:
+                    # Build CSV with eligibility summary header + audit rows
+                    import io as _io
+                    _csv_buf = _io.StringIO()
+                    # -- Summary section --
+                    _csv_buf.write("ELIGIBILITY SUMMARY\r\n")
+                    _csv_buf.write(f"Decision,{'Approved' if result.get('approved') else 'Below Minimum'}\r\n")
+                    _csv_buf.write(f"Max Loan Amount,{money(result.get('max_loan', 0))}\r\n")
+                    _csv_buf.write(f"DTI,{pct(result.get('dti'))}\r\n")
+                    _csv_buf.write(f"Interest Rate,{pct(result.get('interest_rate'))}\r\n")
+                    _csv_buf.write(f"Repayment Frequency,{result.get('repayment_frequency', '')}\r\n")
+                    _csv_buf.write(f"Repayment / Period,{money(result.get('max_repayment_display', 0))}\r\n")
+                    _csv_buf.write(f"Max Total Repayment,{money(result.get('max_total_repayment', 0))}\r\n")
+                    _csv_buf.write(f"Applicable Turnover,{money(result.get('applicable_turnover', 0))}\r\n")
+                    _csv_buf.write(f"Total Net Income,{money(result.get('total_net', 0))}\r\n")
+                    _csv_buf.write("\r\n")
+                    # -- Audit rows section --
+                    _csv_buf.write("CLASSIFICATION AUDIT\r\n")
+                    _csv_buf.write(df.to_csv(index=False))
                     st.download_button(
                         "⬇  Download Audit (CSV)",
-                        df.to_csv(index=False).encode("utf-8"),
+                        _csv_buf.getvalue().encode("utf-8"),
                         file_name="sel_classification_audit.csv",
                         mime="text/csv",
                         key="dl_audit_csv",

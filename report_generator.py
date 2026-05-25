@@ -289,19 +289,26 @@ def generate_pdf_report(
         ))
         story.append(Spacer(1, 3 * mm))
 
+        freq = result.get("repayment_frequency", "—") or "—"
         res_rows = [
             ["Max Loan Amount",     _money(result.get("max_loan", 0)),
              "DTI",                 _pct(result.get("dti"))],
             ["Interest Rate",       _pct(result.get("interest_rate")),
-             "Repayment / Period",  _money(result.get("max_repayment_display", 0))],
-            ["Applicable Turnover", _money(result.get("applicable_turnover", 0)),
-             "Total Net Income",    _money(result.get("total_net", 0))],
+             "Repayment Frequency", freq],
+            ["Repayment / Period",  _money(result.get("max_repayment_display", 0)),
+             "Applicable Turnover", _money(result.get("applicable_turnover", 0))],
+            ["Total Net Income",    _money(result.get("total_net", 0)),
+             "",                    ""],
         ]
         if req_loan > 0 and "requested" in result:
             req = result["requested"]
+            res_rows[-1] = [
+                "Total Net Income", _money(result.get("total_net", 0)),
+                "Requested Loan",   _money(req_loan),
+            ]
             res_rows.append([
-                "Requested Loan",  _money(req_loan),
                 "Requested DTI",   _pct(req.get("dti")),
+                "",                "",
             ])
 
         qw = W / 4
