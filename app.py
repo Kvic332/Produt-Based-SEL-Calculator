@@ -1386,6 +1386,54 @@ if calc_btn:
     if all(n == 0 for n in nets):
         st.error("Please enter monthly inflow data before calculating.")
     else:
+        # ── Build merged report rows (used by ALL download generators) ──────
+        # When two statements are present, merge their per-month data so that
+        # PDF/Excel/CSV downloads reflect the combined analysis, not just Stmt A.
+        _today_ym = today.strftime("%Y-%m")
+        _has_b    = bool(st.session_state.get("rows_b"))
+
+        if _has_b:
+            _rA_map = {r["ym"]: r
+                       for r in (st.session_state.rows_a or [])
+                       if r["ym"] < _today_ym and r["gross"] > 0}
+            _rB_map = {r["ym"]: r
+                       for r in (st.session_state.rows_b or [])
+                       if r["ym"] < _today_ym and r["gross"] > 0}
+            _common = sorted(set(_rA_map) & set(_rB_map))[-6:]
+            _report_rows = []
+            for _ym in _common:
+                rA = _rA_map[_ym]
+                rB = _rB_map[_ym]
+                _report_rows.append({
+                    "ym":            _ym,
+                    "label":         rA["label"],
+                    "gross":         rA["eligible_income"] + rB["eligible_income"],
+                    "parsed_gross":  rA.get("parsed_gross", 0) + rB.get("parsed_gross", 0),
+                    "eligible_income": rA["eligible_income"] + rB["eligible_income"],
+                    "self_transfer": rA.get("self_transfer", 0) + rB.get("self_transfer", 0),
+                    "reversal":      rA.get("reversal", 0)      + rB.get("reversal", 0),
+                    "non_business":  rA.get("non_business", 0)  + rB.get("non_business", 0),
+                    "loan_disbursal":rA.get("loan_disbursal", 0)+ rB.get("loan_disbursal", 0),
+                    "deductions":    rA.get("deductions", 0)    + rB.get("deductions", 0),
+                    "count":         rA.get("count", 0)         + rB.get("count", 0),
+                })
+            _name_a = st.session_state.name_a or ""
+            _name_b = st.session_state.name_b or ""
+            _bank_a = st.session_state.bank_a or ""
+            _bank_b = st.session_state.bank_b or ""
+            _report_name = f"{_name_a} + {_name_b}".strip(" +")
+            _report_bank = f"{_bank_a} + {_bank_b}".strip(" +")
+        else:
+            _report_rows = [r for r in (st.session_state.rows_a or [])
+                            if r["ym"] < _today_ym and r["gross"] > 0][-6:]
+            _report_name = st.session_state.name_a or "Account Holder"
+            _report_bank = st.session_state.bank_a or "Bank"
+
+        # ── Audit src rows: combine both statements ──────────────────────
+        _audit_src = (st.session_state.rows_a or []) + (
+            st.session_state.rows_b or [] if _has_b else []
+        )
+
         result = calculate_eligibility(
             nets=nets, counts=counts,
             location=location, product_type=prod_type,
@@ -1474,9 +1522,8 @@ if calc_btn:
             st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:6px">Classification Audit — All Tagged Credits</div>', unsafe_allow_html=True)
 
             audit_rows = []
-            src_rows = (st.session_state.rows_a or [])
             today_ym = today.strftime("%Y-%m")
-            for r in src_rows:
+            for r in _audit_src:
                 if r["ym"] >= today_ym or r["gross"] == 0:
                     continue
                 # Self-transfers are now informational (not deducted)
@@ -1515,12 +1562,12 @@ if calc_btn:
                     },
                 )
                 _xlsx_full = generate_xlsx(
-                    rows         = st.session_state.rows_a or [],
+                    rows         = _report_rows,
                     result       = result,
-                    account_name = st.session_state.name_a or "",
-                    bank         = st.session_state.bank_a or "",
+                    account_name = _report_name,
+                    bank         = _report_bank,
                 )
-                _safe_xl = (st.session_state.name_a or "report").replace(" ", "_").lower()
+                _safe_xl = (_report_name or "report").replace(" ", "_").lower()
                 _cav1, _cav2 = st.columns(2)
                 with _cav1:
                     st.download_button(
@@ -1543,17 +1590,14 @@ if calc_btn:
 
         # ── Download Full Eligibility Report PDF ──────────────────────────
         st.markdown("---")
-        _r_rows = [r for r in (st.session_state.rows_a or [])
-                   if r["ym"] < datetime.date.today().strftime("%Y-%m")
-                   and r["gross"] > 0][-6:]
         _pdf_full = generate_pdf_report(
-            account_name = st.session_state.name_a or "Account Holder",
-            bank         = st.session_state.bank_a or "Bank",
-            rows         = _r_rows if _r_rows else [],
+            account_name = _report_name,
+            bank         = _report_bank,
+            rows         = _report_rows if _report_rows else [],
             result       = result,
             req_loan     = req_loan,
         )
-        _safe_full = (st.session_state.name_a or "report").replace(" ", "_").lower()
+        _safe_full = (_report_name or "report").replace(" ", "_").lower()
         st.download_button(
             label               = "⬇  Download Full Eligibility Report (PDF)",
             data                = _pdf_full,
