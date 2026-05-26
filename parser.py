@@ -1181,6 +1181,20 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
                 DATE_ORDER = "mdy"
                 break
 
+    # ── MDY sanity check: if MDY was triggered by metadata slash-dates but
+    # the actual transaction rows use DASH-separated dates, the slash dates
+    # came from a page-header (e.g. Wema mybankStatement® "5/26/2026") and
+    # must NOT drive transaction parsing.  Wema transaction dates are always
+    # DD-MM-YYYY (dash).  UBA transaction dates are M/D/YYYY (slash) so the
+    # regex below won't match them and MDY is correctly preserved for UBA.
+    if DATE_ORDER == "mdy":
+        _tx_dash = re.search(
+            r'^\d{1,2}-\d{1,2}-\d{4}\s+\d{1,2}-\d{1,2}-\d{4}',
+            full_text, re.MULTILINE,
+        )
+        if _tx_dash:
+            DATE_ORDER = "dmy"
+
     # Skip lines that ARE page headers — anchored so narrations mentioning
     # "GTBank" or "Access Bank" in the text are NOT accidentally dropped.
     SKIP_HDR = re.compile(
