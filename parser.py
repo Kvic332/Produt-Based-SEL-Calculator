@@ -340,7 +340,15 @@ def detect_bank(text: str) -> str:
     # the actual statement header, not a "Transfer to STERLING BANK" narration.
     t_hdr = t[:1200]
 
-    # ── Jaiz Bank: checked FIRST — narrations mention "OPAY DIGITAL" ──────
+    # ── Renmoney MFB: MUST be before Jaiz ────────────────────────────────
+    # Renmoney's column header "DateNarration Debit Credit Balance" contains
+    # "datenarration", which would otherwise fire the Jaiz rule below.
+    # "Product Name: Renmoney Account" appears in line 2 of every Renmoney
+    # statement header — unique and always within t_hdr (first 1200 chars).
+    if "product name: renmoney" in t_hdr or "renmoney account" in t_hdr:
+        return "Renmoney"
+
+    # ── Jaiz Bank: checked early — narrations mention "OPAY DIGITAL" ─────
     # PyPDF2 merges the adjacent column headers "DATE" + "NARRATION" into the
     # single token "DATENARRATION", which is unique to Jaiz's layout and never
     # appears in narration text of any other bank.  Must fire before OPay
@@ -2820,6 +2828,79 @@ def parse_parallex(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# RENMONEY MFB PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_renmoney(full_text: str) -> tuple[dict, str]:
+    """
+    Renmoney MFB statement parser.
+
+    PyPDF2 output characteristics:
+    - Dates are split across two lines by PyPDF2: "2026-\\nMM-DD".
+      We normalise these to "2026-MM-DD|" so all regex patterns can match a
+      complete ISO date in one pass.
+    - Credit entries are prefixed by "CREDIT |" in the narration field.
+    - Interest credits are prefixed by "INTEREST_APPLIED".
+    - The ₦ symbol may render as ASCII "?" (0x3F) in some PDF builds and as
+      proper Unicode U+20A6 in others — the regex uses [^\\d\\r\\n]{0,5} to
+      skip the currency symbol regardless of encoding.
+
+    Credit line format (after date normalisation):
+        YYYY-MM-DD|CREDIT | <narration> - <₦/?> <amount>
+
+    Interest line format:
+        YYYY-MM-DD|INTEREST_APPLIED - <₦/?><amount>
+
+    Account name: extracted from the date-header line near the top of the
+    statement, e.g. "16 May, 2026  Olusola Micheal Kehinde".
+    """
+    buckets: dict = {}
+
+    # ── Normalise split dates: "2026-\\nMM-DD" → "2026-MM-DD|" ──────────
+    text_n = re.sub(r'(20\d{2})-\n(\d{2}-\d{2})', r'\1-\2|', full_text)
+
+    # ── Account name ──────────────────────────────────────────────────────
+    # Appears on a line like: "16 May, 2026  Olusola Micheal Kehinde"
+    account_name = "Unknown"
+    # Use [ ]+ (spaces only, not \s+) so the capture stops at the line break
+    # and does not absorb the "Product Name: ..." line that follows.
+    m_name = re.search(
+        r'\d{1,2}\s+\w+,?\s+\d{4}\s+([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+)+)',
+        full_text,
+    )
+    if m_name:
+        account_name = m_name.group(1).strip()
+
+    # ── CREDIT | entries ──────────────────────────────────────────────────
+    # Format after normalisation:
+    #   YYYY-MM-DD|CREDIT | <narration> - <currency_symbol> <amount>
+    # The dash before the currency symbol may be immediately before ₦ or ?
+    # (ASCII 0x3F — PyPDF2 substitution for ₦).  [^\\d\\r\\n]{0,5} skips it.
+    CREDIT_RE = re.compile(
+        r'(20\d{2}-\d{2}-\d{2})\|CREDIT\s*\|(.+?)-[^\d\r\n]{0,5}[\r\n]*([\d,]+\.\d{2})',
+        re.DOTALL,
+    )
+    for m in CREDIT_RE.finditer(text_n):
+        date_str  = m.group(1)            # YYYY-MM-DD
+        narration = m.group(2).strip()
+        amount    = float(m.group(3).replace(',', ''))
+        ym = f"{date_str[:4]}-{date_str[5:7]}"
+        add_credit(buckets, ym, amount, narration, account_name)
+
+    # ── INTEREST_APPLIED entries ──────────────────────────────────────────
+    # Format: YYYY-MM-DD|INTEREST_APPLIED - <currency_symbol><amount>
+    INTEREST_RE = re.compile(
+        r'(20\d{2}-\d{2}-\d{2})\|INTEREST_APPLIED\s*-\s*[^\d\s]{0,3}\s*([\d,]+\.\d{2})'
+    )
+    for m in INTEREST_RE.finditer(text_n):
+        date_str = m.group(1)
+        amount   = float(m.group(2).replace(',', ''))
+        ym = f"{date_str[:4]}-{date_str[5:7]}"
+        add_credit(buckets, ym, amount, "INTEREST_APPLIED", account_name)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FIDELITY DIRECT PARSER
 # ════════════════════════════════════════════════════════════════════════════
 def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
@@ -3020,6 +3101,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_jaiz(full_text)
     elif bank == "Parallex":
         buckets, account_name = parse_parallex(full_text)
+    elif bank == "Renmoney":
+        buckets, account_name = parse_renmoney(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         buckets, account_name = parse_gtbank(full_text)
     elif bank == "Zenith":
