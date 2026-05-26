@@ -1,6 +1,10 @@
 from __future__ import annotations
 import datetime
+import json
 import math
+import os
+import pathlib
+import uuid
 import pandas as pd
 import streamlit as st
 from parser import (
@@ -10,6 +14,7 @@ from parser import (
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
+from tracker import track, admin_stats
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -415,6 +420,11 @@ for key in ["buckets_a","summary_a","bank_a","name_a",
     if key not in st.session_state:
         st.session_state[key] = None
 
+# ── Analytics session ID — unique per browser session ─────────────────────────
+if "sel_session_id" not in st.session_state:
+    st.session_state.sel_session_id = str(uuid.uuid4())[:12]
+_SID = st.session_state.sel_session_id
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # HEADER
@@ -526,6 +536,8 @@ with col2:
             st.error("Please select a PDF file first.")
         else:
             with st.spinner("Extracting..."):
+                track("upload", session=_SID, filename=file_a.name,
+                      size_kb=round(len(file_a.getvalue()) / 1024, 1))
                 try:
                     buckets, summary, bank, name, txns = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
                     rows = monthly_analysis(buckets, summary)
@@ -536,6 +548,12 @@ with col2:
                     st.session_state.rows_a     = rows
                     st.session_state.txns_a     = txns
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
+                    _txn_count = sum(b.get("count", 0) for b in buckets.values())
+                    _gross_tot = sum(b.get("gross", 0) for b in buckets.values())
+                    track("parse_success", session=_SID, bank=bank,
+                          filename=file_a.name, txn_count=_txn_count,
+                          gross_total=round(_gross_tot, 2),
+                          months=len([r for r in rows if r["gross"] > 0]))
 
                     # ── AI Accuracy Verification (free, no API key needed) ──
                     # Only meaningful for PDF files that carry a stated total.
@@ -567,6 +585,8 @@ with col2:
                             pass  # Accuracy check is best-effort; never block the main flow
 
                 except Exception as e:
+                    track("parse_error", session=_SID, filename=file_a.name,
+                          error=str(e), error_type=type(e).__name__)
                     if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
                         st.error(
                             "This PDF appears to be corrupted or incomplete. "
@@ -1031,6 +1051,8 @@ with col4:
             st.error("Please extract the first statement first.")
         else:
             with st.spinner("Extracting second statement..."):
+                track("upload", session=_SID, filename=file_b.name,
+                      size_kb=round(len(file_b.getvalue()) / 1024, 1), slot="B")
                 try:
                     buckets_b, summary_b, bank_b, name_b, txns_b = parse_transactions(file_b.getvalue(), pw_b, filename=file_b.name)
                     rows_b = monthly_analysis(buckets_b, summary_b)
@@ -1041,6 +1063,12 @@ with col4:
                     st.session_state.rows_b    = rows_b
                     st.session_state.txns_b    = txns_b
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
+                    _txn_count_b = sum(b.get("count", 0) for b in buckets_b.values())
+                    _gross_tot_b = sum(b.get("gross", 0) for b in buckets_b.values())
+                    track("parse_success", session=_SID, bank=bank_b,
+                          filename=file_b.name, txn_count=_txn_count_b,
+                          gross_total=round(_gross_tot_b, 2),
+                          months=len([r for r in rows_b if r["gross"] > 0]), slot="B")
 
                     # ── Accuracy Verification for statement B ──
                     is_pdf_b = not file_b.name.lower().endswith((".xlsx", ".xls"))
@@ -1071,6 +1099,8 @@ with col4:
                             pass
 
                 except Exception as e:
+                    track("parse_error", session=_SID, filename=file_b.name,
+                          error=str(e), error_type=type(e).__name__, slot="B")
                     if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
                         st.error(
                             "This PDF appears to be corrupted or incomplete. "
@@ -1563,6 +1593,16 @@ if calc_btn:
             requested_loan=req_loan if req_loan > 0 else 0,
             manual_rate_percent=manual_rate if manual_rate > 0 else None,
         )
+        track("eligibility_result",
+              session=_SID,
+              bank=st.session_state.bank_a or "",
+              approved=result.get("approved", False),
+              max_loan=round(result.get("max_loan", 0), 2),
+              tenor=tenor,
+              dti=round((result.get("dti") or 0) * 100, 2),
+              location=location,
+              product=prod_type,
+              total_net=round(result.get("total_net", 0), 2))
 
         st.markdown("---")
         st.markdown('<div class="sel-section-title">04 — Results</div>', unsafe_allow_html=True)
@@ -1692,14 +1732,16 @@ if calc_btn:
                 _safe_xl = (_report_name or "report").replace(" ", "_").lower()
                 _cav1, _cav2 = st.columns(2)
                 with _cav1:
-                    st.download_button(
+                    if st.download_button(
                         "⬇  Download Full Report (Excel)",
                         _xlsx_full,
                         file_name=f"SEL_Report_{_safe_xl}_{datetime.date.today():%Y%m%d}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="dl_audit_xlsx",
                         use_container_width=True,
-                    )
+                    ):
+                        track("download", session=_SID,
+                              bank=st.session_state.bank_a or "", fmt="excel")
                 with _cav2:
                     # Build CSV with eligibility summary header + audit rows
                     import io as _io
@@ -1720,14 +1762,16 @@ if calc_btn:
                     # -- Audit rows section --
                     _csv_buf.write("CLASSIFICATION AUDIT\r\n")
                     _csv_buf.write(df.to_csv(index=False))
-                    st.download_button(
+                    if st.download_button(
                         "⬇  Download Audit (CSV)",
                         _csv_buf.getvalue().encode("utf-8"),
                         file_name="sel_classification_audit.csv",
                         mime="text/csv",
                         key="dl_audit_csv",
                         use_container_width=True,
-                    )
+                    ):
+                        track("download", session=_SID,
+                              bank=st.session_state.bank_a or "", fmt="csv")
 
         # ── Download Full Eligibility Report PDF ──────────────────────────
         st.markdown("---")
@@ -1739,14 +1783,147 @@ if calc_btn:
             req_loan     = req_loan,
         )
         _safe_full = (_report_name or "report").replace(" ", "_").lower()
-        st.download_button(
+        if st.download_button(
             label               = "⬇  Download Full Eligibility Report (PDF)",
             data                = _pdf_full,
             file_name           = f"SEL_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
             mime                = "application/pdf",
             use_container_width = True,
             key                 = "dl_full_pdf",
-        )
+        ):
+            track("download", session=_SID,
+                  bank=st.session_state.bank_a or "", fmt="pdf")
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# ADMIN DASHBOARD — accessible only via ?admin=<SEL_ADMIN_KEY>
+# Set the environment variable SEL_ADMIN_KEY to your chosen secret.
+# Example URL: https://your-app.streamlit.app/?admin=mySecret99
+# ════════════════════════════════════════════════════════════════════════════
+_ADMIN_KEY = os.environ.get("SEL_ADMIN_KEY", "kvic7admin")   # ← change via env var
+_qp = st.query_params
+if _qp.get("admin") == _ADMIN_KEY:
+    st.markdown("---")
+    st.markdown(
+        '<div style="font-size:10px;letter-spacing:4px;color:#f59e0b;'
+        'text-transform:uppercase;margin-bottom:8px">⚙ Admin Only</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("## 📊 Usage Dashboard")
 
+    _stats = admin_stats()
+
+    if "_error" in _stats:
+        st.error(f"Tracker DB error: {_stats['_error']}")
+    else:
+        # ── Top-line metrics ──────────────────────────────────────────────
+        _sess   = _stats.get("sessions", {})
+        _rate   = _stats.get("rate", {})
+        _ok     = int(_rate.get("ok") or 0)
+        _err    = int(_rate.get("err") or 0)
+        _total  = _ok + _err
+        _err_pct = round(_err / _total * 100, 1) if _total else 0
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric("Total Sessions",   _sess.get("total_sessions", 0))
+        mc2.metric("Statements Parsed", _ok)
+        mc3.metric("Parse Errors",      _err,
+                   delta=f"{_err_pct}% error rate",
+                   delta_color="inverse")
+        mc4.metric("Results Calculated", _sess.get("completed", 0))
+
+        # ── Event summary ─────────────────────────────────────────────────
+        _sum = _stats.get("summary", [])
+        if _sum:
+            st.markdown("#### Event Breakdown")
+            st.dataframe(
+                pd.DataFrame(_sum).rename(columns={"event": "Event", "total": "Count"}),
+                hide_index=True, use_container_width=True,
+            )
+
+        # ── Daily activity ────────────────────────────────────────────────
+        _daily = _stats.get("daily", [])
+        if _daily:
+            st.markdown("#### Daily Upload Activity (last 30 days)")
+            _df_daily = pd.DataFrame(_daily).rename(
+                columns={"day": "Date", "uploads": "Uploads"}
+            ).sort_values("Date")
+            st.bar_chart(_df_daily.set_index("Date")["Uploads"])
+
+        # ── Bank distribution ─────────────────────────────────────────────
+        _banks = _stats.get("banks", [])
+        if _banks:
+            st.markdown("#### Bank Distribution")
+            st.dataframe(
+                pd.DataFrame(_banks).rename(
+                    columns={"bank": "Bank", "cnt": "Statements Parsed"}
+                ),
+                hide_index=True, use_container_width=True,
+            )
+
+        # ── Loan results ──────────────────────────────────────────────────
+        _loans = _stats.get("loans", [])
+        if _loans:
+            st.markdown("#### Recent Eligibility Results")
+            _loan_rows = []
+            for _lr in _loans:
+                try:
+                    _d = json.loads(_lr["data"]) if isinstance(_lr["data"], str) else _lr["data"]
+                except Exception:
+                    _d = {}
+                _loan_rows.append({
+                    "Time":     _lr["ts"],
+                    "Bank":     _lr.get("bank", ""),
+                    "Decision": "✅ Approved" if _d.get("approved") else "❌ Below Min",
+                    "Max Loan": f"NGN {_d.get('max_loan', 0):,.0f}",
+                    "Tenor":    f"{_d.get('tenor', '—')} mo",
+                    "DTI":      f"{_d.get('dti', 0):.1f}%",
+                    "Product":  _d.get("product", ""),
+                    "Location": _d.get("location", ""),
+                })
+            st.dataframe(
+                pd.DataFrame(_loan_rows),
+                hide_index=True, use_container_width=True,
+            )
+
+        # ── Error log ─────────────────────────────────────────────────────
+        _errors = _stats.get("errors", [])
+        if _errors:
+            st.markdown(
+                f'<div style="color:#f87171;font-size:13px;font-weight:700;'
+                f'margin-top:12px">⚠ Parse Errors ({len(_errors)} most recent)</div>',
+                unsafe_allow_html=True,
+            )
+            for _e in _errors:
+                try:
+                    _ed = json.loads(_e["data"]) if isinstance(_e["data"], str) else _e["data"]
+                except Exception:
+                    _ed = {}
+                with st.expander(
+                    f"🔴  {_e['ts']}  |  {_e.get('bank') or 'Unknown bank'}"
+                    f"  |  {_e.get('filename', '')}",
+                    expanded=False,
+                ):
+                    st.code(
+                        f"Error type : {_ed.get('error_type', '—')}\n"
+                        f"Message    : {_ed.get('error', '—')}\n"
+                        f"File       : {_e.get('filename', '—')}\n"
+                        f"Session    : {_e.get('session', '—')}\n"
+                        f"Slot       : {_ed.get('slot', 'A')}",
+                        language="text",
+                    )
+        else:
+            st.success("✅ No parse errors recorded.")
+
+        # ── Raw DB download ───────────────────────────────────────────────
+        import io as _adm_io
+        _db_path = pathlib.Path(__file__).parent / "sel_analytics.db"
+        if _db_path.exists():
+            with open(_db_path, "rb") as _dbf:
+                st.download_button(
+                    "⬇  Download Raw Analytics DB (SQLite)",
+                    _dbf.read(),
+                    file_name="sel_analytics.db",
+                    mime="application/octet-stream",
+                    key="dl_admin_db",
+                )
