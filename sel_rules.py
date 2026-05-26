@@ -177,6 +177,7 @@ def calculate_eligibility(
         "total_net": total_net,
         "applicable_turnover": turnover,
         "dti": dti,
+        "tenor": tenor,
         "max_repayment_monthly": max_repayment_monthly,
         "max_repayment_display": weekly_payment if repayment_frequency == "Weekly" else max_repayment_monthly,
         "max_total_repayment": max_total_repayment,

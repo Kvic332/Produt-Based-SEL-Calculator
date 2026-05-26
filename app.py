@@ -349,9 +349,11 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
     if result:
         ws2 = wb.create_sheet("Eligibility Summary")
         ws2.sheet_properties.tabColor = GOLD
+        _tenor_v = result.get("tenor")
         pairs = [
             ("Decision",             "Approved" if result.get("approved") else "Below Minimum"),
             ("Max Loan Amount",      result.get("max_loan", 0)),
+            ("Tenor (Months)",       _tenor_v if _tenor_v else "—"),
             ("Applicable Turnover",  result.get("applicable_turnover", 0)),
             ("Total Eligible Net",   result.get("total_net", 0)),
             ("DTI",                  f"{result.get('dti',0)*100:.2f}%"),
@@ -1706,6 +1708,7 @@ if calc_btn:
                     _csv_buf.write("ELIGIBILITY SUMMARY\r\n")
                     _csv_buf.write(f"Decision,{'Approved' if result.get('approved') else 'Below Minimum'}\r\n")
                     _csv_buf.write(f"Max Loan Amount,{money(result.get('max_loan', 0))}\r\n")
+                    _csv_buf.write(f"Tenor (Months),{result.get('tenor', '—')}\r\n")
                     _csv_buf.write(f"DTI,{pct(result.get('dti'))}\r\n")
                     _csv_buf.write(f"Interest Rate,{pct(result.get('interest_rate'))}\r\n")
                     _csv_buf.write(f"Repayment Frequency,{result.get('repayment_frequency', '')}\r\n")
