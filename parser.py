@@ -130,6 +130,14 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
     if any(k in text for k in owealth_kw):
         return "self_transfer", "OWealth internal round-trip"
 
+    # ── 1b. Renmoney internal savings products ────────────────────────────
+    # Renflex = Renmoney flexible savings; RenVault = Renmoney vault savings;
+    # RenSavings = any other Renmoney savings product.
+    # These are own-fund round-trips — NOT business income.
+    renmoney_savings_kw = ["renflex", "renvault", "rensavings"]
+    if any(k in text for k in renmoney_savings_kw):
+        return "self_transfer", "Renmoney internal savings round-trip"
+
     # ── 2. Savings platforms ──────────────────────────────────────────────
     savings_kw = [
         "piggyvest", "piggy vest", "piggy bank",
@@ -3168,16 +3176,17 @@ def parse_transactions(file_bytes: bytes, password: str = "",
 def monthly_analysis(buckets: dict, summary: dict | None = None) -> list[dict]:
     """
     Compute per-month eligible income.
-    self_transfer is tracked but NOT deducted — same-name deposits are
-    real deposits to the account and should count towards income.
-    Deductions: reversal + non_business + loan_disbursal only.
+    Deductions: self_transfer + reversal + non_business + loan_disbursal.
+    self_transfer covers OWealth, Renflex, Renvault, RenSavings, savings
+    platforms, and own-name round-trips — these are NOT business income.
     """
     rows = []
     for ym in sorted(set(buckets) | set(summary or {})):
         b = buckets.get(ym, _empty_bucket())
         gross = (summary or {}).get(ym, b["gross"])
-        # Self-transfers (same-name deposits) are informational only — not deducted.
-        deductions = (b.get("reversal", 0) +
+        # Self-transfers (savings round-trips, own-name) are deducted as they
+        # are not genuine business income.
+        deductions = (b.get("self_transfer", 0) + b.get("reversal", 0) +
                       b.get("non_business", 0) + b.get("loan_disbursal", 0))
         rows.append({
             "ym": ym,

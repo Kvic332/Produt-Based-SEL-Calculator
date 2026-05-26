@@ -659,7 +659,7 @@ if st.session_state.rows_a:
         if has_self:
             st.markdown(
                 '<div style="font-size:10px;color:#fb923c;margin-top:4px">'
-                '⚑ Self Deposits are shown for reference only — they are <strong>not deducted</strong> from eligible income.</div>',
+                '⚑ Self Deposits (OWealth, Renflex, Renvault, savings round-trips) are <strong>deducted</strong> from eligible income as they are not business income.</div>',
                 unsafe_allow_html=True,
             )
 
@@ -1646,12 +1646,12 @@ if calc_btn:
             for r in _audit_src:
                 if r["ym"] >= today_ym or r["gross"] == 0:
                     continue
-                # Self-transfers are now informational (not deducted)
+                # Self-transfers (savings round-trips) are deducted
                 if r.get("self_transfer", 0) > 0:
                     audit_rows.append({
                         "Month": r["label"],
-                        "Category": "Self Deposit (info only)",
-                        "Deducted": False,
+                        "Category": "Self Deposit / Savings Round-trip",
+                        "Deducted": True,
                         "Amount": r["self_transfer"],
                     })
                 for cat in ["reversal", "non_business", "loan_disbursal"]:
