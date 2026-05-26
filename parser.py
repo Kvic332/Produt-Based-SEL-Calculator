@@ -2832,37 +2832,38 @@ def parse_parallex(full_text: str) -> tuple[dict, str]:
 # ════════════════════════════════════════════════════════════════════════════
 def parse_renmoney(full_text: str) -> tuple[dict, str]:
     """
-    Renmoney MFB statement parser.
+    Renmoney MFB statement parser — 4-pass design.
 
     PyPDF2 output characteristics:
-    - Dates are split across two lines by PyPDF2: "2026-\\nMM-DD".
-      We normalise these to "2026-MM-DD|" so all regex patterns can match a
-      complete ISO date in one pass.
-    - Credit entries are prefixed by "CREDIT |" in the narration field.
-    - Interest credits are prefixed by "INTEREST_APPLIED".
-    - The ₦ symbol may render as ASCII "?" (0x3F) in some PDF builds and as
-      proper Unicode U+20A6 in others — the regex uses [^\\d\\r\\n]{0,5} to
-      skip the currency symbol regardless of encoding.
+    - Dates split across two lines: "2026-\\nMM-DD" → normalised to "2026-MM-DD|"
+    - ₦ may render as ASCII "?" (0x3F)
 
-    Credit line format (after date normalisation):
-        YYYY-MM-DD|CREDIT | <narration> - <₦/?> <amount>
+    Credit vs debit distinction:
+        Credit inline: narration - ₦amount ₦balance   (dash BEFORE ₦; TWO amounts after dash)
+        Debit  inline: narration₦amount - ₦balance    (₦ BEFORE dash; ONE amount after dash)
+        Credit split:  line ends with "-₦" → next line "<amount>₦"
+        Debit  split:  line ends with "₦"  → next line "<amount>- ₦<balance>"
 
-    Interest line format:
-        YYYY-MM-DD|INTEREST_APPLIED - <₦/?><amount>
+    Passes:
+        1  — CREDIT | prefix entries (DOTALL handles any multi-line split)
+        2  — General inline credits (non-CREDIT|/INTEREST_APPLIED; two amounts after "- ₦")
+        3  — General split credits (line ends with "-₦"; next non-empty line = amount₦)
+        4  — INTEREST_APPLIED entries
 
-    Account name: extracted from the date-header line near the top of the
-    statement, e.g. "16 May, 2026  Olusola Micheal Kehinde".
+    Passes 1 & 4 are mutually exclusive with Passes 2 & 3 via the
+    (?!CREDIT\\s*\\||INTEREST_APPLIED) negative lookahead and startswith guards,
+    preventing any double-counting.
+
+    Account name: from the date-header line, e.g. "16 May, 2026  Olusola Micheal Kehinde".
     """
     buckets: dict = {}
 
-    # ── Normalise split dates: "2026-\\nMM-DD" → "2026-MM-DD|" ──────────
+    # Normalise split dates: "2026-\nMM-DD" → "2026-MM-DD|"
     text_n = re.sub(r'(20\d{2})-\n(\d{2}-\d{2})', r'\1-\2|', full_text)
 
-    # ── Account name ──────────────────────────────────────────────────────
-    # Appears on a line like: "16 May, 2026  Olusola Micheal Kehinde"
+    # Account name — [ ]+ (spaces only) prevents crossing the newline into
+    # the following "Product Name: Renmoney Account" line.
     account_name = "Unknown"
-    # Use [ ]+ (spaces only, not \s+) so the capture stops at the line break
-    # and does not absorb the "Product Name: ..." line that follows.
     m_name = re.search(
         r'\d{1,2}\s+\w+,?\s+\d{4}\s+([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+)+)',
         full_text,
@@ -2870,28 +2871,77 @@ def parse_renmoney(full_text: str) -> tuple[dict, str]:
     if m_name:
         account_name = m_name.group(1).strip()
 
-    # ── CREDIT | entries ──────────────────────────────────────────────────
-    # Format after normalisation:
-    #   YYYY-MM-DD|CREDIT | <narration> - <currency_symbol> <amount>
-    # The dash before the currency symbol may be immediately before ₦ or ?
-    # (ASCII 0x3F — PyPDF2 substitution for ₦).  [^\\d\\r\\n]{0,5} skips it.
-    CREDIT_RE = re.compile(
+    # ── Pass 1: CREDIT | entries (DOTALL handles any multi-line split) ────────
+    # Format: YYYY-MM-DD|CREDIT | <narration> - <₦/?><amount>
+    _CREDIT_RE = re.compile(
         r'(20\d{2}-\d{2}-\d{2})\|CREDIT\s*\|(.+?)-[^\d\r\n]{0,5}[\r\n]*([\d,]+\.\d{2})',
         re.DOTALL,
     )
-    for m in CREDIT_RE.finditer(text_n):
-        date_str  = m.group(1)            # YYYY-MM-DD
+    for m in _CREDIT_RE.finditer(text_n):
+        date_str  = m.group(1)
         narration = m.group(2).strip()
         amount    = float(m.group(3).replace(',', ''))
         ym = f"{date_str[:4]}-{date_str[5:7]}"
         add_credit(buckets, ym, amount, narration, account_name)
 
-    # ── INTEREST_APPLIED entries ──────────────────────────────────────────
-    # Format: YYYY-MM-DD|INTEREST_APPLIED - <currency_symbol><amount>
-    INTEREST_RE = re.compile(
+    # ── Pass 2: General inline credits ───────────────────────────────────────
+    # Matches: DATE|narration - ₦amount₁ ₦amount₂  (all on one line)
+    # TWO amounts after "- [₦?]" = credit; debit lines have only ONE amount
+    # after the dash (just the balance), so they never match.
+    _INLINE_CR = re.compile(
+        r'^(20\d{2})-(\d{2})-\d{2}\|'
+        r'(?!CREDIT\s*\||INTEREST_APPLIED)'
+        r'(.+?)'
+        r'\s*-\s*[₦?]\s*([\d,]+\.\d{2})'
+        r'\s+[₦?]?\s*[\d,]+\.\d{2}\s*$',
+        re.MULTILINE,
+    )
+    for m in _INLINE_CR.finditer(text_n):
+        ym     = f"{m.group(1)}-{m.group(2)}"
+        narr   = m.group(3).strip()
+        amount = float(m.group(4).replace(',', ''))
+        add_credit(buckets, ym, amount, narr, account_name)
+
+    # ── Pass 3: General split credits ────────────────────────────────────────
+    # Credit split: date-anchored line ends with "-[₦?]" (dash then currency)
+    # Next non-empty line: "<amount>[₦?]"
+    # Debit split ends with just "[₦?]" (no preceding dash) → no match here.
+    _DATE_START = re.compile(r'^(20\d{2})-(\d{2})-\d{2}\|')
+    _SPLIT_END  = re.compile(r'-\s*[₦?]\s*$')
+    _SPLIT_AMT  = re.compile(r'^([\d,]+\.\d{2})[₦?]')
+
+    lines = text_n.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        dm = _DATE_START.match(line)
+        if dm:
+            rest = line[dm.end():]
+            if (not rest.startswith('CREDIT ')
+                    and not rest.startswith('INTEREST_APPLIED')):
+                se = _SPLIT_END.search(rest)
+                if se:
+                    # Find next non-empty line
+                    j = i + 1
+                    while j < len(lines) and not lines[j].strip():
+                        j += 1
+                    if j < len(lines):
+                        am = _SPLIT_AMT.match(lines[j].strip())
+                        if am:
+                            ym     = f"{dm.group(1)}-{dm.group(2)}"
+                            amount = float(am.group(1).replace(',', ''))
+                            narr   = rest[:se.start()].strip()
+                            add_credit(buckets, ym, amount, narr, account_name)
+                            i = j + 1
+                            continue
+        i += 1
+
+    # ── Pass 4: INTEREST_APPLIED entries ──────────────────────────────────────
+    # Format: YYYY-MM-DD|INTEREST_APPLIED - <₦/?><amount>
+    _INTEREST_RE = re.compile(
         r'(20\d{2}-\d{2}-\d{2})\|INTEREST_APPLIED\s*-\s*[^\d\s]{0,3}\s*([\d,]+\.\d{2})'
     )
-    for m in INTEREST_RE.finditer(text_n):
+    for m in _INTEREST_RE.finditer(text_n):
         date_str = m.group(1)
         amount   = float(m.group(2).replace(',', ''))
         ym = f"{date_str[:4]}-{date_str[5:7]}"
