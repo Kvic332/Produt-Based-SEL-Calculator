@@ -423,7 +423,10 @@ def detect_bank(text: str) -> str:
         return "FairMoney"
 
     # ── OPay legacy ───────────────────────────────────────────────────────
-    if "opay digital" in t or "wallet account" in t or "9payment service" in t:
+    # Guard with mybankstatement: Access Bank narrations can contain
+    # "OPAY DIGITAL SERVICES" as a POS merchant name — must not mismatch.
+    if ("opay digital" in t or "wallet account" in t or "9payment service" in t) \
+            and "mybankstatement" not in t:
         return "OPay"
 
     # ── PalmPay NEW format ────────────────────────────────────────────────
@@ -505,8 +508,18 @@ def detect_bank(text: str) -> str:
     if "sterling bank" in t_hdr or ("sterling bank" in t and "mybankstatement" in t):
         return "Sterling"
 
-    if "mybankstatement" in t or "tran date value date narration" in t:
+    # "tran date value date narration" is the native Zenith column header.
+    # Guard with "mybankstatement not in t": PyPDF2 can tokenise the
+    # mybankStatement portal column header "TranDate ValueDate Narration" with
+    # extra spaces, producing the same lowercase string — that must NOT fire
+    # the Zenith branch.
+    # Plain "mybankstatement" without a named bank → unknown mybankStatement
+    # bank; route to GTBank so parse_gtbank handles it (same parser for all
+    # mybankStatement-portal banks).
+    if "tran date value date narration" in t and "mybankstatement" not in t:
         return "Zenith"
+    if "mybankstatement" in t:
+        return "GTBank"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
         return "Moniepoint"
     if "palmpay" in t:
@@ -543,14 +556,14 @@ def detect_bank(text: str) -> str:
 # ════════════════════════════════════════════════════════════════════════════
 def _extract_account_name(full_text: str) -> str:
     for pat in [
-        r"Account Name\s+([A-Z][A-Z ]{4,})",
-        r"ACCOUNT NAME[:\s]+([A-Z][A-Z ]{4,})",
-        r"Account Name[:\s]+([A-Z][A-Z ]{4,})",
-        r"Name\s+([A-Z][A-Z ]{4,})",
+        r"Account\s*Name\s+([A-Z][A-Z .'\-]{4,})",   # allows hyphens, dots
+        r"ACCOUNT\s*NAME[:\s]+([A-Z][A-Z .'\-]{4,})",
+        r"AccountName\s+([A-Z][A-Z .'\-]{4,})",       # pdfplumber (no space)
+        r"Name\s+([A-Z][A-Z .'\-]{4,})",
     ]:
         m = re.search(pat, full_text, re.I)
         if m:
-            return m.group(1).strip()
+            return m.group(1).strip().rstrip("-").strip()
     return ""
 
 
@@ -1250,18 +1263,34 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
                 DATE_ORDER = "mdy"
                 break
 
-    # ── MDY sanity check: if MDY was triggered by metadata slash-dates but
-    # the actual transaction rows use DASH-separated dates, the slash dates
-    # came from a page-header (e.g. Wema mybankStatement® "5/26/2026") and
-    # must NOT drive transaction parsing.  Wema transaction dates are always
-    # DD-MM-YYYY (dash).  UBA transaction dates are M/D/YYYY (slash) so the
-    # regex below won't match them and MDY is correctly preserved for UBA.
+    # ── MDY detection pass 3: period "DD-Mon-YYYY" consistency ──────────────
+    # Catches statements whose header date is DMY (e.g. "29/05/2026") so pass 2
+    # never fires, yet whose transactions are MDY (e.g. "11-03-2025" = Nov 3).
+    # Logic: extract start month from "Period 01-Nov-2025…", compare to the
+    # first transaction's first numeric field; if they match → MDY.
+    if DATE_ORDER == "dmy":
+        _pm3 = re.search(
+            r'\bPeriod\s+\d{1,2}\s*[-/]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*[-/]\s*(\d{4})',
+            full_text[:2000],
+            re.I,
+        )
+        if _pm3:
+            _pm3_month = MONTH_MAP.get(_pm3.group(1).lower()[:3], 0)
+            _f3 = re.search(r'^(\d{1,2})-\d{1,2}-\d{4}', full_text, re.MULTILINE)
+            if _f3 and _pm3_month and int(_f3.group(1)) == _pm3_month:
+                DATE_ORDER = "mdy"
+
+    # ── MDY sanity check: if MDY was triggered but the first transaction's
+    # leading field is > 12 it MUST be a day (DMY).  This fixes Wema Bank
+    # where the page-header "5/26/2026" triggers pass 2, but transactions are
+    # "26-05-2026" (day 26 first).  Access Bank "11-01-2025" (month 11 first)
+    # is ≤ 12 so MDY is correctly preserved.
     if DATE_ORDER == "mdy":
-        _tx_dash = re.search(
-            r'^\d{1,2}-\d{1,2}-\d{4}\s+\d{1,2}-\d{1,2}-\d{4}',
+        _first_dash_tx = re.search(
+            r'^(\d{1,2})-\d{1,2}-\d{4}\s+\d{1,2}-\d{1,2}-\d{4}',
             full_text, re.MULTILINE,
         )
-        if _tx_dash:
+        if _first_dash_tx and int(_first_dash_tx.group(1)) > 12:
             DATE_ORDER = "dmy"
 
     # Skip lines that ARE page headers — anchored so narrations mentioning
