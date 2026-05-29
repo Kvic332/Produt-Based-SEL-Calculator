@@ -455,10 +455,10 @@ st.markdown(f"""
               border-left:4px solid {_greet_col}">
     <span style="font-size:18px;line-height:1">{_greet.split()[2]}</span>
     <div>
-      <div style="font-size:13px;font-weight:800;color:{_greet_col};letter-spacing:0.5px">
+      <div style="font-size:24px;font-weight:900;color:{_greet_col};letter-spacing:0.5px;line-height:1.2">
         {" ".join(_greet.split()[:2])}
       </div>
-      <div style="font-size:11px;color:#64748b;margin-top:1px">{_greet_sub}</div>
+      <div style="font-size:13px;color:#94a3b8;margin-top:3px;font-weight:600">{_greet_sub}</div>
     </div>
   </div>
 </div>
