@@ -14,7 +14,7 @@ from parser import (
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
-from tracker import track, admin_stats
+from tracker import track, admin_stats, save_history, get_history
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -416,7 +416,8 @@ def required_income_for_loan(target_loan: float, tenor: int,
 # ── Session state init ────────────────────────────────────────────────────────
 for key in ["buckets_a","summary_a","bank_a","name_a",
             "buckets_b","summary_b","bank_b","name_b",
-            "credit_data","rows_a","rows_b","txns_a","txns_b"]:
+            "credit_data","rows_a","rows_b","txns_a","txns_b",
+            "last_calc_params", "batch_results"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -519,6 +520,121 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# BATCH PROCESSING MODE (Feature 7)
+# ════════════════════════════════════════════════════════════════════════════
+with st.expander("⚡  Batch Processing — Assess multiple applicants at once", expanded=False):
+    st.markdown(
+        '<div style="font-size:12px;color:#cbd5e1;margin-bottom:12px;line-height:1.7">'
+        'Upload up to 10 PDF bank statements at once. Each will be parsed and assessed '
+        'using the shared loan parameters below. Results export as a single Excel sheet.</div>',
+        unsafe_allow_html=True,
+    )
+    _bp_files = st.file_uploader(
+        "Upload statements (PDF or Excel)",
+        type=["pdf","xlsx","xls"],
+        accept_multiple_files=True,
+        key="batch_upload",
+    )
+    _bp_pw = st.text_input(
+        "Shared PDF Password (leave blank if none)", type="password", key="batch_pw"
+    )
+    _bc1, _bc2, _bc3 = st.columns(3)
+    with _bc1: _bp_loc  = st.selectbox("Location",     ["Lagos","Outside Lagos","Expansion"], key="batch_loc")
+    with _bc2: _bp_prod = st.selectbox("Product Type", ["NTB","RENEWAL","TOP-UP"],            key="batch_prod")
+    with _bc3: _bp_ten  = st.selectbox("Tenor",        list(range(2, 13)), index=4,           key="batch_tenor")
+
+    if st.button("▶  Run Batch Assessment", key="btn_batch", use_container_width=True):
+        if not _bp_files:
+            st.error("Please upload at least one statement.")
+        else:
+            _bp_rows = []
+            _bp_bar  = st.progress(0, text="Processing…")
+            for _bfi, _bpf in enumerate(_bp_files[:10]):
+                _bp_bar.progress((_bfi) / len(_bp_files), text=f"Processing {_bpf.name}…")
+                try:
+                    _bk, _bsumm, _bbank, _bname, _btxns = parse_transactions(
+                        _bpf.getvalue(), _bp_pw, filename=_bpf.name
+                    )
+                    _brows = monthly_analysis(_bk, _bsumm)
+                    _today_ym_b = datetime.date.today().strftime("%Y-%m")
+                    _b_valid = [r for r in _brows if r["ym"] < _today_ym_b and r["gross"] > 0][-N_MONTHS:]
+                    if _b_valid:
+                        _b_nets   = [r["eligible_income"] for r in _b_valid]
+                        _b_counts = [r["count"] for r in _b_valid]
+                        _b_res    = calculate_eligibility(
+                            nets=_b_nets, counts=_b_counts,
+                            location=_bp_loc, product_type=_bp_prod, tenor=_bp_ten,
+                        )
+                        _b_avg = sum(_b_nets) / len(_b_nets)
+                        _bp_rows.append({
+                            "Name":          _bname or "—",
+                            "Bank":          _bbank or "—",
+                            "Months":        len(_b_valid),
+                            "Avg Income":    round(_b_avg),
+                            "Max Loan":      _b_res.get("max_loan", 0),
+                            "Rate":          f"{(_b_res.get('interest_rate') or 0)*100:.2f}%",
+                            "Tenor":         f"{_bp_ten} mo",
+                            "Repayment":     round(_b_res.get("max_repayment_display", 0)),
+                            "Frequency":     _b_res.get("repayment_frequency", "—"),
+                            "Decision":      "Approved" if _b_res.get("approved") else "Below Min",
+                            "File":          _bpf.name,
+                        })
+                    else:
+                        _bp_rows.append({
+                            "Name": _bname or _bpf.name, "Bank": _bbank or "—",
+                            "Months": 0, "Avg Income": 0, "Max Loan": 0,
+                            "Rate": "—", "Tenor": f"{_bp_ten} mo", "Repayment": 0,
+                            "Frequency": "—", "Decision": "No data", "File": _bpf.name,
+                        })
+                except Exception as _be:
+                    _bp_rows.append({
+                        "Name": _bpf.name, "Bank": "—", "Months": 0, "Avg Income": 0,
+                        "Max Loan": 0, "Rate": "—", "Tenor": f"{_bp_ten} mo",
+                        "Repayment": 0, "Frequency": "—",
+                        "Decision": f"Error: {str(_be)[:40]}", "File": _bpf.name,
+                    })
+            _bp_bar.progress(1.0, text="Done.")
+            st.session_state.batch_results = _bp_rows
+
+    if st.session_state.batch_results:
+        _bdf = pd.DataFrame(st.session_state.batch_results)
+        _approved_ct = sum(1 for r in st.session_state.batch_results if r["Decision"] == "Approved")
+        st.markdown(
+            f'<div style="font-size:11px;color:#64748b;margin:8px 0">'
+            f'<span style="color:#34d399;font-weight:700">{_approved_ct} approved</span>'
+            f' / {len(st.session_state.batch_results)} assessed</div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _bdf.style.apply(
+                lambda col: ["color:#34d399" if v == "Approved" else "color:#f87171" if "Error" in str(v) else "" for v in col],
+                subset=["Decision"],
+            ),
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Avg Income":  st.column_config.NumberColumn("Avg Income", format="₦%d"),
+                "Max Loan":    st.column_config.NumberColumn("Max Loan",   format="₦%d"),
+                "Repayment":   st.column_config.NumberColumn("Repayment",  format="₦%d"),
+            },
+        )
+        # Excel export
+        import io as _bio
+        _bxl = _bio.BytesIO()
+        _bdf.to_excel(_bxl, index=False, sheet_name="Batch Results")
+        _bxl.seek(0)
+        st.download_button(
+            "⬇  Download Batch Results (Excel)",
+            _bxl.getvalue(),
+            file_name=f"SEL_Batch_{datetime.date.today():%Y%m%d}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_batch",
+            use_container_width=True,
+        )
+
+st.markdown("---")
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 00 — FIRST BANK STATEMENT
@@ -1201,6 +1317,98 @@ if st.session_state.rows_a and st.session_state.rows_b:
                  f'ℹ {len(all_months)} months shown — all months from either statement are included.</div>')
         st.markdown(html, unsafe_allow_html=True)
 
+# ── Feature 6: Multi-Account Transfer Deduplication ──────────────────────────
+if st.session_state.txns_a and st.session_state.txns_b:
+    import re as _re_dd
+    from collections import defaultdict as _dd_dd
+
+    _name_a_lc = (st.session_state.name_a or "").lower().strip()
+    _name_b_lc = (st.session_state.name_b or "").lower().strip()
+
+    # Build (ym, rounded_amount) lookup for each statement
+    def _dd_key(amount: float) -> int:
+        return round(amount / 1000) * 1000   # bucket to nearest ₦1,000
+
+    _grp_a: dict = _dd_dd(list)
+    for _t in st.session_state.txns_a:
+        _grp_a[(_t["ym"], _dd_key(_t["amount"]))].append(_t)
+
+    _grp_b: dict = _dd_dd(list)
+    for _t in st.session_state.txns_b:
+        _grp_b[(_t["ym"], _dd_key(_t["amount"]))].append(_t)
+
+    # Find overlapping keys (same month + ~same amount in both statements)
+    _overlap_keys = set(_grp_a) & set(_grp_b)
+
+    _dedup_flags = []
+    for _ok in sorted(_overlap_keys):
+        _ym, _amt = _ok
+        for _ta in _grp_a[_ok]:
+            for _tb in _grp_b[_ok]:
+                _narr_a = _ta["narration"].lower()
+                _narr_b = _tb["narration"].lower()
+                # Stronger signal: cross-narration name match
+                _cross = (
+                    (_name_b_lc and len(_name_b_lc) > 3 and _name_b_lc in _narr_a) or
+                    (_name_a_lc and len(_name_a_lc) > 3 and _name_a_lc in _narr_b)
+                )
+                # Weaker signal: transfer keywords on both sides
+                _kw_a = any(k in _narr_a for k in ["transfer","trf","self","own"])
+                _kw_b = any(k in _narr_b for k in ["transfer","trf","self","own"])
+                if _cross or (_kw_a and _kw_b):
+                    _dedup_flags.append({
+                        "ym": _ym, "amount": _ta["amount"],
+                        "narr_a": _ta["narration"][:50],
+                        "narr_b": _tb["narration"][:50],
+                        "confidence": "High" if _cross else "Medium",
+                    })
+
+    if _dedup_flags:
+        _dd_total = sum(d["amount"] for d in _dedup_flags)
+        _dd_rows_html = "".join(
+            f'<tr>'
+            f'<td style="color:#10b981">{d["ym"]}</td>'
+            f'<td style="color:#f87171;text-align:right;font-weight:700">{money(d["amount"])}</td>'
+            f'<td style="color:#94a3b8;font-size:11px">{d["narr_a"]}</td>'
+            f'<td style="color:#f59e0b;font-size:11px">{d["narr_b"]}</td>'
+            f'<td style="text-align:center"><span style="background:rgba({"248,113,113" if d["confidence"]=="High" else "251,146,60"},.12);'
+            f'border-radius:3px;padding:1px 6px;font-size:9px;color:{"#f87171" if d["confidence"]=="High" else "#fb923c"}">'
+            f'{d["confidence"]}</span></td>'
+            f'</tr>'
+            for d in _dedup_flags[:20]
+        )
+        st.markdown("---")
+        st.markdown(
+            f'<div style="font-size:10px;letter-spacing:2px;color:#f87171;'
+            f'text-transform:uppercase;margin-bottom:8px">⚠ Potential Inter-Account Transfers Detected</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:10px;line-height:1.7">'
+            f'<span style="color:#f87171;font-weight:700">{len(_dedup_flags)} credit(s)</span> '
+            f'totalling <span style="color:#f87171;font-weight:700">{money(_dd_total)}</span> '
+            f'may be the same money appearing in both statements. '
+            f'Review and manually deduct from the inflow grid if confirmed.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<table class="preview-table">'
+            f'<thead><tr>'
+            f'<th style="text-align:left">Month</th>'
+            f'<th style="text-align:right;color:#f87171">Amount</th>'
+            f'<th style="text-align:left">Stmt 1 Narration</th>'
+            f'<th style="text-align:left;color:#f59e0b">Stmt 2 Narration</th>'
+            f'<th style="text-align:center">Confidence</th>'
+            f'</tr></thead><tbody>{_dd_rows_html}</tbody></table>',
+            unsafe_allow_html=True,
+        )
+        if len(_dedup_flags) > 20:
+            st.markdown(
+                f'<div style="font-size:10px;color:#64748b;margin-top:4px">'
+                f'… and {len(_dedup_flags)-20} more. Use Transaction Search above to investigate.</div>',
+                unsafe_allow_html=True,
+            )
+
 # ── Transaction Search — Statement B ─────────────────────────────────────────
 if st.session_state.txns_b:
     st.markdown(
@@ -1604,6 +1812,65 @@ if calc_btn:
               product=prod_type,
               total_net=round(result.get("total_net", 0), 2))
 
+        # ── Save params for persistent What-If panel ──────────────────────
+        st.session_state.last_calc_params = {
+            "nets": nets, "counts": counts, "location": location,
+            "prod_type": prod_type, "other_loans": other_loans,
+            "manual_rate": manual_rate, "result": result,
+        }
+        st.session_state["_wi_tenor"] = tenor
+        st.session_state["_wi_other"] = float(other_loans)
+
+        # ── Save + show Applicant History (Feature 9) ─────────────────────
+        _hist_name = _report_name or st.session_state.name_a or ""
+        _hist_bank = _report_bank or st.session_state.bank_a or ""
+        _avg_ei    = (result.get("applicable_turnover") or
+                      sum(nets) / len(nets) if nets else 0)
+        save_history(
+            account_name = _hist_name,
+            bank         = _hist_bank,
+            avg_income   = round(_avg_ei),
+            max_loan     = result.get("max_loan", 0),
+            tenor        = tenor,
+            location     = location,
+            product      = prod_type,
+            approved     = result.get("approved", False),
+            session      = _SID,
+        )
+        if _hist_name:
+            _past = get_history(_hist_name)
+            # Skip the very first entry — that's the one we just saved
+            _past_prev = [p for p in _past if p["ts"] != _past[0]["ts"]] if _past else []
+            if _past_prev:
+                _pp = _past_prev[0]  # most recent PREVIOUS assessment
+                _prev_avg = _pp["avg_income"]
+                _prev_loan = _pp["max_loan"]
+                _chg_inc  = ((_avg_ei - _prev_avg) / _prev_avg * 100) if _prev_avg else 0
+                _chg_loan = ((_result_loan := result.get("max_loan", 0)) - _prev_loan)
+                _hist_col = "#34d399" if _chg_inc >= 0 else "#f87171"
+                _hist_dt  = _pp["ts"][:10]
+                st.markdown(
+                    f'<div style="margin:6px 0 14px;padding:10px 14px;'
+                    f'background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);'
+                    f'border-left:4px solid #f59e0b;border-radius:4px;font-size:12px">'
+                    f'<span style="color:#f59e0b;font-weight:700;letter-spacing:1px">📋 RETURNING APPLICANT</span>'
+                    f'&nbsp;&nbsp;<span style="color:#64748b;font-size:10px">Last assessed {_hist_dt} '
+                    f'via {_pp["bank"]} | {_pp["location"]} | {_pp["product"]}</span><br>'
+                    f'<span style="color:#94a3b8">Avg income: </span>'
+                    f'<span style="color:#e2e8f0;font-weight:700">{money(_prev_avg)}</span>'
+                    f'&nbsp;→&nbsp;'
+                    f'<span style="color:{_hist_col};font-weight:700">{money(_avg_ei)}</span>'
+                    f'&nbsp;<span style="color:{_hist_col}">({_chg_inc:+.1f}%)</span>'
+                    f'&nbsp;&nbsp;|&nbsp;&nbsp;'
+                    f'<span style="color:#94a3b8">Max loan: </span>'
+                    f'<span style="color:#e2e8f0;font-weight:700">{money(_prev_loan)}</span>'
+                    f'&nbsp;→&nbsp;'
+                    f'<span style="color:{"#34d399" if _chg_loan >= 0 else "#f87171"};font-weight:700">'
+                    f'{money(result.get("max_loan", 0))}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
         st.markdown("---")
         st.markdown('<div class="sel-section-title">04 — Results</div>', unsafe_allow_html=True)
 
@@ -1887,6 +2154,137 @@ if calc_btn:
         ):
             track("download", session=_SID,
                   bank=st.session_state.bank_a or "", fmt="pdf")
+
+        # ── Feature 8: WhatsApp / Email Share ────────────────────────────
+        import urllib.parse as _uparse
+        _share_name   = _report_name or "Applicant"
+        _share_bank   = _report_bank or "Bank"
+        _share_dec    = "✅ APPROVED" if result.get("approved") else "❌ BELOW MINIMUM"
+        _share_loan   = money(result.get("max_loan", 0))
+        _share_rate   = pct(result.get("interest_rate"))
+        _share_pmt    = money(result.get("max_repayment_display", 0))
+        _share_freq   = result.get("repayment_frequency", "Monthly")
+        _share_tenor  = result.get("tenor", "—")
+        _share_msg = (
+            f"SEL Loan Assessment\n"
+            f"Applicant: {_share_name} ({_share_bank})\n"
+            f"Decision: {_share_dec}\n"
+            f"Max Loan: {_share_loan}\n"
+            f"Rate: {_share_rate}/month\n"
+            f"Repayment: {_share_pmt}/{_share_freq.lower()[:-2] if _share_freq.endswith('ly') else _share_freq}\n"
+            f"Tenor: {_share_tenor} months\n"
+            f"Generated: {datetime.date.today().strftime('%d %b %Y')}"
+        )
+        _wa_url    = "https://wa.me/?text=" + _uparse.quote(_share_msg)
+        _mail_url  = "mailto:?subject=" + _uparse.quote(f"SEL Result — {_share_name}") + "&body=" + _uparse.quote(_share_msg)
+
+        st.markdown("---")
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:2px;color:#10b981;'
+            'text-transform:uppercase;margin-bottom:10px">Share Result</div>',
+            unsafe_allow_html=True,
+        )
+        _sh1, _sh2 = st.columns(2)
+        with _sh1:
+            st.markdown(
+                f'<a href="{_wa_url}" target="_blank" style="display:block;text-align:center;'
+                f'padding:10px;background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);'
+                f'border-radius:4px;color:#34d399;font-size:12px;font-weight:700;'
+                f'text-decoration:none;letter-spacing:1px">'
+                f'📱  Share via WhatsApp</a>',
+                unsafe_allow_html=True,
+            )
+        with _sh2:
+            st.markdown(
+                f'<a href="{_mail_url}" target="_blank" style="display:block;text-align:center;'
+                f'padding:10px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.25);'
+                f'border-radius:4px;color:#f59e0b;font-size:12px;font-weight:700;'
+                f'text-decoration:none;letter-spacing:1px">'
+                f'✉  Share via Email</a>',
+                unsafe_allow_html=True,
+            )
+        with st.expander("📋  Copy message text", expanded=False):
+            st.code(_share_msg, language=None)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FEATURE 5 — PERSISTENT WHAT-IF SCENARIOS PANEL
+# Renders after any completed calculation, persists between rerenders.
+# ════════════════════════════════════════════════════════════════════════════
+if st.session_state.last_calc_params:
+    _lp = st.session_state.last_calc_params
+    _lp_result = _lp["result"]
+
+    st.markdown("---")
+    with st.expander("🔀  What-If Scenarios — adjust tenor or obligations instantly", expanded=False):
+        st.markdown(
+            '<div style="font-size:12px;color:#cbd5e1;margin-bottom:12px;line-height:1.7">'
+            'Drag the sliders to instantly see how the result changes without re-uploading.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        _wic1, _wic2 = st.columns(2)
+        with _wic1:
+            _wi_tenor = st.slider(
+                "Tenor (months)",
+                min_value=2, max_value=12,
+                value=int(st.session_state.get("_wi_tenor", _lp["prod_type"] and 6)),
+                key="_wi_tenor_sl",
+            )
+        with _wic2:
+            _wi_other = st.slider(
+                "Other monthly loan obligations (₦)",
+                min_value=0,
+                max_value=int(max(_lp["other_loans"] * 3, 200_000)),
+                step=5_000,
+                value=int(st.session_state.get("_wi_other", _lp["other_loans"])),
+                key="_wi_other_sl",
+                format="₦%d",
+            )
+
+        _wi_res = calculate_eligibility(
+            nets    = _lp["nets"],
+            counts  = _lp["counts"],
+            location     = _lp["location"],
+            product_type = _lp["prod_type"],
+            tenor        = _wi_tenor,
+            other_loans  = _wi_other,
+            manual_rate_percent = _lp["manual_rate"] if _lp["manual_rate"] > 0 else None,
+        )
+
+        # Side-by-side comparison
+        _curr = _lp_result
+        _chg_loan = _wi_res.get("max_loan", 0) - _curr.get("max_loan", 0)
+        _chg_col  = "#34d399" if _chg_loan >= 0 else "#f87171"
+
+        st.markdown(
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px">'
+            # Current
+            f'<div style="padding:14px;background:rgba(0,0,0,.2);border:1px solid #1a3d2b;border-radius:4px">'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:8px">Current</div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Tenor: <span style="color:#e2e8f0">{_curr.get("tenor")} mo</span></div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Max Loan: <span style="color:#10b981;font-weight:700">{money(_curr.get("max_loan",0))}</span></div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Repayment: <span style="color:#e2e8f0">{money(_curr.get("max_repayment_display",0))}/{_curr.get("repayment_frequency","mo").lower()[:2]}</span></div>'
+            f'<div style="font-size:11px;color:#94a3b8">Rate: <span style="color:#fbbf24">{pct(_curr.get("interest_rate"))}</span></div>'
+            f'</div>'
+            # What-If
+            f'<div style="padding:14px;background:rgba(16,185,129,.04);border:1px solid rgba(16,185,129,.25);border-radius:4px">'
+            f'<div style="font-size:9px;letter-spacing:2px;color:#10b981;text-transform:uppercase;margin-bottom:8px">What-If ({_wi_tenor} mo, ₦{_wi_other:,.0f} obligations)</div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Tenor: <span style="color:#e2e8f0">{_wi_tenor} mo</span></div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Max Loan: <span style="color:{_chg_col};font-weight:700">{money(_wi_res.get("max_loan",0))}</span>'
+            f'&nbsp;<span style="font-size:10px;color:{_chg_col}">({_chg_loan:+,.0f})</span></div>'
+            f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Repayment: <span style="color:#e2e8f0">{money(_wi_res.get("max_repayment_display",0))}/{_wi_res.get("repayment_frequency","mo").lower()[:2]}</span></div>'
+            f'<div style="font-size:11px;color:#94a3b8">Rate: <span style="color:#fbbf24">{pct(_wi_res.get("interest_rate"))}</span></div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if not _wi_res.get("approved"):
+            st.markdown(
+                '<div style="margin-top:8px;font-size:11px;color:#f87171">'
+                '⚠ This scenario falls below the product minimum — loan would not be approved.</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════

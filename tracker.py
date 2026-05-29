@@ -50,6 +50,22 @@ def _init() -> None:
             CREATE INDEX IF NOT EXISTS ix_ev  ON events(event);
             CREATE INDEX IF NOT EXISTS ix_ts  ON events(ts);
             CREATE INDEX IF NOT EXISTS ix_ses ON events(session);
+
+            CREATE TABLE IF NOT EXISTS history (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+                session      TEXT DEFAULT '',
+                account_name TEXT DEFAULT '',
+                bank         TEXT DEFAULT '',
+                avg_income   REAL DEFAULT 0,
+                max_loan     REAL DEFAULT 0,
+                tenor        INTEGER DEFAULT 0,
+                location     TEXT DEFAULT '',
+                product      TEXT DEFAULT '',
+                approved     INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS ix_hist_name ON history(account_name);
+            CREATE INDEX IF NOT EXISTS ix_hist_ts   ON history(ts);
             """)
 
 
@@ -71,6 +87,47 @@ def track(
                 "VALUES (?, ?, ?, ?, ?)",
                 (session, event, bank, filename, json.dumps(kwargs, default=str)),
             )
+
+
+# ── Applicant history API ─────────────────────────────────────────────────────
+def save_history(
+    account_name: str,
+    bank: str,
+    avg_income: float,
+    max_loan: float,
+    tenor: int,
+    location: str,
+    product: str,
+    approved: bool,
+    session: str = "",
+) -> None:
+    """Save one assessment to the history table. Never raises."""
+    with suppress(Exception):
+        _init()
+        with _cx() as c:
+            c.execute(
+                "INSERT INTO history "
+                "(session, account_name, bank, avg_income, max_loan, tenor, location, product, approved) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (session, account_name, bank, avg_income, max_loan,
+                 tenor, location, product, int(approved)),
+            )
+
+
+def get_history(account_name: str) -> list[dict]:
+    """Return past assessments for the same account name, newest first."""
+    try:
+        _init()
+        with _cx() as c:
+            rows = c.execute(
+                "SELECT ts, bank, avg_income, max_loan, tenor, location, product, approved "
+                "FROM history WHERE lower(trim(account_name)) = lower(trim(?)) "
+                "ORDER BY ts DESC LIMIT 10",
+                (account_name,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
 
 
 # ── Public read API (admin only) ──────────────────────────────────────────────
