@@ -441,17 +441,25 @@ else:                    _greet, _greet_col, _greet_sub = "Working late 🌙",  
 
 st.markdown(f"""
 <div style="border-bottom:1px solid #1a3d2b;padding-bottom:24px;margin-bottom:32px">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
-    <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
-    <div style="font-size:11px;font-weight:700;color:{_greet_col};letter-spacing:1px;
-                padding:4px 12px;background:rgba(255,255,255,.04);border-radius:20px;
-                border:1px solid {_greet_col}44">{_greet} &nbsp;·&nbsp; <span style="font-weight:400;color:#64748b">{_greet_sub}</span></div>
-  </div>
+  <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
   <h1 style="font-family:DM Serif Display,serif;font-size:clamp(28px,4vw,44px);color:#fff;line-height:1.1">
     Loan <em style="color:#10b981;font-style:italic">Eligibility</em><br>Calculator
   </h1>
   <div style="font-size:13px;color:#cbd5e1;margin-top:6px;font-weight:700;letter-spacing:0.5px">
     All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection
+  </div>
+  <div style="margin-top:16px;display:inline-flex;align-items:center;gap:10px;
+              padding:8px 18px;border-radius:4px;
+              background:rgba(255,255,255,.04);
+              border:1px solid {_greet_col}55;
+              border-left:4px solid {_greet_col}">
+    <span style="font-size:18px;line-height:1">{_greet.split()[2]}</span>
+    <div>
+      <div style="font-size:13px;font-weight:800;color:{_greet_col};letter-spacing:0.5px">
+        {" ".join(_greet.split()[:2])}
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:1px">{_greet_sub}</div>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
