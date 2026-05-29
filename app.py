@@ -426,13 +426,27 @@ if "sel_session_id" not in st.session_state:
     st.session_state.sel_session_id = str(uuid.uuid4())[:12]
 _SID = st.session_state.sel_session_id
 
+if "assessment_count" not in st.session_state:
+    st.session_state.assessment_count = 0
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ════════════════════════════════════════════════════════════════════════════
-st.markdown("""
+_now_h = datetime.datetime.now().hour
+if   5  <= _now_h < 12: _greet, _greet_col, _greet_sub = "Good morning ☀️",  "#34d399", "Ready for a productive day of assessments."
+elif 12 <= _now_h < 17: _greet, _greet_col, _greet_sub = "Good afternoon 🌤", "#fbbf24", "Keep the momentum going."
+elif 17 <= _now_h < 21: _greet, _greet_col, _greet_sub = "Good evening 🌆",   "#f59e0b", "Wrapping up for the day?"
+else:                    _greet, _greet_col, _greet_sub = "Working late 🌙",   "#a78bfa", "The dedication doesn't go unnoticed."
+
+st.markdown(f"""
 <div style="border-bottom:1px solid #1a3d2b;padding-bottom:24px;margin-bottom:32px">
-  <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+    <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
+    <div style="font-size:11px;font-weight:700;color:{_greet_col};letter-spacing:1px;
+                padding:4px 12px;background:rgba(255,255,255,.04);border-radius:20px;
+                border:1px solid {_greet_col}44">{_greet} &nbsp;·&nbsp; <span style="font-weight:400;color:#64748b">{_greet_sub}</span></div>
+  </div>
   <h1 style="font-family:DM Serif Display,serif;font-size:clamp(28px,4vw,44px);color:#fff;line-height:1.1">
     Loan <em style="color:#10b981;font-style:italic">Eligibility</em><br>Calculator
   </h1>
@@ -451,6 +465,34 @@ _components.html("""
   var p = window.parent;
   if (p.__kvicBadgeInit) return;
   p.__kvicBadgeInit = true;
+  p.__selConfetti = function(loanAmt) {
+    /* CSS confetti injected into parent page */
+    var old = p.document.getElementById('sel-confetti-wrap');
+    if (old) old.remove();
+    var wrap = p.document.createElement('div');
+    wrap.id  = 'sel-confetti-wrap';
+    wrap.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99998;overflow:hidden';
+    var colors = ['#10b981','#34d399','#fbbf24','#f59e0b','#a78bfa','#fb923c','#f87171'];
+    if (!p.document.getElementById('sel-confetti-kf')) {
+      var sty = p.document.createElement('style');
+      sty.id  = 'sel-confetti-kf';
+      sty.textContent = '@keyframes selFall{0%{transform:translateY(-30px) rotate(0deg);opacity:1}100%{transform:translateY(105vh) rotate(800deg);opacity:0}}';
+      p.document.head.appendChild(sty);
+    }
+    for (var i = 0; i < 100; i++) {
+      var el   = p.document.createElement('div');
+      var clr  = colors[Math.floor(Math.random() * colors.length)];
+      var sz   = Math.random() * 9 + 4;
+      var dur  = (Math.random() * 2.5 + 1.5).toFixed(2);
+      var del  = (Math.random() * 1.8).toFixed(2);
+      var left = (Math.random() * 100).toFixed(1);
+      var round = Math.random() > 0.5 ? '50%' : '2px';
+      el.style.cssText = 'position:absolute;top:-30px;left:' + left + '%;width:' + sz + 'px;height:' + sz + 'px;background:' + clr + ';border-radius:' + round + ';animation:selFall ' + dur + 's ' + del + 's ease-in forwards';
+      wrap.appendChild(el);
+    }
+    p.document.body.appendChild(wrap);
+    setTimeout(function(){ if(wrap.parentNode) wrap.remove(); }, 5000);
+  };
 
   /* Create badge */
   var b = p.document.createElement('div');
@@ -492,6 +534,126 @@ _components.html("""
 
   show();                              /* show on load   */
   setInterval(show, 5 * 60 * 1000);   /* repeat every 5 min */
+})();
+</script>
+""", height=0)
+
+
+# ── Motivational quote toast — shows every 30 min via localStorage ────────────
+_components.html("""
+<script>
+(function(){
+  var p = window.parent;
+  if (p.__selQuoteInit) return;
+  p.__selQuoteInit = true;
+
+  var QUOTES = [
+    {q:"Risk comes from not knowing what you are doing.",                          a:"Warren Buffett"},
+    {q:"An investment in knowledge pays the best interest.",                       a:"Benjamin Franklin"},
+    {q:"The stock market transfers money from the impatient to the patient.",      a:"Warren Buffett"},
+    {q:"Financial freedom is available to those who learn about it and work for it.", a:"Robert Kiyosaki"},
+    {q:"Do not save what is left after spending — spend what is left after saving.", a:"Warren Buffett"},
+    {q:"Every naira lent wisely builds a stronger Nigeria.",                       a:"SEL Proverb"},
+    {q:"Credit is not given. It is earned through trust and consistency.",         a:"SEL Proverb"},
+    {q:"The goal of a good credit officer is not to say no — it is to find the right yes.", a:"SEL Proverb"},
+    {q:"Precision in underwriting protects both lender and borrower.",             a:"SEL Proverb"},
+    {q:"Data tells the story. Your judgment writes the ending.",                   a:"SEL Proverb"},
+    {q:"Diligence is the mother of good fortune.",                                 a:"Miguel de Cervantes"},
+    {q:"Success comes to those too busy to be looking for it.",                    a:"Henry David Thoreau"},
+    {q:"Small daily improvements are the key to staggering long-term results.",    a:"Robin Sharma"},
+    {q:"Your income is determined by how many people you serve and how well.",     a:"Bob Burg"},
+    {q:"Every loan decision shapes a family's future. Make it count.",             a:"SEL Proverb"},
+    {q:"Hard work beats talent when talent does not work hard.",                   a:"Tim Notke"},
+    {q:"Price is what you pay. Value is what you get.",                            a:"Warren Buffett"},
+    {q:"Be fearful when others are greedy, and greedy when others are fearful.",   a:"Warren Buffett"},
+    {q:"In credit, character is the first C for a reason.",                        a:"SEL Proverb"},
+    {q:"The secret of getting ahead is getting started.",                          a:"Mark Twain"},
+    {q:"Africa is not poor. It is poorly managed.",                                a:"Fela Durotoye"},
+    {q:"Formal education will make you a living. Self-education will make you a fortune.", a:"Jim Rohn"},
+    {q:"Wealth is not about having a lot of money — it is about having a lot of options.", a:"Chris Rock"},
+    {q:"Do not wait to buy real estate. Buy real estate and wait.",                a:"Will Rogers"},
+    {q:"The more you learn, the more you earn.",                                   a:"Warren Buffett"},
+    {q:"It always seems impossible until it is done.",                             a:"Nelson Mandela"},
+    {q:"A good decision is based on knowledge, not on numbers.",                   a:"Plato"},
+    {q:"The best time to assess a loan was yesterday. The second best time is now.", a:"SEL Proverb"},
+    {q:"Opportunities do not go away. They pass to someone else.",                 a:"SEL Proverb"},
+    {q:"Champions keep playing until they get it right.",                          a:"Billie Jean King"},
+  ];
+
+  var INTERVAL_MS = 30 * 60 * 1000;  /* 30 minutes */
+  var LS_KEY_TS   = 'sel_quote_ts';
+  var LS_KEY_IDX  = 'sel_quote_idx';
+
+  function getNextIdx(last) {
+    var next = (last + 1 + Math.floor(Math.random() * 3)) % QUOTES.length;
+    return next;
+  }
+
+  function showQuote() {
+    var lastIdx = parseInt(localStorage.getItem(LS_KEY_IDX) || '-1');
+    var idx     = getNextIdx(lastIdx);
+    var q       = QUOTES[idx];
+    localStorage.setItem(LS_KEY_TS,  Date.now().toString());
+    localStorage.setItem(LS_KEY_IDX, idx.toString());
+
+    var old = p.document.getElementById('sel-quote-toast');
+    if (old) old.remove();
+
+    var toast = p.document.createElement('div');
+    toast.id  = 'sel-quote-toast';
+    toast.innerHTML =
+      '<div style="font-size:9px;letter-spacing:3px;color:#10b981;text-transform:uppercase;margin-bottom:6px">✦ Thought for the moment</div>' +
+      '<div style="font-size:13px;color:#e2e8f0;font-style:italic;line-height:1.6;margin-bottom:6px">"' + q.q + '"</div>' +
+      '<div style="font-size:10px;color:#64748b;text-align:right">— ' + q.a + '</div>' +
+      '<div id="sel-qt-close" style="position:absolute;top:8px;right:10px;cursor:pointer;color:#64748b;font-size:14px;line-height:1">✕</div>' +
+      '<div style="position:absolute;bottom:0;left:0;height:2px;background:#10b981;border-radius:0 0 0 6px;animation:qtBar 7s linear forwards" id="sel-qt-bar"></div>';
+
+    toast.style.cssText = [
+      'position:fixed','bottom:88px','left:24px','max-width:320px',
+      'background:#0f1a15','border:1px solid #1a3d2b','border-left:4px solid #10b981',
+      'border-radius:6px','padding:14px 18px 18px 14px',
+      'font-family:"Space Mono",monospace','box-shadow:0 8px 32px rgba(16,185,129,.15)',
+      'z-index:99997','opacity:0','transform:translateY(20px)',
+      'transition:opacity .5s ease,transform .5s ease',
+    ].join(';');
+
+    if (!p.document.getElementById('sel-qt-style')) {
+      var sty = p.document.createElement('style');
+      sty.id  = 'sel-qt-style';
+      sty.textContent = '@keyframes qtBar{0%{width:100%}100%{width:0%}}';
+      p.document.head.appendChild(sty);
+    }
+
+    p.document.body.appendChild(toast);
+    setTimeout(function(){ toast.style.opacity='1'; toast.style.transform='translateY(0)'; }, 80);
+
+    var autoHide = setTimeout(function(){ hideToast(toast); }, 7000);
+
+    p.document.getElementById('sel-qt-close').addEventListener('click', function(){
+      clearTimeout(autoHide);
+      hideToast(toast);
+    });
+  }
+
+  function hideToast(el) {
+    if (!el) return;
+    el.style.opacity='0'; el.style.transform='translateY(20px)';
+    setTimeout(function(){ if(el.parentNode) el.remove(); }, 500);
+  }
+
+  /* Show on load if 30 min have elapsed (or first time) */
+  var lastTs = parseInt(localStorage.getItem(LS_KEY_TS) || '0');
+  if (Date.now() - lastTs >= INTERVAL_MS) {
+    setTimeout(showQuote, 3000);   /* small delay so page settles first */
+  }
+
+  /* Schedule next shows */
+  var remaining = Math.max(0, INTERVAL_MS - (Date.now() - lastTs));
+  setTimeout(function repeat(){
+    showQuote();
+    setTimeout(repeat, INTERVAL_MS);
+  }, remaining || INTERVAL_MS);
+
 })();
 </script>
 """, height=0)
@@ -2058,6 +2220,39 @@ if calc_btn:
 
         banner_cls = "banner-approved" if approved else "banner-rejected"
         st.markdown(f'<div class="{banner_cls}">{decision}</div>', unsafe_allow_html=True)
+
+        # ── Assessment streak badge ───────────────────────────────────────
+        st.session_state.assessment_count += 1
+        _ac = st.session_state.assessment_count
+        _milestone = None
+        if   _ac == 3:               _milestone = ("🔥", "3 assessments today — on a roll!")
+        elif _ac == 5:               _milestone = ("⚡", "5 assessments — you're on fire!")
+        elif _ac == 10:              _milestone = ("💪", "10 assessments — unstoppable!")
+        elif _ac == 15:              _milestone = ("🏆", "15 assessments — legendary effort!")
+        elif _ac > 10 and _ac % 5 == 0: _milestone = ("🚀", f"{_ac} assessments this session — keep pushing!")
+        if _milestone:
+            _ms_icon, _ms_text = _milestone
+            st.markdown(
+                f'<div style="margin-top:8px;padding:8px 14px;'
+                f'background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);'
+                f'border-radius:4px;font-size:12px;color:#f59e0b;'
+                f'text-align:center;font-weight:700;letter-spacing:1px">'
+                f'{_ms_icon} &nbsp;{_ms_text}</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Confetti on approval ──────────────────────────────────────────
+        if approved:
+            _components.html(
+                f'<script>'
+                f'(function(){{ var p=window.parent;'
+                f'if(p.__selConfetti) p.__selConfetti({loan});'
+                f'}})();'
+                f'/* loan={loan} */'   # unique comment forces re-render each assessment
+                f'</script>',
+                height=0,
+            )
+
         st.markdown("")
 
         # Result cards
