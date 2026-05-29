@@ -303,6 +303,18 @@ def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
+def extract_pdf_text_pdfplumber(pdf_bytes: bytes, password: str = "") -> str:
+    """Extract text using pdfplumber — captures pages that PyPDF2 misses.
+    Falls back to PyPDF2 if pdfplumber is not installed.
+    """
+    try:
+        import pdfplumber
+        with pdfplumber.open(BytesIO(pdf_bytes), password=password or "") as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+    except Exception:
+        return extract_pdf_text(pdf_bytes, password)
+
+
 def extract_pdf_text_layout(pdf_bytes: bytes) -> str:
     """
     Extract PDF text preserving spatial column layout using pdftotext -layout.
@@ -1149,6 +1161,63 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
             r'\1\2 \3\4 ',
             full_text,
         )
+
+    # ── Sterling Bank mybankStatement (PyPDF2): M/D/YYYY split over lines ──
+    # PyPDF2 wraps the year: "11/01/202" → newline → "511/03/202" → newline
+    # → "5narration..." (the trailing "5" = last digit of year 2025).
+    # After rejoining: "11/01/2025 11/03/2025 narration..."
+    if re.search(r'^\d{1,2}/\d{1,2}/202$', full_text, re.M):
+        full_text = re.sub(
+            r'(\d{1,2}/\d{1,2}/202)\r?\n(\d)(\d{1,2}/\d{1,2}/202)\r?\n(\d)',
+            r'\1\2 \3\4 ',
+            full_text,
+        )
+
+    # ── Sterling Bank mybankStatement (pdfplumber): partial-year date rows ─
+    # pdfplumber lays each row on ONE line:
+    #   "M/D/202 M/D/202 narration debit credit balance"
+    # with a continuation line starting "D D continuation..." where the
+    # single digits complete the year (e.g. "5 5" → 202+5 = 2025).
+    # Fix: append the year digit to both partial dates; strip "D D " prefix.
+    if re.search(r'^\d{1,2}/\d{1,2}/202\s+\d{1,2}/\d{1,2}/202\s+', full_text, re.M):
+        _PDFPL_DATE = re.compile(
+            r'^(\d{1,2}/\d{1,2}/202)(\s+\d{1,2}/\d{1,2}/202\s+)',
+        )
+        _PDFPL_CONT = re.compile(r'^(\d)\s+(\d)\s*(.*)', re.DOTALL)
+        _lines2, _j2 = full_text.splitlines(), 0
+        _out2: list[str] = []
+        while _j2 < len(_lines2):
+            _dm2 = _PDFPL_DATE.match(_lines2[_j2])
+            if _dm2 and _j2 + 1 < len(_lines2):
+                _nm2 = _PDFPL_CONT.match(_lines2[_j2 + 1])
+                if _nm2 and _nm2.group(1) == _nm2.group(2):
+                    _yd = _nm2.group(1)           # year-end digit ("5")
+                    # Complete every M/D/202 on this line with the year digit
+                    _fixed2 = re.sub(
+                        r'(\d{1,2}/\d{1,2}/202)(?=\s)',
+                        rf'\g<1>{_yd}',
+                        _lines2[_j2],
+                    )
+                    _out2.append(_fixed2)
+                    _cont2 = _nm2.group(3).strip()
+                    if _cont2:
+                        _out2.append(_cont2)
+                    _j2 += 2
+                    continue
+            _out2.append(_lines2[_j2])
+            _j2 += 1
+        full_text = '\n'.join(_out2)
+
+    # ── mybankStatement split column header ───────────────────────────────
+    # Some Sterling/Wema variants render the header as:
+    #   "Tran. date Value\ndateTransaction details Debit Credit Balance"
+    # Rejoin so the in_tx trigger ("Tran. date" + "Debit/Credit") fires.
+    full_text = re.sub(
+        r'(Tran\.\s*date\s+Value)\r?\n(date)',
+        r'\1 \2',
+        full_text,
+        flags=re.I,
+    )
 
     account_name: str = _extract_account_name(full_text)
 
@@ -3176,7 +3245,14 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     elif bank == "Renmoney":
         buckets, account_name = parse_renmoney(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
-        buckets, account_name = parse_gtbank(full_text)
+        # Sterling Bank: PyPDF2 silently drops pages with certain encodings.
+        # pdfplumber captures all pages and matches the stated total exactly.
+        _gtb_text = (
+            extract_pdf_text_pdfplumber(file_bytes, password)
+            if bank == "Sterling"
+            else full_text
+        )
+        buckets, account_name = parse_gtbank(_gtb_text)
     elif bank == "Zenith":
         buckets, account_name = parse_zenith(full_text)
     elif bank == "Zenith_Corporate":
