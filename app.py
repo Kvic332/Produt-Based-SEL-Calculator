@@ -417,7 +417,7 @@ def required_income_for_loan(target_loan: float, tenor: int,
 for key in ["buckets_a","summary_a","bank_a","name_a",
             "buckets_b","summary_b","bank_b","name_b",
             "credit_data","rows_a","rows_b","txns_a","txns_b",
-            "last_calc_params", "batch_results"]:
+            "last_calc_params", "batch_results", "last_share"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -2155,56 +2155,118 @@ if calc_btn:
             track("download", session=_SID,
                   bank=st.session_state.bank_a or "", fmt="pdf")
 
-        # ── Feature 8: WhatsApp / Email Share ────────────────────────────
-        import urllib.parse as _uparse
-        _share_name   = _report_name or "Applicant"
-        _share_bank   = _report_bank or "Bank"
-        _share_dec    = "✅ APPROVED" if result.get("approved") else "❌ BELOW MINIMUM"
-        _share_loan   = money(result.get("max_loan", 0))
-        _share_rate   = pct(result.get("interest_rate"))
-        _share_pmt    = money(result.get("max_repayment_display", 0))
-        _share_freq   = result.get("repayment_frequency", "Monthly")
-        _share_tenor  = result.get("tenor", "—")
-        _share_msg = (
+        # ── Feature 8: WhatsApp / Email Share — PDF via Web Share API ───────
+        import base64 as _b64s, urllib.parse as _uparse
+        _share_name  = _report_name or "Applicant"
+        _share_bank  = _report_bank or "Bank"
+        _share_dec   = "APPROVED" if result.get("approved") else "BELOW MINIMUM"
+        _share_msg   = (
             f"SEL Loan Assessment\n"
             f"Applicant: {_share_name} ({_share_bank})\n"
-            f"Decision: {_share_dec}\n"
-            f"Max Loan: {_share_loan}\n"
-            f"Rate: {_share_rate}/month\n"
-            f"Repayment: {_share_pmt}/{_share_freq.lower()[:-2] if _share_freq.endswith('ly') else _share_freq}\n"
-            f"Tenor: {_share_tenor} months\n"
+            f"Decision: {'✅' if result.get('approved') else '❌'} {_share_dec}\n"
+            f"Max Loan: {money(result.get('max_loan', 0))}\n"
+            f"Rate: {pct(result.get('interest_rate'))}/month\n"
+            f"Repayment: {money(result.get('max_repayment_display', 0))} / "
+            f"{result.get('repayment_frequency', 'Monthly').lower()[:3]}\n"
+            f"Tenor: {result.get('tenor', '—')} months\n"
             f"Generated: {datetime.date.today().strftime('%d %b %Y')}"
         )
-        _wa_url    = "https://wa.me/?text=" + _uparse.quote(_share_msg)
-        _mail_url  = "mailto:?subject=" + _uparse.quote(f"SEL Result — {_share_name}") + "&body=" + _uparse.quote(_share_msg)
+        _share_filename = f"SEL_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf"
+        # Save for persistent render outside calc_btn block
+        st.session_state.last_share = {
+            "pdf_b64":  _b64s.b64encode(_pdf_full).decode(),
+            "filename": _share_filename,
+            "msg":      _share_msg,
+            "name":     _share_name,
+        }
 
-        st.markdown("---")
-        st.markdown(
-            '<div style="font-size:10px;letter-spacing:2px;color:#10b981;'
-            'text-transform:uppercase;margin-bottom:10px">Share Result</div>',
-            unsafe_allow_html=True,
-        )
-        _sh1, _sh2 = st.columns(2)
-        with _sh1:
-            st.markdown(
-                f'<a href="{_wa_url}" target="_blank" style="display:block;text-align:center;'
-                f'padding:10px;background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);'
-                f'border-radius:4px;color:#34d399;font-size:12px;font-weight:700;'
-                f'text-decoration:none;letter-spacing:1px">'
-                f'📱  Share via WhatsApp</a>',
-                unsafe_allow_html=True,
-            )
-        with _sh2:
-            st.markdown(
-                f'<a href="{_mail_url}" target="_blank" style="display:block;text-align:center;'
-                f'padding:10px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.25);'
-                f'border-radius:4px;color:#f59e0b;font-size:12px;font-weight:700;'
-                f'text-decoration:none;letter-spacing:1px">'
-                f'✉  Share via Email</a>',
-                unsafe_allow_html=True,
-            )
-        with st.expander("📋  Copy message text", expanded=False):
-            st.code(_share_msg, language=None)
+
+# ════════════════════════════════════════════════════════════════════════════
+# FEATURE 8 — PERSISTENT SHARE PANEL (Web Share API + PDF)
+# ════════════════════════════════════════════════════════════════════════════
+if st.session_state.last_share:
+    _s = st.session_state.last_share
+    # Escape values safe for JS template literals
+    _js_msg      = _s["msg"].replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    _js_name     = _s["name"].replace("\\", "\\\\").replace("`", "\\`")
+    _js_filename = _s["filename"].replace("`", "\\`")
+    _wa_fallback = "https://wa.me/?text=" + __import__("urllib.parse", fromlist=["quote"]).quote(_s["msg"])
+    _ml_fallback = (
+        "mailto:?subject=" + __import__("urllib.parse", fromlist=["quote"]).quote(f"SEL Result — {_s['name']}")
+        + "&body=" + __import__("urllib.parse", fromlist=["quote"]).quote(_s["msg"])
+    )
+
+    st.markdown("---")
+    st.markdown(
+        '<div style="font-size:10px;letter-spacing:2px;color:#10b981;'
+        'text-transform:uppercase;margin-bottom:10px">Share Result</div>',
+        unsafe_allow_html=True,
+    )
+    # Web Share API component — shares the actual PDF on mobile, falls back to
+    # download + text link on desktop browsers without file-share support.
+    _components.html(f"""
+<style>
+  body{{margin:0;padding:0;background:transparent}}
+  .sh-wrap{{display:flex;gap:12px}}
+  .sh-btn{{
+    flex:1;padding:10px 14px;border-radius:4px;font-size:12px;font-weight:700;
+    cursor:pointer;letter-spacing:1px;font-family:"Space Mono",monospace;
+    transition:opacity .2s;width:100%;
+  }}
+  .sh-btn:hover{{opacity:.75}}
+  .sh-wa  {{background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.35);color:#34d399}}
+  .sh-mail{{background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.30); color:#f59e0b}}
+</style>
+<div class="sh-wrap">
+  <button class="sh-btn sh-wa"   onclick="doShare('wa')">📱  Share via WhatsApp</button>
+  <button class="sh-btn sh-mail" onclick="doShare('email')">✉  Share via Email</button>
+</div>
+<script>
+const PDF_B64  = `{_s["pdf_b64"]}`;
+const FILENAME = `{_js_filename}`;
+const MSG      = `{_js_msg}`;
+const NAME     = `{_js_name}`;
+const WA_FB    = `{_wa_fallback}`;
+const ML_FB    = `{_ml_fallback}`;
+
+function b64toBlob(b64){{
+  const bin=atob(b64), buf=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  return new Blob([buf],{{type:"application/pdf"}});
+}}
+
+function triggerDownload(blob){{
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=FILENAME;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}}
+
+async function doShare(via){{
+  const blob=b64toBlob(PDF_B64);
+  const file=new File([blob],FILENAME,{{type:"application/pdf"}});
+
+  // Attempt native Web Share API (works on iOS/Android, modern desktop Chrome)
+  if(navigator.canShare && navigator.canShare({{files:[file]}})){{
+    try{{
+      await navigator.share({{files:[file],title:"SEL Report — "+NAME,text:MSG}});
+      return;
+    }}catch(e){{ /* cancelled or blocked — fall through */ }}
+  }}
+
+  // Fallback: download PDF + open the channel with text message
+  triggerDownload(blob);
+  setTimeout(()=>{{
+    if(via==="wa") window.open(WA_FB,"_blank");
+    else window.location.href=ML_FB;
+  }},400);
+}}
+</script>
+""", height=52)
+    with st.expander("📋  Copy message text", expanded=False):
+        st.code(_s["msg"], language=None)
 
 
 # ════════════════════════════════════════════════════════════════════════════
