@@ -649,18 +649,11 @@ _components.html("""
     setTimeout(function(){ if(el.parentNode) el.remove(); }, 500);
   }
 
-  /* Show on load if 30 min have elapsed (or first time) */
-  var lastTs = parseInt(localStorage.getItem(LS_KEY_TS) || '0');
-  if (Date.now() - lastTs >= INTERVAL_MS) {
-    setTimeout(showQuote, 3000);   /* small delay so page settles first */
-  }
+  /* Always show on every page load after a short settle delay */
+  setTimeout(showQuote, 3000);
 
-  /* Schedule next shows */
-  var remaining = Math.max(0, INTERVAL_MS - (Date.now() - lastTs));
-  setTimeout(function repeat(){
-    showQuote();
-    setTimeout(repeat, INTERVAL_MS);
-  }, remaining || INTERVAL_MS);
+  /* Then repeat every 5 minutes while the tab is open */
+  setInterval(showQuote, INTERVAL_MS);
 
 })();
 </script>
