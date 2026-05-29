@@ -872,6 +872,90 @@ if st.session_state.rows_a:
             unsafe_allow_html=True,
         )
 
+        # ── Cash Flow Forecast (Feature 10) ──────────────────────────────
+        _fcast_vals = [r["eligible_income"] for r in rows_a if r["eligible_income"] > 0]
+        _n_forecast = 3 if _product == "SEL" else 6
+        if len(_fcast_vals) >= 3:
+            _fn = len(_fcast_vals)
+            _fx_mean = (_fn - 1) / 2
+            _fy_mean = sum(_fcast_vals) / _fn
+            _ss_xy = sum((i - _fx_mean) * (_fcast_vals[i] - _fy_mean) for i in range(_fn))
+            _ss_xx = sum((i - _fx_mean) ** 2 for i in range(_fn))
+            if _ss_xx > 0:
+                _fc_slope = _ss_xy / _ss_xx
+                _fc_icept = _fy_mean - _fc_slope * _fx_mean
+                _y_pred   = [_fc_icept + _fc_slope * i for i in range(_fn)]
+                _ss_res   = sum((_fcast_vals[i] - _y_pred[i]) ** 2 for i in range(_fn))
+                _ss_tot   = sum((_fcast_vals[i] - _fy_mean) ** 2 for i in range(_fn))
+                _fc_r2    = max(0.0, 1 - _ss_res / _ss_tot) if _ss_tot > 0 else 0.0
+                _forecast = [max(_fc_icept + _fc_slope * (_fn + i), 0) for i in range(_n_forecast)]
+
+                # Build future month labels
+                _last_ym  = rows_a[-1]["ym"]
+                _ly, _lm  = int(_last_ym[:4]), int(_last_ym[5:])
+                _fc_labels = []
+                for _fi in range(1, _n_forecast + 1):
+                    _fm, _fy = _lm + _fi, _ly
+                    while _fm > 12: _fm -= 12; _fy += 1
+                    _fc_labels.append(ym_label(f"{_fy}-{str(_fm).zfill(2)}"))
+
+                _slope_pct     = (_fc_slope / _fy_mean * 100) if _fy_mean else 0
+                _fc_reliable   = _fc_r2 >= 0.60
+                _fc_col        = "#34d399" if _fc_slope > 0 else "#f87171" if _fc_slope < 0 else "#64748b"
+                _fc_trend_lbl  = "Growing" if _fc_slope > 0 else "Declining" if _fc_slope < 0 else "Flat"
+                _fc_scale      = max(_forecast) if max(_forecast) > 0 else 1
+                FC_H           = 70
+
+                _fc_bars = ""
+                for _fl, _fv in zip(_fc_labels, _forecast):
+                    _fpx = int(_fv / _fc_scale * FC_H)
+                    _fc_bars += (
+                        f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
+                        f'<div style="font-size:9px;color:{_fc_col};margin-bottom:4px;white-space:nowrap">{_fmt_v(_fv)}</div>'
+                        f'<div style="width:70%;height:{FC_H}px;position:relative">'
+                        f'<div style="position:absolute;bottom:0;left:0;right:0;height:{_fpx}px;'
+                        f'background:{"rgba(52,211,153,.18)" if _fc_slope >= 0 else "rgba(248,113,113,.18)"};'
+                        f'border-top:2px dashed {_fc_col};border-radius:2px 2px 0 0"></div>'
+                        f'</div>'
+                        f'<div style="font-size:9px;color:#4a6a58;margin-top:6px;white-space:nowrap">{_fl}</div>'
+                        f'</div>'
+                    )
+
+                _grow_note = ""
+                if _fc_slope > 0 and _fc_reliable:
+                    _grow_note = (
+                        f'<div style="margin-top:10px;padding:6px 10px;'
+                        f'background:rgba(52,211,153,.06);border-left:2px solid #34d399;'
+                        f'border-radius:3px;font-size:10px;color:#34d399">'
+                        f'✦ Consistent upward trend — projected growth of {_slope_pct:+.1f}%/month '
+                        f'may support higher assessments in future cycles.'
+                        f'</div>'
+                    )
+                elif _fc_slope < 0 and _fc_reliable:
+                    _grow_note = (
+                        f'<div style="margin-top:10px;padding:6px 10px;'
+                        f'background:rgba(248,113,113,.06);border-left:2px solid #f87171;'
+                        f'border-radius:3px;font-size:10px;color:#f87171">'
+                        f'⚠ Declining income trend — consider a shorter tenor to reduce repayment risk.'
+                        f'</div>'
+                    )
+
+                st.markdown(
+                    f'<div style="margin-top:12px;padding:14px;background:rgba(0,0,0,.15);'
+                    f'border:1px dashed {_fc_col}44;border-radius:4px">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">'
+                    f'<div style="font-size:9px;letter-spacing:2px;color:#6b7f74;text-transform:uppercase">'
+                    f'Cash Flow Forecast — Next {_n_forecast} Months</div>'
+                    f'<div style="font-size:10px;color:{_fc_col}">'
+                    f'{_fc_trend_lbl} &nbsp;{_slope_pct:+.1f}%/mo'
+                    f'{"  ·  R²="+str(round(_fc_r2,2)) if _fc_reliable else "  ·  low confidence"}'
+                    f'</div></div>'
+                    f'<div style="display:flex;align-items:flex-end;gap:6px">{_fc_bars}</div>'
+                    f'{_grow_note}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
         # ── Download buttons ──────────────────────────────────────────────
         _pdf_stmt = generate_pdf_report(
             account_name = st.session_state.name_a or "Account Holder",
@@ -1147,6 +1231,100 @@ if st.session_state.txns_a:
             f'<div style="display:flex;flex-wrap:wrap;gap:24px">{"".join(_intel)}</div>',
             unsafe_allow_html=True,
         )
+
+    # ── Feature 12: Statement Integrity Check ────────────────────────────
+    _integrity_flags: list[dict] = []   # {level: "high"|"medium", msg: str}
+
+    # 1. Round-number concentration — natural transactions rarely land on ₦X00,000 exactly
+    _round_100k = sum(1 for t in _txns_i if t["amount"] >= 100_000 and t["amount"] % 100_000 == 0)
+    _big_txns   = sum(1 for t in _txns_i if t["amount"] >= 100_000)
+    if _big_txns >= 5 and _round_100k / _big_txns > 0.55:
+        _integrity_flags.append({
+            "level": "high",
+            "msg":   f"{_round_100k}/{_big_txns} large credits ({_round_100k/_big_txns:.0%}) are exact multiples "
+                     f"of ₦100,000 — genuine business inflows rarely cluster on perfectly round figures.",
+        })
+
+    # 2. Duplicate transactions — identical amount + narration key in same month
+    from collections import defaultdict as _dd_int
+    _dup_map: dict = _dd_int(int)
+    for _t in _txns_i:
+        _dup_map[(_t["ym"], _t["narration"][:30].lower().strip(), int(_t["amount"]))] += 1
+    _dups = {k: v for k, v in _dup_map.items() if v >= 3}
+    if _dups:
+        _dup_total = sum(_dups.values())
+        _integrity_flags.append({
+            "level": "high",
+            "msg":   f"{len(_dups)} narration+amount combination(s) appear 3+ times in the same month "
+                     f"({_dup_total} duplicate entries total) — may indicate copy-pasted transactions.",
+        })
+
+    # 3. Narration monotony — if >60% of credits share the same narration key
+    _narr_counts: dict = _dd_int(int)
+    for _t in _txns_i:
+        _narr_counts[_nkey(_t["narration"])] += 1
+    if _txns_i:
+        _top_narr_cnt = max(_narr_counts.values())
+        _mono_pct = _top_narr_cnt / len(_txns_i)
+        if _mono_pct > 0.60 and len(_txns_i) >= 10:
+            _top_narr_key = max(_narr_counts, key=lambda k: _narr_counts[k])
+            _integrity_flags.append({
+                "level": "medium",
+                "msg":   f"{_mono_pct:.0%} of credit transactions share the same narration pattern "
+                         f'("{_top_narr_key[:40]}") — unusual for a genuine business account.',
+            })
+
+    # 4. Month-over-month income cliff — last month > 3× previous average
+    _ei_vals_chk = [r["eligible_income"] for r in (st.session_state.rows_a or []) if r["eligible_income"] > 0]
+    if len(_ei_vals_chk) >= 3:
+        _prev_avg_chk = sum(_ei_vals_chk[:-1]) / (len(_ei_vals_chk) - 1)
+        _last_chk     = _ei_vals_chk[-1]
+        if _prev_avg_chk > 0 and _last_chk / _prev_avg_chk > 3.0:
+            _integrity_flags.append({
+                "level": "high",
+                "msg":   f"Last month eligible income ({money(_last_chk)}) is "
+                         f"{_last_chk/_prev_avg_chk:.1f}× the prior average ({money(_prev_avg_chk)}) — "
+                         f"sudden late-period spike is a common indicator of statement manipulation.",
+            })
+
+    # 5. Very few transactions but very large amounts (thin activity profile)
+    _real_txns = [t for t in _txns_i if t["category"] == "real_credit"]
+    _months_w_data = len(set(t["ym"] for t in _real_txns))
+    if _months_w_data >= 2:
+        _avg_txn_per_mo = len(_real_txns) / _months_w_data
+        _total_real = sum(t["amount"] for t in _real_txns)
+        _avg_txn_size = _total_real / len(_real_txns) if _real_txns else 0
+        if _avg_txn_per_mo < 3 and _avg_txn_size > 500_000:
+            _integrity_flags.append({
+                "level": "medium",
+                "msg":   f"Very thin activity: avg {_avg_txn_per_mo:.1f} real credit(s)/month, "
+                         f"avg size {money(_avg_txn_size)}. "
+                         f"Legitimate SME accounts typically show higher transaction frequency.",
+            })
+
+    if _integrity_flags:
+        _high_cnt = sum(1 for f in _integrity_flags if f["level"] == "high")
+        _hdr_col  = "#f87171" if _high_cnt else "#fb923c"
+        _hdr_lbl  = f"{'🔴' if _high_cnt else '🟠'} Statement Integrity — {len(_integrity_flags)} signal{'s' if len(_integrity_flags)>1 else ''} detected"
+        st.markdown("---")
+        with st.expander(_hdr_lbl, expanded=_high_cnt > 0):
+            st.markdown(
+                f'<div style="font-size:11px;color:#94a3b8;margin-bottom:12px;line-height:1.7">'
+                f'These checks flag statistical anomalies. They are indicators, not proof — '
+                f'always cross-reference with physical documents before making a credit decision.</div>',
+                unsafe_allow_html=True,
+            )
+            for _flg in _integrity_flags:
+                _fc2 = "#f87171" if _flg["level"] == "high" else "#fb923c"
+                st.markdown(
+                    f'<div style="display:flex;gap:10px;margin-bottom:8px;padding:8px 12px;'
+                    f'background:rgba({"248,113,113" if _flg["level"]=="high" else "251,146,60"},.06);'
+                    f'border-left:3px solid {_fc2};border-radius:3px">'
+                    f'<span style="color:{_fc2};font-size:14px;line-height:1.4">{"🔴" if _flg["level"]=="high" else "🟠"}</span>'
+                    f'<span style="font-size:11px;color:#e2e8f0;line-height:1.6">{_flg["msg"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 00B — SECOND BANK STATEMENT
@@ -2468,6 +2646,71 @@ if _qp.get("admin") == _ADMIN_KEY:
                     )
         else:
             st.success("✅ No parse errors recorded.")
+
+        # ── Feature 11: Portfolio Analytics ───────────────────────────────
+        st.markdown("---")
+        st.markdown("### 📈 Portfolio Analytics")
+
+        # Approval rate by bank
+        _appr_bank = _stats.get("approval_by_bank", [])
+        if _appr_bank:
+            st.markdown("#### Approval Rate by Bank")
+            _ab_rows = []
+            for _ab in _appr_bank:
+                _tot = int(_ab.get("total") or 0)
+                _apr = int(_ab.get("approved") or 0)
+                _rate_pct = round(_apr / _tot * 100, 1) if _tot else 0
+                _ab_rows.append({
+                    "Bank":           _ab["bank"],
+                    "Submissions":    _tot,
+                    "Approved":       _apr,
+                    "Below Min":      _tot - _apr,
+                    "Approval Rate %": _rate_pct,
+                })
+            _ab_df = pd.DataFrame(_ab_rows)
+            st.dataframe(
+                _ab_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Approval Rate %": st.column_config.ProgressColumn(
+                        "Approval Rate %", min_value=0, max_value=100, format="%.1f%%"
+                    ),
+                },
+            )
+
+        # Loan volume & approval by month
+        _lbm = _stats.get("loans_by_month", [])
+        if _lbm:
+            st.markdown("#### Loan Volume by Month")
+            _lbm_df = pd.DataFrame(_lbm).rename(columns={
+                "month": "Month", "avg_loan": "Avg Max Loan (NGN)",
+                "count": "Assessments", "approved": "Approved",
+            })
+            _lbm_df = _lbm_df.sort_values("Month")
+            _ac1, _ac2 = st.columns(2)
+            with _ac1:
+                st.markdown("**Assessments per month**")
+                st.bar_chart(_lbm_df.set_index("Month")["Assessments"])
+            with _ac2:
+                st.markdown("**Average max loan per month**")
+                st.line_chart(_lbm_df.set_index("Month")["Avg Max Loan (NGN)"])
+
+        # Rejection breakdown
+        _rej = _stats.get("rejection_reasons", [])
+        if _rej:
+            st.markdown("#### Top Rejection Combinations (Product × Location)")
+            _rej_df = pd.DataFrame(_rej).rename(columns={
+                "product": "Product", "location": "Location", "count": "Rejections"
+            })
+            st.dataframe(_rej_df, hide_index=True, use_container_width=True)
+
+        # Download format breakdown
+        _dl_fmt = _stats.get("download_formats", [])
+        if _dl_fmt:
+            st.markdown("#### Downloads by Format")
+            _dl_df = pd.DataFrame(_dl_fmt).rename(columns={"fmt": "Format", "count": "Downloads"})
+            st.dataframe(_dl_df, hide_index=True, use_container_width=True)
 
         # ── Raw DB download ───────────────────────────────────────────────
         import io as _adm_io

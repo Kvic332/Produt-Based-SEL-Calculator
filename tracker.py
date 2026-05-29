@@ -184,14 +184,54 @@ def admin_stats() -> dict:
                 "FROM events WHERE event IN ('parse_success','parse_error')"
             )
 
+            # ── Portfolio analytics (Feature 11) ─────────────────────────
+            approval_by_bank = q(
+                "SELECT bank, "
+                "  SUM(CASE WHEN json_extract(data,'$.approved')=1 THEN 1 ELSE 0 END) AS approved, "
+                "  COUNT(*) AS total "
+                "FROM events WHERE event='eligibility_result' AND bank != '' "
+                "GROUP BY bank ORDER BY total DESC"
+            )
+
+            loans_by_month = q(
+                "SELECT substr(ts,1,7) AS month, "
+                "  ROUND(AVG(CAST(json_extract(data,'$.max_loan') AS REAL))) AS avg_loan, "
+                "  COUNT(*) AS count, "
+                "  SUM(CASE WHEN json_extract(data,'$.approved')=1 THEN 1 ELSE 0 END) AS approved "
+                "FROM events WHERE event='eligibility_result' "
+                "GROUP BY month ORDER BY month"
+            )
+
+            rejection_reasons = q(
+                "SELECT "
+                "  COALESCE(json_extract(data,'$.product'),'—')  AS product, "
+                "  COALESCE(json_extract(data,'$.location'),'—') AS location, "
+                "  COUNT(*) AS count "
+                "FROM events "
+                "WHERE event='eligibility_result' "
+                "  AND json_extract(data,'$.approved') = 0 "
+                "GROUP BY product, location ORDER BY count DESC LIMIT 15"
+            )
+
+            download_formats = q(
+                "SELECT COALESCE(json_extract(data,'$.fmt'),'unknown') AS fmt, "
+                "  COUNT(*) AS count "
+                "FROM events WHERE event='download' "
+                "GROUP BY fmt ORDER BY count DESC"
+            )
+
             return {
-                "summary":  summary,
-                "daily":    daily,
-                "banks":    banks,
-                "errors":   errors,
-                "loans":    loans,
-                "sessions": sessions_row[0] if sessions_row else {},
-                "rate":     rate_row[0]     if rate_row     else {},
+                "summary":           summary,
+                "daily":             daily,
+                "banks":             banks,
+                "errors":            errors,
+                "loans":             loans,
+                "sessions":          sessions_row[0]    if sessions_row    else {},
+                "rate":              rate_row[0]        if rate_row        else {},
+                "approval_by_bank":  approval_by_bank,
+                "loans_by_month":    loans_by_month,
+                "rejection_reasons": rejection_reasons,
+                "download_formats":  download_formats,
             }
     except Exception as exc:
         return {"_error": str(exc)}
