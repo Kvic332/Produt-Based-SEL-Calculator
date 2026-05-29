@@ -333,6 +333,91 @@ def generate_pdf_report(
         ]))
         story.append(rt)
 
+        # ── Repayment Schedule ────────────────────────────────────────────
+        if result.get("approved") and result.get("interest_rate") and result.get("max_loan", 0) > 0:
+            _loan_amt = float(result["max_loan"])
+            _m_rate   = float(result["interest_rate"])
+            _m_pmt    = float(result.get("max_repayment_monthly", 0))
+            _n_per    = int(result.get("tenor", 6))
+            _freq     = result.get("repayment_frequency", "Monthly")
+
+            story.append(Spacer(1, 4 * mm))
+            story.append(Paragraph("REPAYMENT SCHEDULE", ST_SEC))
+
+            _freq_note = "Weekly payments (schedule shows monthly equivalent)" if _freq == "Weekly" else "Monthly payments"
+            story.append(Paragraph(
+                f'Loan: {_money(_loan_amt)}  |  Rate: {_pct(_m_rate)}/month  |  {_freq_note}',
+                _ps("sched_note", fontName="Helvetica", fontSize=8,
+                    textColor=C_MUTED, leading=11, spaceAfter=4),
+            ))
+
+            # Build amortization rows
+            _sched_data = [["Period", "Opening Balance", "Payment", "Interest", "Principal", "Closing Balance"]]
+            _bal = _loan_amt
+            _total_pmt = _total_int = _total_prin = 0.0
+            for _p in range(1, _n_per + 1):
+                _int   = _bal * _m_rate
+                _prin  = _m_pmt - _int
+                _close = max(_bal - _prin, 0.0)
+                _total_pmt  += _m_pmt
+                _total_int  += _int
+                _total_prin += _prin
+                _sched_data.append([
+                    str(_p),
+                    _money(_bal),
+                    _money(_m_pmt),
+                    _money(_int),
+                    _money(_prin),
+                    _money(_close),
+                ])
+                _bal = _close
+            _sched_data.append(["TOTAL", "—", _money(_total_pmt), _money(_total_int), _money(_total_prin), "—"])
+
+            _n_s = len(_sched_data)
+            _cw_s = [10 * mm] + [(W - 10 * mm) / 5] * 5
+            _st = Table(_sched_data, colWidths=_cw_s, repeatRows=1)
+            _st.setStyle(TableStyle([
+                # Header
+                ("BACKGROUND",     (0, 0),  (-1, 0),         C_DARK),
+                ("TEXTCOLOR",      (0, 0),  (-1, 0),         C_WHITE),
+                ("FONTNAME",       (0, 0),  (-1, 0),         "Helvetica-Bold"),
+                ("FONTSIZE",       (0, 0),  (-1, 0),         7),
+                ("ALIGN",          (0, 0),  (-1, 0),         "CENTER"),
+                ("TOPPADDING",     (0, 0),  (-1, 0),         5),
+                ("BOTTOMPADDING",  (0, 0),  (-1, 0),         5),
+                # Data rows
+                ("FONTNAME",       (0, 1),  (-1, _n_s - 2),  "Helvetica"),
+                ("FONTSIZE",       (0, 1),  (-1, _n_s - 2),  8),
+                ("TOPPADDING",     (0, 1),  (-1, _n_s - 2),  4),
+                ("BOTTOMPADDING",  (0, 1),  (-1, _n_s - 2),  4),
+                ("ALIGN",          (0, 1),  (0, -1),         "CENTER"),
+                ("ALIGN",          (1, 1),  (-1, -1),        "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1),  (-1, _n_s - 2),  [C_WHITE, C_ROW_ALT]),
+                ("TEXTCOLOR",      (2, 1),  (2, _n_s - 2),   C_EMERALD),  # payment
+                ("TEXTCOLOR",      (3, 1),  (3, _n_s - 2),   C_RED),      # interest
+                ("TEXTCOLOR",      (5, 1),  (5, _n_s - 2),   C_MUTED),    # closing
+                # Totals row
+                ("BACKGROUND",     (0, -1), (-1, -1),        C_SURFACE),
+                ("FONTNAME",       (0, -1), (-1, -1),        "Helvetica-Bold"),
+                ("FONTSIZE",       (0, -1), (-1, -1),        8),
+                ("LINEABOVE",      (0, -1), (-1, -1),        1.5, C_EMERALD),
+                ("TEXTCOLOR",      (2, -1), (2, -1),         C_EMERALD),
+                ("TEXTCOLOR",      (3, -1), (3, -1),         C_RED),
+                # Grid
+                ("GRID",           (0, 0),  (-1, -1),        0.5, C_BORDER),
+                ("LINEBELOW",      (0, 0),  (-1, 0),         1.5, C_EMERALD),
+            ]))
+            story.append(_st)
+
+            _cost_pct = (_total_int / _loan_amt * 100) if _loan_amt else 0
+            story.append(Spacer(1, 2 * mm))
+            story.append(Paragraph(
+                f'Total cost of credit: {_money(_total_int)} '
+                f'({_cost_pct:.1f}% of principal) over {_n_per} months.',
+                _ps("cost_note", fontName="Helvetica", fontSize=8,
+                    textColor=C_RED, leading=10),
+            ))
+
     # ── Footer ────────────────────────────────────────────────────────────────
     story.append(Spacer(1, 6 * mm))
     story.append(HRFlowable(width=W, thickness=1, color=C_BORDER))

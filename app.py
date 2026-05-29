@@ -1659,6 +1659,100 @@ if calc_btn:
             use_container_width=True,
         )
 
+        # ── Repayment Schedule ────────────────────────────────────────────
+        if result.get("approved") and result.get("interest_rate") and result.get("max_loan", 0) > 0:
+            _loan_amt  = result["max_loan"]
+            _m_rate    = result["interest_rate"]
+            _m_pmt     = result["max_repayment_monthly"]
+            _n_periods = result["tenor"]
+            _freq      = result["repayment_frequency"]
+
+            # Build monthly amortization schedule
+            _sched = []
+            _bal = float(_loan_amt)
+            for _p in range(1, _n_periods + 1):
+                _int   = _bal * _m_rate
+                _prin  = _m_pmt - _int
+                _close = max(_bal - _prin, 0.0)
+                _sched.append({
+                    "period":  _p,
+                    "opening": _bal,
+                    "payment": _m_pmt,
+                    "interest": _int,
+                    "principal": _prin,
+                    "closing": _close,
+                })
+                _bal = _close
+
+            _total_pmt  = sum(s["payment"]   for s in _sched)
+            _total_int  = sum(s["interest"]  for s in _sched)
+            _total_prin = sum(s["principal"] for s in _sched)
+            _cost_pct   = _total_int / _loan_amt * 100 if _loan_amt else 0
+
+            with st.expander(
+                f"📅  Repayment Schedule — {_n_periods}-Month Amortization",
+                expanded=False,
+            ):
+                _freq_note = "weekly" if _freq == "Weekly" else "monthly"
+                st.markdown(
+                    f'<div style="font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.8">'
+                    f'Loan: <span style="color:#10b981;font-weight:700">{money(_loan_amt)}</span>'
+                    f'&nbsp;&nbsp;|&nbsp;&nbsp;'
+                    f'Rate: <span style="color:#fbbf24;font-weight:700">{pct(_m_rate)}/month</span>'
+                    f'&nbsp;&nbsp;|&nbsp;&nbsp;'
+                    f'Payment: <span style="color:#34d399;font-weight:700">'
+                    f'{money(result["max_repayment_display"])} {_freq_note}</span>'
+                    f'{"&nbsp;&nbsp;|&nbsp;&nbsp;<em>Schedule shows monthly aggregates</em>" if _freq == "Weekly" else ""}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                _sched_body = ""
+                for _s in _sched:
+                    _sched_body += (
+                        f'<tr>'
+                        f'<td style="color:#94a3b8;text-align:center">{_s["period"]}</td>'
+                        f'<td style="text-align:right">{money(_s["opening"])}</td>'
+                        f'<td style="color:#34d399;font-weight:700;text-align:right">{money(_s["payment"])}</td>'
+                        f'<td style="color:#f87171;text-align:right">{money(_s["interest"])}</td>'
+                        f'<td style="color:#a78bfa;text-align:right">{money(_s["principal"])}</td>'
+                        f'<td style="color:#10b981;font-weight:700;text-align:right">{money(_s["closing"])}</td>'
+                        f'</tr>'
+                    )
+                _sched_body += (
+                    f'<tr style="border-top:2px solid #1a3d2b">'
+                    f'<td style="color:#64748b;font-size:10px;text-transform:uppercase;text-align:center">Total</td>'
+                    f'<td></td>'
+                    f'<td style="color:#34d399;font-weight:700;text-align:right">{money(_total_pmt)}</td>'
+                    f'<td style="color:#f87171;font-weight:700;text-align:right">{money(_total_int)}</td>'
+                    f'<td style="color:#a78bfa;font-weight:700;text-align:right">{money(_total_prin)}</td>'
+                    f'<td></td>'
+                    f'</tr>'
+                )
+                st.markdown(
+                    f'<table class="preview-table">'
+                    f'<thead><tr>'
+                    f'<th style="text-align:center">Period</th>'
+                    f'<th style="text-align:right">Opening Balance</th>'
+                    f'<th style="text-align:right;color:#34d399">Payment</th>'
+                    f'<th style="text-align:right;color:#f87171">Interest</th>'
+                    f'<th style="text-align:right;color:#a78bfa">Principal</th>'
+                    f'<th style="text-align:right;color:#10b981">Closing Balance</th>'
+                    f'</tr></thead><tbody>{_sched_body}</tbody></table>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div style="margin-top:10px;padding:8px 12px;'
+                    f'background:rgba(248,113,113,.07);border-left:3px solid #f87171;'
+                    f'border-radius:3px;font-size:11px;color:#94a3b8">'
+                    f'Total cost of credit: '
+                    f'<span style="color:#f87171;font-weight:700">{money(_total_int)}</span>'
+                    f' — <span style="color:#f87171">{_cost_pct:.1f}%</span>'
+                    f' of loan principal repaid as interest over {_n_periods} months'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
         # Requested loan analysis
         if req_loan > 0 and "requested" in result:
             st.markdown("---")
