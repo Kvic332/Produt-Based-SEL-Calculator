@@ -448,25 +448,57 @@ st.markdown(f"""
   <div style="font-size:13px;color:#cbd5e1;margin-top:6px;font-weight:700;letter-spacing:0.5px">
     All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection
   </div>
-  <div style="margin-top:16px;display:inline-flex;align-items:center;gap:10px;
-              padding:8px 18px;border-radius:4px;
+  <div style="margin-top:16px;display:inline-flex;align-items:center;gap:14px;
+              padding:10px 22px;border-radius:4px;
               background:rgba(255,255,255,.04);
               border:1px solid {_greet_col}55;
               border-left:4px solid {_greet_col}">
-    <span style="font-size:18px;line-height:1">{_greet.split()[2]}</span>
+    <span style="font-size:22px;line-height:1">{_greet.split()[2]}</span>
     <div>
       <div style="font-size:24px;font-weight:900;color:{_greet_col};letter-spacing:0.5px;line-height:1.2">
         {" ".join(_greet.split()[:2])}
       </div>
       <div style="font-size:13px;color:#94a3b8;margin-top:3px;font-weight:600">{_greet_sub}</div>
     </div>
+    <div style="border-left:1px solid #1a3d2b;padding-left:14px;text-align:center">
+      <div id="sel-live-clock"
+           style="font-family:'Space Mono',monospace;font-size:28px;font-weight:700;
+                  color:{_greet_col};letter-spacing:3px;line-height:1">
+        --:--:--
+      </div>
+      <div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-top:4px">
+        Live Clock
+      </div>
+    </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 
-# ── Trademark badge — floats in every 5 minutes ───────────────────────────────
+# ── Live clock — updates every second via parent DOM ─────────────────────────
 import streamlit.components.v1 as _components
+_components.html("""
+<script>
+(function(){
+  var p = window.parent;
+  if (p.__selClockInit) return;
+  p.__selClockInit = true;
+  function tick(){
+    var el = p.document.getElementById('sel-live-clock');
+    if (!el) return;
+    var now = new Date();
+    var h = String(now.getHours()).padStart(2,'0');
+    var m = String(now.getMinutes()).padStart(2,'0');
+    var s = String(now.getSeconds()).padStart(2,'0');
+    el.textContent = h + ':' + m + ':' + s;
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+""", height=0)
+
+# ── Trademark badge — floats in every 5 minutes ───────────────────────────────
 _components.html("""
 <script>
 (function() {
