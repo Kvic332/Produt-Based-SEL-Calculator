@@ -508,6 +508,19 @@ def detect_bank(text: str) -> str:
     if "sterling bank" in t_hdr or ("sterling bank" in t and "mybankstatement" in t):
         return "Sterling"
 
+    # ── Ecobank: bank name is a logo IMAGE — never appears as text. ───────────
+    # Detect via two independent signals that together are unambiguous:
+    #   1. mybankStatement portal format (required)
+    #   2. "ecobank" anywhere in text (e.g. NIP narrations reference the bank)
+    #      OR account number starts with 2452 (Ecobank Nigeria NUBAN prefix)
+    # No separate parser is needed — parse_gtbank handles all mybankStatement
+    # banks identically regardless of bank name.
+    if "mybankstatement" in t and (
+        "ecobank" in t
+        or re.search(r'\b2452\d{6}\b', t)
+    ):
+        return "Ecobank"
+
     # "tran date value date narration" is the native Zenith column header.
     # Guard with "mybankstatement not in t": PyPDF2 can tokenise the
     # mybankStatement portal column header "TranDate ValueDate Narration" with
@@ -1298,7 +1311,7 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
     SKIP_HDR = re.compile(
         r"^(?:mybankstatement|guaranty trust bank|first bank|access bank plc|"
         r"united bank for africa|fidelity bank|union bank|stanbic\s+(?:ibtc\s+)?bank|fcmb(?:\s|$)|"
-        r"wema bank|sterling bank|gtco|rc no\.|"
+        r"wema bank|sterling bank|ecobank|the pan african bank|gtco|rc no\.|"
         r"account\s+(?:name|no\.?|number|type|branch|currency|sort)|"
         r"available\s+balance|book\s+balance|total\s+(?:debit|credit)|"
         r"opening\s+balance|closing\s+balance|statement\s+period|"
@@ -3241,6 +3254,7 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     _MYBANKSTATEMENT_BANKS = {
         "GTBank", "Access", "FirstBank", "UBA",
         "Fidelity", "Union", "Stanbic", "FCMB", "Wema", "Sterling",
+        "Ecobank",   # logo-only bank — uses same mybankStatement portal format
     }
 
     if bank == "Carbon":
