@@ -588,7 +588,7 @@ _components.html("""
     {q:"Champions keep playing until they get it right.",                          a:"Billie Jean King"},
   ];
 
-  var INTERVAL_MS = 30 * 60 * 1000;  /* 30 minutes */
+  var INTERVAL_MS = 5 * 60 * 1000;   /* 5 minutes */
   var LS_KEY_TS   = 'sel_quote_ts';
   var LS_KEY_IDX  = 'sel_quote_idx';
 
