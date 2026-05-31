@@ -526,30 +526,30 @@ if not _is_signed_in:
     st.markdown(
         f"""
         <div style="text-align:center;margin-bottom:8px">
-          <div style="font-size:10px;letter-spacing:4px;color:#10b981;
+          <div style="font-size:16px;letter-spacing:4px;color:#10b981;font-weight:900;
                       text-transform:uppercase;margin-bottom:16px">
             ▶ SEL Financial Toolkit
           </div>
           <div style="font-size:52px;margin-bottom:4px">{_sicon}</div>
-          <div style="font-size:32px;font-weight:900;color:{_sc};
+          <div style="font-size:38px;font-weight:900;color:{_sc};
                       font-family:'DM Serif Display',serif;margin-bottom:6px">
             {_sw}!
           </div>
-          <div style="font-size:22px;font-weight:800;color:#fff;
+          <div style="font-size:26px;font-weight:900;color:#fff;
                       font-family:'DM Serif Display',serif;margin-bottom:4px">
             Loan <em style="color:#10b981;font-style:italic">Eligibility</em> Calculator
           </div>
-          <div style="font-size:12px;color:#64748b;margin-bottom:28px;letter-spacing:0.5px">
+          <div style="font-size:14px;font-weight:600;color:#94a3b8;margin-bottom:28px;letter-spacing:0.5px">
             Powered by Kenechukwu Kvic7™ &nbsp;·&nbsp; All Products &nbsp;·&nbsp; Auto-decisioning
           </div>
         </div>
         <div style="background:#0f1a15;border:1px solid #1a3d2b;border-top:3px solid {_sc};
                     border-radius:6px;padding:28px 32px 24px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
-          <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:6px;
+          <div style="font-size:22px;font-weight:900;color:#e2e8f0;margin-bottom:10px;
                       letter-spacing:0.5px">
             Please sign in to begin your session
           </div>
-          <div style="font-size:11px;color:#64748b;margin-bottom:18px;line-height:1.6">
+          <div style="font-size:15px;font-weight:600;color:#94a3b8;margin-bottom:18px;line-height:1.7">
             Your name will be recorded with every assessment, download and decision
             made today. You only need to sign in once per day.
           </div>
@@ -581,7 +581,7 @@ if not _is_signed_in:
             st.rerun()
 
     st.markdown(
-        f'<div style="margin-top:12px;font-size:10px;color:#374151;text-align:center">'
+        f'<div style="margin-top:14px;font-size:16px;font-weight:700;color:#64748b;text-align:center">'
         f'{datetime.date.today().strftime("%A, %d %B %Y")}</div>',
         unsafe_allow_html=True,
     )
