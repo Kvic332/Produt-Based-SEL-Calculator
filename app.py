@@ -485,6 +485,108 @@ if "officer_name" not in st.session_state:
     # Restore from URL query param so browser refresh keeps the name
     st.session_state.officer_name = st.query_params.get("officer", "")
 
+# ════════════════════════════════════════════════════════════════════════════
+# DAILY SIGN-IN GATE
+# Shows a full-screen welcome page once per day per browser session.
+# The officer enters their name and clicks Sign In.  After that the full
+# tool is revealed.  The signed-in state survives browser refreshes
+# (stored in URL query params: ?officer=Name&signed=YYYY-MM-DD).
+# ════════════════════════════════════════════════════════════════════════════
+_today_iso   = datetime.date.today().isoformat()
+_signed_date = st.query_params.get("signed", "")
+_signed_name = st.query_params.get("officer", "").strip()
+_is_signed_in = (_signed_date == _today_iso and bool(_signed_name))
+
+if _is_signed_in:
+    # Sync authoritative name into session state
+    st.session_state.officer_name = _signed_name
+
+if not _is_signed_in:
+    # ── Build time-of-day greeting ─────────────────────────────────────────
+    _sh = datetime.datetime.now().hour
+    if   5  <= _sh < 12: _sw, _sc, _sicon = "Good morning",   "#34d399", "☀️"
+    elif 12 <= _sh < 17: _sw, _sc, _sicon = "Good afternoon", "#fbbf24", "🌤"
+    elif 17 <= _sh < 21: _sw, _sc, _sicon = "Good evening",   "#f59e0b", "🌆"
+    else:                 _sw, _sc, _sicon = "Welcome",        "#a78bfa", "🌙"
+
+    # ── Full-screen sign-in page (hides normal Streamlit chrome) ───────────
+    st.markdown("""
+    <style>
+      header[data-testid="stHeader"]   { display:none !important; }
+      [data-testid="stToolbar"]        { display:none !important; }
+      .block-container {
+        max-width: 540px !important;
+        padding-top: 5vh !important;
+        padding-bottom: 0 !important;
+        margin: 0 auto !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown(
+        f"""
+        <div style="text-align:center;margin-bottom:8px">
+          <div style="font-size:10px;letter-spacing:4px;color:#10b981;
+                      text-transform:uppercase;margin-bottom:16px">
+            ▶ SEL Financial Toolkit
+          </div>
+          <div style="font-size:52px;margin-bottom:4px">{_sicon}</div>
+          <div style="font-size:32px;font-weight:900;color:{_sc};
+                      font-family:'DM Serif Display',serif;margin-bottom:6px">
+            {_sw}!
+          </div>
+          <div style="font-size:22px;font-weight:800;color:#fff;
+                      font-family:'DM Serif Display',serif;margin-bottom:4px">
+            Loan <em style="color:#10b981;font-style:italic">Eligibility</em> Calculator
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:28px;letter-spacing:0.5px">
+            Powered by Kenechukwu Kvic7™ &nbsp;·&nbsp; All Products &nbsp;·&nbsp; Auto-decisioning
+          </div>
+        </div>
+        <div style="background:#0f1a15;border:1px solid #1a3d2b;border-top:3px solid {_sc};
+                    border-radius:6px;padding:28px 32px 24px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
+          <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:6px;
+                      letter-spacing:0.5px">
+            Please sign in to begin your session
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-bottom:18px;line-height:1.6">
+            Your name will be recorded with every assessment, download and decision
+            made today. You only need to sign in once per day.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _si_col1, _si_col2 = st.columns([3, 1])
+    with _si_col1:
+        _si_name = st.text_input(
+            "Officer Name / Staff ID",
+            placeholder="e.g. Adaobi Nwosu  or  SEL-042",
+            key="signin_name_input",
+            label_visibility="collapsed",
+        )
+    with _si_col2:
+        _si_btn = st.button("Sign In →", key="signin_btn", use_container_width=True)
+
+    if _si_btn:
+        if not _si_name.strip():
+            st.error("Please enter your name or staff ID before signing in.")
+        else:
+            _clean = _si_name.strip()
+            st.session_state.officer_name = _clean
+            st.query_params["officer"] = _clean
+            st.query_params["signed"]  = _today_iso
+            track("signin", session=_SID, officer=_clean, bank="", filename="")
+            st.rerun()
+
+    st.markdown(
+        f'<div style="margin-top:12px;font-size:10px;color:#374151;text-align:center">'
+        f'{datetime.date.today().strftime("%A, %d %B %Y")}</div>',
+        unsafe_allow_html=True,
+    )
+    st.stop()   # ← nothing else renders until the officer has signed in
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # HEADER
@@ -748,50 +850,27 @@ _components.html("""
 """, height=0)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# OFFICER SIGN-IN
-# ════════════════════════════════════════════════════════════════════════════
-_off_col1, _off_col2 = st.columns([3, 1])
-with _off_col1:
-    _officer_input = st.text_input(
-        "👤  Officer Name / Staff ID",
-        value=st.session_state.officer_name,
-        placeholder="Enter your full name or staff ID to begin…",
-        key="officer_input",
-    )
-    if _officer_input.strip() != st.session_state.officer_name:
-        st.session_state.officer_name = _officer_input.strip()
-        if _officer_input.strip():
-            st.query_params["officer"] = _officer_input.strip()
-        else:
-            st.query_params.pop("officer", None)
-
-with _off_col2:
-    if st.session_state.officer_name:
-        st.markdown(
-            f'<div style="margin-top:28px;padding:8px 14px;'
-            f'background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);'
-            f'border-radius:4px;font-size:12px;color:#34d399;font-weight:700;'
-            f'text-align:center;letter-spacing:0.5px">'
-            f'✓ Active</div>',
-            unsafe_allow_html=True,
-        )
-
+# ── Officer status bar (name is locked in from sign-in gate) ─────────────────
 _OFFICER = st.session_state.officer_name or "Unknown Officer"
-
-if not st.session_state.officer_name:
+_off_sb1, _off_sb2 = st.columns([4, 1])
+with _off_sb1:
     st.markdown(
-        '<div style="font-size:11px;color:#64748b;margin:-8px 0 16px 0">'
-        '⚠ Please enter your name — it will be recorded with every assessment and download.</div>',
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">'
+        f'<div style="font-size:11px;letter-spacing:2px;color:#64748b;text-transform:uppercase">Signed in as</div>'
+        f'<div style="font-size:13px;font-weight:800;color:#10b981;letter-spacing:0.5px">'
+        f'👤 {_OFFICER}</div>'
+        f'<div style="font-size:10px;color:#374151">'
+        f'· {datetime.date.today().strftime("%A, %d %b %Y")}</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
-else:
-    st.markdown(
-        f'<div style="font-size:11px;color:#64748b;margin:-8px 0 16px 0">'
-        f'All assessments this session will be tagged to '
-        f'<span style="color:#10b981;font-weight:700">{st.session_state.officer_name}</span>.</div>',
-        unsafe_allow_html=True,
-    )
+with _off_sb2:
+    if st.button("🔄 Switch Officer", key="switch_officer", use_container_width=True):
+        # Clear sign-in state → sign-in page will show on next rerun
+        st.query_params.pop("signed", None)
+        st.query_params.pop("officer", None)
+        st.session_state.officer_name = ""
+        st.rerun()
 
 st.markdown("---")
 
