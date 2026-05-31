@@ -239,7 +239,8 @@ def section(title: str) -> str:
 
 # ── Excel Export Helper ────────────────────────────────────────────────────────
 def generate_xlsx(rows: list[dict], result: dict | None = None,
-                  account_name: str = "", bank: str = "") -> bytes:
+                  account_name: str = "", bank: str = "",
+                  params: dict | None = None) -> bytes:
     """Generate a formatted .xlsx with monthly breakdown + optional eligibility sheet."""
     from io import BytesIO
     import openpyxl
@@ -355,10 +356,32 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
         ws2 = wb.create_sheet("Eligibility Summary")
         ws2.sheet_properties.tabColor = GOLD
         _tenor_v = result.get("tenor")
-        pairs = [
+
+        # ── Loan Parameters section ─────────────────────────────────────────
+        ws2["A1"] = "Eligibility Summary"
+        ws2["A1"].font = Font(name="Calibri", bold=True, color=ACCENT, size=13)
+        ws2.column_dimensions["A"].width = 30
+        ws2.column_dimensions["B"].width = 22
+
+        _p = params or {}
+        _lp_pairs = [
+            ("LOAN PARAMETERS", ""),
+            ("Location",              _p.get("location", "—")),
+            ("Product Type",          _p.get("product_type", "—")),
+            ("Tenor (Months)",        _p.get("tenor", "—")),
+            ("Other Monthly Repayments", f"NGN {_p.get('other_loans', 0):,.2f}"),
+        ]
+        if _p.get("req_loan", 0) > 0:
+            _lp_pairs.append(("Requested Loan Amount", f"NGN {_p['req_loan']:,.2f}"))
+        if _p.get("manual_rate", 0) > 0:
+            _lp_pairs.append(("Manual Interest Rate", f"{_p['manual_rate']:.2f}%"))
+
+        _lp_pairs.append(("", ""))  # spacer
+
+        pairs = _lp_pairs + [
+            ("ELIGIBILITY RESULT", ""),
             ("Decision",             "Approved" if result.get("approved") else "Below Minimum"),
             ("Max Loan Amount",      result.get("max_loan", 0)),
-            ("Tenor (Months)",       _tenor_v if _tenor_v else "—"),
             ("Applicable Turnover",  result.get("applicable_turnover", 0)),
             ("Total Eligible Net",   result.get("total_net", 0)),
             ("DTI",                  f"{result.get('dti',0)*100:.2f}%"),
@@ -367,13 +390,17 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
             ("Max Repayment/Period", result.get("max_repayment_display", 0)),
             ("Max Total Repayment",  result.get("max_total_repayment", 0)),
         ]
-        ws2["A1"] = "Eligibility Summary"
-        ws2["A1"].font = Font(name="Calibri", bold=True, color=ACCENT, size=13)
-        ws2.column_dimensions["A"].width = 28
-        ws2.column_dimensions["B"].width = 20
+
         for ri2, (label, val) in enumerate(pairs, 3):
             lc = ws2.cell(row=ri2, column=1, value=label)
             vc = ws2.cell(row=ri2, column=2, value=val)
+            # Section headers
+            if label in ("LOAN PARAMETERS", "ELIGIBILITY RESULT"):
+                lc.font = Font(name="Calibri", bold=True, color=GOLD, size=10)
+                lc.fill = fill(DARK)
+                vc.fill = fill(DARK)
+                ws2.merge_cells(f"A{ri2}:B{ri2}")
+                continue
             lc.font = body_font(MUTED); lc.fill = fill(MID)
             row_clr = GREEN if (label == "Decision" and result.get("approved")) else (RED if label == "Decision" else WHITE)
             vc.font = bold_font(row_clr); vc.fill = fill(LIGHT)
@@ -2185,6 +2212,16 @@ if calc_btn:
               product=prod_type,
               total_net=round(result.get("total_net", 0), 2))
 
+        # ── Build loan params dict for all download generators ───────────
+        _loan_params = {
+            "location":     location,
+            "product_type": prod_type,
+            "tenor":        tenor,
+            "other_loans":  other_loans,
+            "req_loan":     req_loan,
+            "manual_rate":  manual_rate,
+        }
+
         # ── Save params for persistent What-If panel ──────────────────────
         st.session_state.last_calc_params = {
             "nets": nets, "counts": counts, "location": location,
@@ -2495,6 +2532,7 @@ if calc_btn:
                     result       = result,
                     account_name = _report_name,
                     bank         = _report_bank,
+                    params       = _loan_params,
                 )
                 _safe_xl = (_report_name or "report").replace(" ", "_").lower()
                 _cav1, _cav2 = st.columns(2)
@@ -2514,6 +2552,16 @@ if calc_btn:
                     import io as _io
                     _csv_buf = _io.StringIO()
                     # -- Summary section --
+                    _csv_buf.write("LOAN PARAMETERS\r\n")
+                    _csv_buf.write(f"Location,{location}\r\n")
+                    _csv_buf.write(f"Product Type,{prod_type}\r\n")
+                    _csv_buf.write(f"Tenor (Months),{tenor}\r\n")
+                    _csv_buf.write(f"Other Monthly Repayments,{money(other_loans)}\r\n")
+                    if req_loan > 0:
+                        _csv_buf.write(f"Requested Loan Amount,{money(req_loan)}\r\n")
+                    if manual_rate > 0:
+                        _csv_buf.write(f"Manual Interest Rate,{manual_rate:.2f}%\r\n")
+                    _csv_buf.write("\r\n")
                     _csv_buf.write("ELIGIBILITY SUMMARY\r\n")
                     _csv_buf.write(f"Decision,{'Approved' if result.get('approved') else 'Below Minimum'}\r\n")
                     _csv_buf.write(f"Max Loan Amount,{money(result.get('max_loan', 0))}\r\n")
@@ -2548,6 +2596,7 @@ if calc_btn:
             rows         = _report_rows if _report_rows else [],
             result       = result,
             req_loan     = req_loan,
+            params       = _loan_params,
         )
         _safe_full = (_report_name or "report").replace(" ", "_").lower()
         if st.download_button(

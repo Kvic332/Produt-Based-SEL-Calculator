@@ -57,9 +57,10 @@ def _ps(name: str, **kw) -> ParagraphStyle:
 def generate_pdf_report(
     account_name: str,
     bank: str,
-    rows: list[dict],           # monthly_analysis() output
-    result: dict | None = None, # calculate_eligibility() output (optional)
+    rows: list[dict],            # monthly_analysis() output
+    result: dict | None = None,  # calculate_eligibility() output (optional)
     req_loan: float = 0,
+    params: dict | None = None,  # loan parameters from Section 03
 ) -> bytes:
     """
     Build a PDF report and return raw bytes.
@@ -259,6 +260,38 @@ def generate_pdf_report(
         ("GRID",          (0, 0), (-1, -1), 0.5, C_BORDER),
     ]))
     story.append(st_tbl)
+
+    # ── Loan Parameters (optional) ────────────────────────────────────────────
+    if result and params:
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("LOAN PARAMETERS", ST_SEC))
+        _p = params
+        _lp_rows = [
+            ["Location",   _p.get("location", "—"),
+             "Product Type", _p.get("product_type", "—")],
+            ["Tenor",      f"{_p.get('tenor', '—')} months",
+             "Other Repayments", _money(_p.get("other_loans", 0))],
+        ]
+        if _p.get("req_loan", 0) > 0 or _p.get("manual_rate", 0) > 0:
+            _lp_rows.append([
+                "Requested Amount", _money(_p.get("req_loan", 0)) if _p.get("req_loan", 0) > 0 else "—",
+                "Manual Rate",      f"{_p.get('manual_rate', 0):.2f}%" if _p.get("manual_rate", 0) > 0 else "— (grid rate)",
+            ])
+        qw = W / 4
+        lp_tbl = Table(_lp_rows, colWidths=[qw * 0.8, qw * 1.2, qw * 0.8, qw * 1.2])
+        lp_tbl.setStyle(TableStyle([
+            ("FONTNAME",       (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME",       (2, 0), (2, -1), "Helvetica-Bold"),
+            ("TEXTCOLOR",      (0, 0), (0, -1), C_MUTED),
+            ("TEXTCOLOR",      (2, 0), (2, -1), C_MUTED),
+            ("TEXTCOLOR",      (1, 0), (-1, -1), C_TEXT),
+            ("FONTSIZE",       (0, 0), (-1, -1), 9),
+            ("TOPPADDING",     (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [C_SURFACE, C_WHITE]),
+            ("LINEBELOW",      (0, 0), (-1, -2), 0.5, C_BORDER),
+        ]))
+        story.append(lp_tbl)
 
     # ── Eligibility Result (optional) ─────────────────────────────────────────
     if result:
