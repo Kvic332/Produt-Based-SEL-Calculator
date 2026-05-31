@@ -482,7 +482,8 @@ if "assessment_count" not in st.session_state:
     st.session_state.assessment_count = 0
 
 if "officer_name" not in st.session_state:
-    st.session_state.officer_name = ""
+    # Restore from URL query param so browser refresh keeps the name
+    st.session_state.officer_name = st.query_params.get("officer", "")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -758,8 +759,12 @@ with _off_col1:
         placeholder="Enter your full name or staff ID to begin…",
         key="officer_input",
     )
-    if _officer_input != st.session_state.officer_name:
+    if _officer_input.strip() != st.session_state.officer_name:
         st.session_state.officer_name = _officer_input.strip()
+        if _officer_input.strip():
+            st.query_params["officer"] = _officer_input.strip()
+        else:
+            st.query_params.pop("officer", None)
 
 with _off_col2:
     if st.session_state.officer_name:
