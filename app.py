@@ -240,7 +240,8 @@ def section(title: str) -> str:
 # ── Excel Export Helper ────────────────────────────────────────────────────────
 def generate_xlsx(rows: list[dict], result: dict | None = None,
                   account_name: str = "", bank: str = "",
-                  params: dict | None = None) -> bytes:
+                  params: dict | None = None,
+                  officer: str = "") -> bytes:
     """Generate a formatted .xlsx with monthly breakdown + optional eligibility sheet."""
     from io import BytesIO
     import openpyxl
@@ -284,7 +285,8 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
     # Info rows
     ws["A1"] = "SEL Loan Eligibility Calculator"
     ws["A1"].font = Font(name="Calibri", bold=True, color=ACCENT, size=13)
-    ws["A2"] = f"Account: {account_name}   |   Bank: {bank}   |   Generated: {datetime.date.today()}"
+    _off_str = f"   |   Assessed by: {officer}" if officer else ""
+    ws["A2"] = f"Account: {account_name}   |   Bank: {bank}   |   Generated: {datetime.date.today()}{_off_str}"
     ws["A2"].font = body_font(MUTED)
     ws.merge_cells("A1:H1")
     ws.merge_cells("A2:H2")
@@ -366,6 +368,7 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
         _p = params or {}
         _lp_pairs = [
             ("LOAN PARAMETERS", ""),
+            ("Assessed By",           officer or "—"),
             ("Location",              _p.get("location", "—")),
             ("Product Type",          _p.get("product_type", "—")),
             ("Tenor (Months)",        _p.get("tenor", "—")),
@@ -477,6 +480,9 @@ _SID = st.session_state.sel_session_id
 
 if "assessment_count" not in st.session_state:
     st.session_state.assessment_count = 0
+
+if "officer_name" not in st.session_state:
+    st.session_state.officer_name = ""
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -742,6 +748,49 @@ _components.html("""
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# OFFICER SIGN-IN
+# ════════════════════════════════════════════════════════════════════════════
+_off_col1, _off_col2 = st.columns([3, 1])
+with _off_col1:
+    _officer_input = st.text_input(
+        "👤  Officer Name / Staff ID",
+        value=st.session_state.officer_name,
+        placeholder="Enter your full name or staff ID to begin…",
+        key="officer_input",
+    )
+    if _officer_input != st.session_state.officer_name:
+        st.session_state.officer_name = _officer_input.strip()
+
+with _off_col2:
+    if st.session_state.officer_name:
+        st.markdown(
+            f'<div style="margin-top:28px;padding:8px 14px;'
+            f'background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);'
+            f'border-radius:4px;font-size:12px;color:#34d399;font-weight:700;'
+            f'text-align:center;letter-spacing:0.5px">'
+            f'✓ Active</div>',
+            unsafe_allow_html=True,
+        )
+
+_OFFICER = st.session_state.officer_name or "Unknown Officer"
+
+if not st.session_state.officer_name:
+    st.markdown(
+        '<div style="font-size:11px;color:#64748b;margin:-8px 0 16px 0">'
+        '⚠ Please enter your name — it will be recorded with every assessment and download.</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        f'<div style="font-size:11px;color:#64748b;margin:-8px 0 16px 0">'
+        f'All assessments this session will be tagged to '
+        f'<span style="color:#10b981;font-weight:700">{st.session_state.officer_name}</span>.</div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown("---")
+
+# ════════════════════════════════════════════════════════════════════════════
 # PRODUCT SELECTOR
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown(
@@ -896,7 +945,7 @@ with col2:
             st.error("Please select a PDF file first.")
         else:
             with st.spinner("Extracting..."):
-                track("upload", session=_SID, filename=file_a.name,
+                track("upload", session=_SID, officer=_OFFICER, filename=file_a.name,
                       size_kb=round(len(file_a.getvalue()) / 1024, 1))
                 try:
                     buckets, summary, bank, name, txns = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
@@ -910,7 +959,7 @@ with col2:
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
                     _txn_count = sum(b.get("count", 0) for b in buckets.values())
                     _gross_tot = sum(b.get("gross", 0) for b in buckets.values())
-                    track("parse_success", session=_SID, bank=bank,
+                    track("parse_success", session=_SID, officer=_OFFICER, bank=bank,
                           filename=file_a.name, txn_count=_txn_count,
                           gross_total=round(_gross_tot, 2),
                           months=len([r for r in rows if r["gross"] > 0]))
@@ -945,7 +994,7 @@ with col2:
                             pass  # Accuracy check is best-effort; never block the main flow
 
                 except Exception as e:
-                    track("parse_error", session=_SID, filename=file_a.name,
+                    track("parse_error", session=_SID, officer=_OFFICER, filename=file_a.name,
                           error=str(e), error_type=type(e).__name__)
                     if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
                         st.error(
@@ -1589,7 +1638,7 @@ with col4:
             st.error("Please extract the first statement first.")
         else:
             with st.spinner("Extracting second statement..."):
-                track("upload", session=_SID, filename=file_b.name,
+                track("upload", session=_SID, officer=_OFFICER, filename=file_b.name,
                       size_kb=round(len(file_b.getvalue()) / 1024, 1), slot="B")
                 try:
                     buckets_b, summary_b, bank_b, name_b, txns_b = parse_transactions(file_b.getvalue(), pw_b, filename=file_b.name)
@@ -1603,7 +1652,7 @@ with col4:
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
                     _txn_count_b = sum(b.get("count", 0) for b in buckets_b.values())
                     _gross_tot_b = sum(b.get("gross", 0) for b in buckets_b.values())
-                    track("parse_success", session=_SID, bank=bank_b,
+                    track("parse_success", session=_SID, officer=_OFFICER, bank=bank_b,
                           filename=file_b.name, txn_count=_txn_count_b,
                           gross_total=round(_gross_tot_b, 2),
                           months=len([r for r in rows_b if r["gross"] > 0]), slot="B")
@@ -1637,7 +1686,7 @@ with col4:
                             pass
 
                 except Exception as e:
-                    track("parse_error", session=_SID, filename=file_b.name,
+                    track("parse_error", session=_SID, officer=_OFFICER, filename=file_b.name,
                           error=str(e), error_type=type(e).__name__, slot="B")
                     if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
                         st.error(
@@ -2224,7 +2273,7 @@ if calc_btn:
             manual_rate_percent=manual_rate if manual_rate > 0 else None,
         )
         track("eligibility_result",
-              session=_SID,
+              session=_SID, officer=_OFFICER,
               bank=st.session_state.bank_a or "",
               approved=result.get("approved", False),
               max_loan=round(result.get("max_loan", 0), 2),
@@ -2555,6 +2604,7 @@ if calc_btn:
                     account_name = _report_name,
                     bank         = _report_bank,
                     params       = _loan_params,
+                    officer      = _OFFICER,
                 )
                 _safe_xl = (_report_name or "report").replace(" ", "_").lower()
                 _cav1, _cav2 = st.columns(2)
@@ -2567,13 +2617,16 @@ if calc_btn:
                         key="dl_audit_xlsx",
                         use_container_width=True,
                     ):
-                        track("download", session=_SID,
+                        track("download", session=_SID, officer=_OFFICER,
                               bank=st.session_state.bank_a or "", fmt="excel")
                 with _cav2:
                     # Build CSV with eligibility summary header + audit rows
                     import io as _io
                     _csv_buf = _io.StringIO()
                     # -- Summary section --
+                    _csv_buf.write(f"Assessed By,{_OFFICER}\r\n")
+                    _csv_buf.write(f"Date,{datetime.date.today().strftime('%d %b %Y')}\r\n")
+                    _csv_buf.write("\r\n")
                     _csv_buf.write("LOAN PARAMETERS\r\n")
                     _csv_buf.write(f"Location,{location}\r\n")
                     _csv_buf.write(f"Product Type,{prod_type}\r\n")
@@ -2620,7 +2673,7 @@ if calc_btn:
                         key="dl_audit_csv",
                         use_container_width=True,
                     ):
-                        track("download", session=_SID,
+                        track("download", session=_SID, officer=_OFFICER,
                               bank=st.session_state.bank_a or "", fmt="csv")
 
         # ── Download Full Eligibility Report PDF ──────────────────────────
@@ -2632,6 +2685,7 @@ if calc_btn:
             result       = result,
             req_loan     = req_loan,
             params       = _loan_params,
+            officer      = _OFFICER,
         )
         _safe_full = (_report_name or "report").replace(" ", "_").lower()
         if st.download_button(
@@ -2642,7 +2696,7 @@ if calc_btn:
             use_container_width = True,
             key                 = "dl_full_pdf",
         ):
-            track("download", session=_SID,
+            track("download", session=_SID, officer=_OFFICER,
                   bank=st.session_state.bank_a or "", fmt="pdf")
 
         # ── Feature 8: WhatsApp / Email Share — PDF via Web Share API ───────
@@ -2958,6 +3012,34 @@ if _qp.get("admin") == _ADMIN_KEY:
                     )
         else:
             st.success("✅ No parse errors recorded.")
+
+        # ── Officer Activity ───────────────────────────────────────────────
+        _off_act = _stats.get("officer_activity", [])
+        if _off_act:
+            st.markdown("---")
+            st.markdown("### 👤 Officer Activity")
+            _oa_rows = []
+            for _oa in _off_act:
+                _oa_tot = int(_oa.get("assessments") or 0)
+                _oa_apr = int(_oa.get("approved") or 0)
+                _oa_rows.append({
+                    "Officer":          _oa["officer"],
+                    "Assessments":      _oa_tot,
+                    "Approved":         _oa_apr,
+                    "Below Min":        _oa_tot - _oa_apr,
+                    "Approval Rate %":  round(_oa_apr / _oa_tot * 100, 1) if _oa_tot else 0,
+                    "Last Active":      _oa.get("last_active", "—"),
+                })
+            st.dataframe(
+                pd.DataFrame(_oa_rows),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Approval Rate %": st.column_config.ProgressColumn(
+                        "Approval Rate %", min_value=0, max_value=100, format="%.1f%%"
+                    ),
+                },
+            )
 
         # ── Feature 11: Portfolio Analytics ───────────────────────────────
         st.markdown("---")

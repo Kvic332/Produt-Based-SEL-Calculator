@@ -220,6 +220,17 @@ def admin_stats() -> dict:
                 "GROUP BY fmt ORDER BY count DESC"
             )
 
+            officer_activity = q(
+                "SELECT "
+                "  COALESCE(json_extract(data,'$.officer'),'Unknown') AS officer, "
+                "  COUNT(*) AS assessments, "
+                "  SUM(CASE WHEN json_extract(data,'$.approved')=1 THEN 1 ELSE 0 END) AS approved, "
+                "  MAX(substr(ts,1,10)) AS last_active "
+                "FROM events WHERE event='eligibility_result' "
+                "  AND COALESCE(json_extract(data,'$.officer'),'') != '' "
+                "GROUP BY officer ORDER BY assessments DESC"
+            )
+
             return {
                 "summary":           summary,
                 "daily":             daily,
@@ -232,6 +243,7 @@ def admin_stats() -> dict:
                 "loans_by_month":    loans_by_month,
                 "rejection_reasons": rejection_reasons,
                 "download_formats":  download_formats,
+                "officer_activity":  officer_activity,
             }
     except Exception as exc:
         return {"_error": str(exc)}

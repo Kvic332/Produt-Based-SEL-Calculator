@@ -61,6 +61,7 @@ def generate_pdf_report(
     result: dict | None = None,  # calculate_eligibility() output (optional)
     req_loan: float = 0,
     params: dict | None = None,  # loan parameters from Section 03
+    officer: str = "",           # name/ID of the assessing officer
 ) -> bytes:
     """
     Build a PDF report and return raw bytes.
@@ -115,6 +116,7 @@ def generate_pdf_report(
     info_data = [
         ["Account Holder", account_name or "—", "Bank", bank_label],
         ["Statement Period", f"{period_start} – {period_end}", "Report Date", today_str],
+        ["Assessed By", officer or "—", "", ""],
     ]
     _hw  = W / 2
     info = Table(info_data, colWidths=[28*mm, _hw - 28*mm, 25*mm, _hw - 25*mm])
