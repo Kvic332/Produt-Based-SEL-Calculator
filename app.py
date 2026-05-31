@@ -378,7 +378,7 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
 
         _lp_pairs.append(("", ""))  # spacer
 
-        pairs = _lp_pairs + [
+        _elig_pairs = [
             ("ELIGIBILITY RESULT", ""),
             ("Decision",             "Approved" if result.get("approved") else "Below Minimum"),
             ("Max Loan Amount",      result.get("max_loan", 0)),
@@ -391,16 +391,38 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
             ("Max Total Repayment",  result.get("max_total_repayment", 0)),
         ]
 
+        # Requested loan analysis rows (only when present)
+        _req_pairs = []
+        if _p.get("req_loan", 0) > 0 and "requested" in result:
+            _rq = result["requested"]
+            _rq_within = _rq.get("within_max", False)
+            _rq_diff = abs(_p["req_loan"] - result.get("max_loan", 0))
+            _rq_sign = "+" if _p["req_loan"] >= result.get("max_loan", 0) else "-"
+            _req_pairs = [
+                ("", ""),
+                ("REQUESTED LOAN ANALYSIS", ""),
+                ("Requested Amount",   f"NGN {_p['req_loan']:,.2f}"),
+                ("Interest Rate",      f"{(_rq.get('rate') or 0)*100:.2f}%"),
+                ("Repayment / Period", f"NGN {_rq.get('repayment', 0):,.2f}"),
+                ("DTI for Requested",  f"{(_rq.get('dti') or 0)*100:.2f}%"),
+                ("vs Max Loan",        f"{_rq_sign}NGN {_rq_diff:,.2f}"),
+                ("Status",             "Below max — eligible" if _rq_within else "Above max — not eligible"),
+            ]
+
+        pairs = _lp_pairs + _elig_pairs + _req_pairs
+
         for ri2, (label, val) in enumerate(pairs, 3):
             lc = ws2.cell(row=ri2, column=1, value=label)
             vc = ws2.cell(row=ri2, column=2, value=val)
             # Section headers
-            if label in ("LOAN PARAMETERS", "ELIGIBILITY RESULT"):
+            if label in ("LOAN PARAMETERS", "ELIGIBILITY RESULT", "REQUESTED LOAN ANALYSIS"):
                 lc.font = Font(name="Calibri", bold=True, color=GOLD, size=10)
                 lc.fill = fill(DARK)
                 vc.fill = fill(DARK)
                 ws2.merge_cells(f"A{ri2}:B{ri2}")
                 continue
+            if label == "" and val == "":
+                continue  # spacer row
             lc.font = body_font(MUTED); lc.fill = fill(MID)
             row_clr = GREEN if (label == "Decision" and result.get("approved")) else (RED if label == "Decision" else WHITE)
             vc.font = bold_font(row_clr); vc.fill = fill(LIGHT)
@@ -2573,6 +2595,19 @@ if calc_btn:
                     _csv_buf.write(f"Max Total Repayment,{money(result.get('max_total_repayment', 0))}\r\n")
                     _csv_buf.write(f"Applicable Turnover,{money(result.get('applicable_turnover', 0))}\r\n")
                     _csv_buf.write(f"Total Net Income,{money(result.get('total_net', 0))}\r\n")
+                    # -- Requested loan section (if applicable) --
+                    if req_loan > 0 and "requested" in result:
+                        _rq_csv = result["requested"]
+                        _rq_diff = abs(req_loan - result.get("max_loan", 0))
+                        _rq_sign = "+" if req_loan >= result.get("max_loan", 0) else "-"
+                        _csv_buf.write("\r\n")
+                        _csv_buf.write("REQUESTED LOAN ANALYSIS\r\n")
+                        _csv_buf.write(f"Requested Amount,{money(req_loan)}\r\n")
+                        _csv_buf.write(f"Interest Rate,{pct(_rq_csv.get('rate'))}\r\n")
+                        _csv_buf.write(f"Repayment / Period,{money(_rq_csv.get('repayment', 0))}\r\n")
+                        _csv_buf.write(f"DTI for Requested,{pct(_rq_csv.get('dti'))}\r\n")
+                        _csv_buf.write(f"vs Max Loan,{_rq_sign}{money(_rq_diff)}\r\n")
+                        _csv_buf.write(f"Status,{'Below max - eligible' if _rq_csv.get('within_max') else 'Above max - not eligible'}\r\n")
                     _csv_buf.write("\r\n")
                     # -- Audit rows section --
                     _csv_buf.write("CLASSIFICATION AUDIT\r\n")

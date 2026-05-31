@@ -366,6 +366,47 @@ def generate_pdf_report(
         ]))
         story.append(rt)
 
+        # ── Requested Loan Analysis (optional) ───────────────────────────
+        if req_loan > 0 and "requested" in result:
+            _req  = result["requested"]
+            _freq = result.get("repayment_frequency", "Monthly")
+            _within = _req.get("within_max", False)
+            _status_txt  = "Below max — eligible" if _within else "Above max — not eligible"
+            _status_col  = "#065f46" if _within else "#991b1b"
+            _status_bg   = colors.HexColor("#f0fdf4") if _within else colors.HexColor("#fef2f2")
+
+            story.append(Spacer(1, 4 * mm))
+            story.append(Paragraph("REQUESTED LOAN ANALYSIS", ST_SEC))
+
+            _diff = abs(req_loan - result.get("max_loan", 0))
+            _diff_sign = "+" if req_loan >= result.get("max_loan", 0) else "-"
+            _rq_rows = [
+                ["Requested Amount",  _money(req_loan),
+                 "Interest Rate",     _pct(_req.get("rate"))],
+                ["Repayment / Period", _money(_req.get("repayment", 0)),
+                 "DTI for Requested", _pct(_req.get("dti"))],
+                ["vs Max Loan",       f"{_diff_sign}{_money(_diff)}",
+                 "Status",            Paragraph(
+                     f'<font color="{_status_col}">{"✓" if _within else "✗"}  {_status_txt}</font>',
+                     _ps("rqs", fontName="Helvetica-Bold", fontSize=9, leading=12),
+                 )],
+            ]
+            _rq_tbl = Table(_rq_rows, colWidths=[qw * 0.8, qw * 1.2, qw * 0.8, qw * 1.2])
+            _rq_tbl.setStyle(TableStyle([
+                ("FONTNAME",       (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME",       (2, 0), (2, -1), "Helvetica-Bold"),
+                ("TEXTCOLOR",      (0, 0), (0, -1), C_MUTED),
+                ("TEXTCOLOR",      (2, 0), (2, -1), C_MUTED),
+                ("TEXTCOLOR",      (1, 0), (-1, -1), C_TEXT),
+                ("FONTSIZE",       (0, 0), (-1, -1), 9),
+                ("TOPPADDING",     (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
+                ("ROWBACKGROUNDS", (0, 0), (-1, -1), [C_WHITE, C_ROW_ALT]),
+                ("LINEBELOW",      (0, 0), (-1, -2), 0.5, C_BORDER),
+                ("BACKGROUND",     (2, 2), (-1, 2),  _status_bg),
+            ]))
+            story.append(_rq_tbl)
+
         # ── Repayment Schedule ────────────────────────────────────────────
         if result.get("approved") and result.get("interest_rate") and result.get("max_loan", 0) > 0:
             _loan_amt = float(result["max_loan"])
