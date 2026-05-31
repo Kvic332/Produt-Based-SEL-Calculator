@@ -3055,6 +3055,7 @@ if _qp.get("admin") == _ADMIN_KEY:
                     _d = {}
                 _loan_rows.append({
                     "Time":     _lr["ts"],
+                    "Officer":  _d.get("officer", "—") or "—",
                     "Bank":     _lr.get("bank", ""),
                     "Decision": "✅ Approved" if _d.get("approved") else "❌ Below Min",
                     "Max Loan": f"NGN {_d.get('max_loan', 0):,.0f}",
