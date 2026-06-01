@@ -2800,6 +2800,48 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
     return buckets, account_name
 
 
+def extract_account_no_excel(file_bytes: bytes) -> str:
+    """Extract the account identifier from an Excel (Mono) bank statement.
+
+    Mono exports carry label/value metadata in the top rows. Priority:
+      1. 'Nuban'        — the real 10-digit account number (often blank)
+      2. 'Account Number' / 'Account No'
+      3. 'Client ID'    — Mono's per-customer identifier (BVN-style),
+                          used as the account reference when Nuban is blank.
+    """
+    rows = []
+    if OPENPYXL_AVAILABLE:
+        try:
+            import io
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+            ws = wb.active
+            for ri, row in enumerate(ws.iter_rows(values_only=True)):
+                rows.append(list(row))
+                if ri >= 30:        # metadata always sits in the top rows
+                    break
+            wb.close()
+        except Exception:
+            return ""
+
+    def _find(labels: list[str]) -> str:
+        for row in rows:
+            if not row:
+                continue
+            label = str(row[0] or "").strip().lower().rstrip(":")
+            if label in labels:
+                for cell in row[1:]:
+                    val = str(cell or "").strip()
+                    if val:
+                        return re.sub(r"\D", "", val) or val
+        return ""
+
+    return (
+        _find(["nuban"])
+        or _find(["account number", "account no", "account no."])
+        or _find(["client id"])
+    )
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # JAIZ BANK PARSER
 # ════════════════════════════════════════════════════════════════════════════

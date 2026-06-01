@@ -12,6 +12,7 @@ from parser import (
     monthly_analysis, parse_transactions, parse_firstcentral,
     ym_label, CreditAccount,
     extract_stated_totals, verify_extraction_accuracy,
+    extract_account_no_excel,
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
@@ -1078,15 +1079,18 @@ with col2:
                     st.session_state.name_a     = name
                     st.session_state.rows_a     = rows
                     st.session_state.txns_a     = txns
-                    # Extract account number — try pdfplumber first (better for OPay/Carbon),
-                    # fall back to PyPDF2 for mybankStatement banks
-                    from parser import extract_pdf_text_pdfplumber as _ept_pl_a, extract_pdf_text as _ept_py_a
+                    # Extract account number — Excel (Mono) uses Nuban/Client ID;
+                    # PDFs use text regex (pdfplumber first, PyPDF2 fallback)
                     try:
-                        _raw_a = _ept_pl_a(file_a.getvalue(), pw_a)
-                        _acno_a = extract_account_no(_raw_a)
-                        if not _acno_a:  # pdfplumber missed it — try PyPDF2
-                            _acno_a = extract_account_no(_ept_py_a(file_a.getvalue(), pw_a))
-                        st.session_state.account_no_a = _acno_a
+                        if file_a.name.lower().endswith((".xlsx", ".xls")):
+                            st.session_state.account_no_a = extract_account_no_excel(file_a.getvalue())
+                        else:
+                            from parser import extract_pdf_text_pdfplumber as _ept_pl_a, extract_pdf_text as _ept_py_a
+                            _raw_a = _ept_pl_a(file_a.getvalue(), pw_a)
+                            _acno_a = extract_account_no(_raw_a)
+                            if not _acno_a:  # pdfplumber missed it — try PyPDF2
+                                _acno_a = extract_account_no(_ept_py_a(file_a.getvalue(), pw_a))
+                            st.session_state.account_no_a = _acno_a
                     except Exception:
                         st.session_state.account_no_a = ""
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
@@ -1782,13 +1786,16 @@ with col4:
                     st.session_state.name_b    = name_b
                     st.session_state.rows_b    = rows_b
                     st.session_state.txns_b    = txns_b
-                    from parser import extract_pdf_text_pdfplumber as _ept_pl_b, extract_pdf_text as _ept_py_b
                     try:
-                        _raw_b = _ept_pl_b(file_b.getvalue(), pw_b)
-                        _acno_b = extract_account_no(_raw_b)
-                        if not _acno_b:
-                            _acno_b = extract_account_no(_ept_py_b(file_b.getvalue(), pw_b))
-                        st.session_state.account_no_b = _acno_b
+                        if file_b.name.lower().endswith((".xlsx", ".xls")):
+                            st.session_state.account_no_b = extract_account_no_excel(file_b.getvalue())
+                        else:
+                            from parser import extract_pdf_text_pdfplumber as _ept_pl_b, extract_pdf_text as _ept_py_b
+                            _raw_b = _ept_pl_b(file_b.getvalue(), pw_b)
+                            _acno_b = extract_account_no(_raw_b)
+                            if not _acno_b:
+                                _acno_b = extract_account_no(_ept_py_b(file_b.getvalue(), pw_b))
+                            st.session_state.account_no_b = _acno_b
                     except Exception:
                         st.session_state.account_no_b = ""
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
