@@ -228,6 +228,18 @@ def money(v: float) -> str:
 def pct(v) -> str:
     return "--" if v is None else f"{v * 100:.2f}%"
 
+def extract_account_no(raw_text: str) -> str:
+    """Extract 10-digit Nigerian NUBAN account number from raw statement text."""
+    m = re.search(
+        r'Account\s*No\.?\s*[:\s]+(\d{10})',
+        raw_text, re.I,
+    )
+    if m:
+        return m.group(1)
+    # Fallback: any standalone 10-digit number near "account" label
+    m2 = re.search(r'\b(\d{10})\b', raw_text[:3000])
+    return m2.group(1) if m2 else ""
+
 def card(label: str, value: str, cls: str = "") -> str:
     return (f'<div class="sel-card{"highlight" if cls=="_h" else ""}" style="margin-bottom:8px">'
             f'<div class="sel-label">{label}</div>'
@@ -466,8 +478,8 @@ def required_income_for_loan(target_loan: float, tenor: int,
 
 
 # ── Session state init ────────────────────────────────────────────────────────
-for key in ["buckets_a","summary_a","bank_a","name_a",
-            "buckets_b","summary_b","bank_b","name_b",
+for key in ["buckets_a","summary_a","bank_a","name_a","account_no_a",
+            "buckets_b","summary_b","bank_b","name_b","account_no_b",
             "credit_data","rows_a","rows_b","txns_a","txns_b",
             "last_calc_params", "batch_results", "last_share"]:
     if key not in st.session_state:
@@ -1040,6 +1052,13 @@ with col2:
                     st.session_state.name_a     = name
                     st.session_state.rows_a     = rows
                     st.session_state.txns_a     = txns
+                    # Extract account number from raw text
+                    from parser import extract_pdf_text as _ept_a
+                    try:
+                        _raw_a = _ept_a(file_a.getvalue(), pw_a)
+                        st.session_state.account_no_a = extract_account_no(_raw_a)
+                    except Exception:
+                        st.session_state.account_no_a = ""
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
                     _txn_count = sum(b.get("count", 0) for b in buckets.values())
                     _gross_tot = sum(b.get("gross", 0) for b in buckets.values())
@@ -1733,6 +1752,12 @@ with col4:
                     st.session_state.name_b    = name_b
                     st.session_state.rows_b    = rows_b
                     st.session_state.txns_b    = txns_b
+                    from parser import extract_pdf_text as _ept_b
+                    try:
+                        _raw_b = _ept_b(file_b.getvalue(), pw_b)
+                        st.session_state.account_no_b = extract_account_no(_raw_b)
+                    except Exception:
+                        st.session_state.account_no_b = ""
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
                     _txn_count_b = sum(b.get("count", 0) for b in buckets_b.values())
                     _gross_tot_b = sum(b.get("gross", 0) for b in buckets_b.values())
@@ -2356,6 +2381,8 @@ if calc_btn:
             requested_loan=req_loan if req_loan > 0 else 0,
             manual_rate_percent=manual_rate if manual_rate > 0 else None,
         )
+        # Build combined applicant name + account number for tracking
+        _acct_no = (st.session_state.account_no_a or "") or (st.session_state.account_no_b or "")
         track("eligibility_result",
               session=_SID, officer=_OFFICER,
               bank=st.session_state.bank_a or "",
@@ -2365,7 +2392,9 @@ if calc_btn:
               dti=round((result.get("dti") or 0) * 100, 2),
               location=location,
               product=prod_type,
-              total_net=round(result.get("total_net", 0), 2))
+              total_net=round(result.get("total_net", 0), 2),
+              applicant=_report_name or "",
+              account_no=_acct_no)
 
         # ── Build loan params dict for all download generators ───────────
         _loan_params = {
@@ -3054,15 +3083,17 @@ if _qp.get("admin") == _ADMIN_KEY:
                 except Exception:
                     _d = {}
                 _loan_rows.append({
-                    "Time":     _lr["ts"],
-                    "Officer":  _d.get("officer", "—") or "—",
-                    "Bank":     _lr.get("bank", ""),
-                    "Decision": "✅ Approved" if _d.get("approved") else "❌ Below Min",
-                    "Max Loan": f"NGN {_d.get('max_loan', 0):,.0f}",
-                    "Tenor":    f"{_d.get('tenor', '—')} mo",
-                    "DTI":      f"{_d.get('dti', 0):.1f}%",
-                    "Product":  _d.get("product", ""),
-                    "Location": _d.get("location", ""),
+                    "Time":       _lr["ts"],
+                    "Officer":    _d.get("officer",    "—") or "—",
+                    "Applicant":  _d.get("applicant",  "—") or "—",
+                    "Account No": _d.get("account_no", "—") or "—",
+                    "Bank":       _lr.get("bank", ""),
+                    "Decision":   "✅ Approved" if _d.get("approved") else "❌ Below Min",
+                    "Max Loan":   f"NGN {_d.get('max_loan', 0):,.0f}",
+                    "Tenor":      f"{_d.get('tenor', '—')} mo",
+                    "DTI":        f"{_d.get('dti', 0):.1f}%",
+                    "Product":    _d.get("product", ""),
+                    "Location":   _d.get("location", ""),
                 })
             st.dataframe(
                 pd.DataFrame(_loan_rows),
