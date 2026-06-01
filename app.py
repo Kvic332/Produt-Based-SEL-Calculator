@@ -224,10 +224,16 @@ st.markdown("""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def money(v: float) -> str:
-    return f"₦{v:,.0f}"
+    try:
+        return f"₦{float(v):,.0f}"
+    except (TypeError, ValueError):
+        return "₦0"
 
 def pct(v) -> str:
-    return "--" if v is None else f"{v * 100:.2f}%"
+    try:
+        return "--" if v is None else f"{float(v) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "--"
 
 def extract_account_no(raw_text: str) -> str:
     """Extract 10-digit Nigerian NUBAN account number from raw statement text.
@@ -2957,8 +2963,8 @@ async function doShare(via){{
 # FEATURE 5 — PERSISTENT WHAT-IF SCENARIOS PANEL
 # Renders after any completed calculation, persists between rerenders.
 # ════════════════════════════════════════════════════════════════════════════
-if st.session_state.last_calc_params:
-    _lp = st.session_state.last_calc_params
+_lp = st.session_state.last_calc_params
+if isinstance(_lp, dict) and isinstance(_lp.get("result"), dict):
     _lp_result = _lp["result"]
 
     st.markdown("---")
