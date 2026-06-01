@@ -263,6 +263,59 @@ def get_history(account_name: str) -> list[dict]:
     )
 
 
+# ── Full audit-log export (admin only) ────────────────────────────────────────
+def export_audit_csv() -> str:
+    """Return the complete eligibility audit trail as CSV text.
+
+    One row per eligibility_result event with the fields most useful for
+    compliance / fraud review: timestamp, officer, applicant, account no,
+    bank, decision, max loan, tenor, DTI, product, location.
+    """
+    import csv
+    import io as _io
+
+    rows = _query(
+        "SELECT ts, bank, "
+        "  JGET(data,officer)     AS officer, "
+        "  JGET(data,applicant)   AS applicant, "
+        "  JGET(data,account_no)  AS account_no, "
+        "  JTRUE(data,approved)   AS approved, "
+        "  JGET(data,max_loan)    AS max_loan, "
+        "  JGET(data,tenor)       AS tenor, "
+        "  JGET(data,dti)         AS dti, "
+        "  JGET(data,product)     AS product, "
+        "  JGET(data,location)    AS location, "
+        "  session "
+        "FROM events WHERE event='eligibility_result' "
+        "ORDER BY ts DESC"
+    )
+
+    buf = _io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Timestamp (UTC)", "Officer", "Applicant", "Account No",
+                "Bank", "Decision", "Max Loan", "Tenor", "DTI %",
+                "Product", "Location", "Session"])
+    for r in rows:
+        _appr = r.get("approved")
+        # approved arrives as bool/1/0/'true' depending on backend
+        _is_appr = _appr in (True, 1, "1", "true", "t")
+        w.writerow([
+            r.get("ts", ""),
+            r.get("officer") or "",
+            r.get("applicant") or "",
+            r.get("account_no") or "",
+            r.get("bank", "") or "",
+            "Approved" if _is_appr else "Below Min",
+            r.get("max_loan") or "",
+            r.get("tenor") or "",
+            r.get("dti") or "",
+            r.get("product") or "",
+            r.get("location") or "",
+            r.get("session", "") or "",
+        ])
+    return buf.getvalue()
+
+
 # ── Public read API (admin only) ──────────────────────────────────────────────
 def admin_stats() -> dict:
     """Return aggregated stats for the admin dashboard."""

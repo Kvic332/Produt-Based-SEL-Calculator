@@ -15,7 +15,7 @@ from parser import (
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
-from tracker import track, admin_stats, save_history, get_history
+from tracker import track, admin_stats, save_history, get_history, export_audit_csv
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -3273,15 +3273,34 @@ if _qp.get("admin") == _ADMIN_KEY:
             _dl_df = pd.DataFrame(_dl_fmt).rename(columns={"fmt": "Format", "count": "Downloads"})
             st.dataframe(_dl_df, hide_index=True, use_container_width=True)
 
-        # ── Raw DB download ───────────────────────────────────────────────
-        import io as _adm_io
-        _db_path = pathlib.Path(__file__).parent / "sel_analytics.db"
-        if _db_path.exists():
-            with open(_db_path, "rb") as _dbf:
+        # ── Audit log + raw DB downloads ──────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 📥 Export")
+        _ex1, _ex2 = st.columns(2)
+        with _ex1:
+            try:
+                _audit_csv = export_audit_csv()
                 st.download_button(
-                    "⬇  Download Raw Analytics DB (SQLite)",
-                    _dbf.read(),
-                    file_name="sel_analytics.db",
-                    mime="application/octet-stream",
-                    key="dl_admin_db",
+                    "⬇  Download Full Audit Log (CSV)",
+                    _audit_csv.encode("utf-8-sig"),   # BOM → opens cleanly in Excel
+                    file_name=f"SEL_Audit_Log_{datetime.date.today():%Y%m%d}.csv",
+                    mime="text/csv",
+                    key="dl_audit_log",
+                    use_container_width=True,
+                    help="Every assessment: officer, applicant, account no, decision, loan, etc.",
                 )
+            except Exception as _ex_err:
+                st.caption(f"Audit export unavailable: {_ex_err}")
+        with _ex2:
+            _db_path = pathlib.Path(__file__).parent / "sel_analytics.db"
+            if _db_path.exists():
+                with open(_db_path, "rb") as _dbf:
+                    st.download_button(
+                        "⬇  Download Raw SQLite DB (local cache)",
+                        _dbf.read(),
+                        file_name="sel_analytics.db",
+                        mime="application/octet-stream",
+                        key="dl_admin_db",
+                        use_container_width=True,
+                        help="Local SQLite snapshot. On Neon, use the CSV export for live data.",
+                    )
