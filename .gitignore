@@ -11,6 +11,12 @@ build/
 pdf_extract.json
 access_stmt.json
 *.debug.json
+test_report_*.pdf
+
+# Local SQLite tracker DB (prod uses Neon Postgres via DATABASE_URL)
+sel_analytics.db
+*.sqlite
+*.sqlite3
 
 # Claude Code session memory
 .claude/

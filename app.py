@@ -3057,6 +3057,24 @@ if _qp.get("admin") == _ADMIN_KEY:
 
     _stats = admin_stats()
 
+    # ── Storage backend indicator ──────────────────────────────────────────
+    _backend = _stats.get("backend", "Unknown")
+    _is_persistent = "PostgreSQL" in _backend or "Neon" in _backend
+    _bk_col = "#34d399" if _is_persistent else "#f87171"
+    _bk_note = ("✓ Data persists permanently across redeploys"
+                if _is_persistent else
+                "⚠ Ephemeral — data resets on redeploy. Set DATABASE_URL secret to persist.")
+    st.markdown(
+        f'<div style="display:inline-flex;align-items:center;gap:10px;margin-bottom:12px;'
+        f'padding:6px 14px;background:rgba(255,255,255,.03);border:1px solid {_bk_col}44;'
+        f'border-radius:4px;font-size:11px">'
+        f'<span style="color:#64748b;letter-spacing:1px;text-transform:uppercase">Storage</span>'
+        f'<span style="color:{_bk_col};font-weight:700">{_backend}</span>'
+        f'<span style="color:#64748b">· {_bk_note}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     if "_error" in _stats:
         st.error(f"Tracker DB error: {_stats['_error']}")
     else:
