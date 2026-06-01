@@ -1,6 +1,12 @@
-streamlit>=1.39
+# Versions are capped on purpose. Streamlit Cloud auto-installs the newest
+# release of any unpinned package, and newer Streamlit releases remove
+# deprecated APIs this app uses (st.components.v1.html, use_container_width).
+# Unpinned deps caused repeated production crashes on 2026-06-01.
+# App runs on Python 3.12 (set in Streamlit Cloud → Settings → Python version).
+streamlit>=1.44,<1.59
 PyPDF2>=3.0
-pandas>=2.0
+pandas>=2.0,<4
+numpy>=1.26,<3
 openpyxl>=3.0
 xlrd>=2.0
 reportlab>=4.0
