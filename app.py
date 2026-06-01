@@ -229,16 +229,35 @@ def pct(v) -> str:
     return "--" if v is None else f"{v * 100:.2f}%"
 
 def extract_account_no(raw_text: str) -> str:
-    """Extract 10-digit Nigerian NUBAN account number from raw statement text."""
-    m = re.search(
-        r'Account\s*No\.?\s*[:\s]+(\d{10})',
-        raw_text, re.I,
-    )
+    """Extract 10-digit Nigerian NUBAN account number from raw statement text.
+
+    Handles multiple statement formats:
+    - mybankStatement:  'Account No. 0036641218'
+    - OPay / Carbon:    'Account Name  Account Number\\nNAME  7026155943'
+    - Generic label:    'Account Number: 1234567890'
+    """
+    # 1. Explicit label on same line: "Account No. XXXXXXXXXX"
+    m = re.search(r'Account\s*No\.?\s*[:\s]+(\d{10})\b', raw_text, re.I)
     if m:
         return m.group(1)
-    # Fallback: any standalone 10-digit number near "account" label
-    m2 = re.search(r'\b(\d{10})\b', raw_text[:3000])
-    return m2.group(1) if m2 else ""
+
+    # 2. OPay / Carbon column-header format:
+    #    "Account Name  Account Number\n<NAME>  7026155943"
+    m2 = re.search(
+        r'Account\s*Number\s*[\r\n]+[^\r\n]{1,80}\s(\d{10})\b',
+        raw_text, re.I,
+    )
+    if m2:
+        return m2.group(1)
+
+    # 3. "Account Number" label followed (same line) by 10-digit number
+    m3 = re.search(r'Account\s*Number\s*[:\s]+(\d{10})\b', raw_text, re.I)
+    if m3:
+        return m3.group(1)
+
+    # 4. Fallback: first standalone 10-digit number in header area (first 2000 chars)
+    m4 = re.search(r'\b(\d{10})\b', raw_text[:2000])
+    return m4.group(1) if m4 else ""
 
 def card(label: str, value: str, cls: str = "") -> str:
     return (f'<div class="sel-card{"highlight" if cls=="_h" else ""}" style="margin-bottom:8px">'
@@ -1052,11 +1071,15 @@ with col2:
                     st.session_state.name_a     = name
                     st.session_state.rows_a     = rows
                     st.session_state.txns_a     = txns
-                    # Extract account number from raw text
-                    from parser import extract_pdf_text as _ept_a
+                    # Extract account number — try pdfplumber first (better for OPay/Carbon),
+                    # fall back to PyPDF2 for mybankStatement banks
+                    from parser import extract_pdf_text_pdfplumber as _ept_pl_a, extract_pdf_text as _ept_py_a
                     try:
-                        _raw_a = _ept_a(file_a.getvalue(), pw_a)
-                        st.session_state.account_no_a = extract_account_no(_raw_a)
+                        _raw_a = _ept_pl_a(file_a.getvalue(), pw_a)
+                        _acno_a = extract_account_no(_raw_a)
+                        if not _acno_a:  # pdfplumber missed it — try PyPDF2
+                            _acno_a = extract_account_no(_ept_py_a(file_a.getvalue(), pw_a))
+                        st.session_state.account_no_a = _acno_a
                     except Exception:
                         st.session_state.account_no_a = ""
                     st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
@@ -1752,10 +1775,13 @@ with col4:
                     st.session_state.name_b    = name_b
                     st.session_state.rows_b    = rows_b
                     st.session_state.txns_b    = txns_b
-                    from parser import extract_pdf_text as _ept_b
+                    from parser import extract_pdf_text_pdfplumber as _ept_pl_b, extract_pdf_text as _ept_py_b
                     try:
-                        _raw_b = _ept_b(file_b.getvalue(), pw_b)
-                        st.session_state.account_no_b = extract_account_no(_raw_b)
+                        _raw_b = _ept_pl_b(file_b.getvalue(), pw_b)
+                        _acno_b = extract_account_no(_raw_b)
+                        if not _acno_b:
+                            _acno_b = extract_account_no(_ept_py_b(file_b.getvalue(), pw_b))
+                        st.session_state.account_no_b = _acno_b
                     except Exception:
                         st.session_state.account_no_b = ""
                     st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
