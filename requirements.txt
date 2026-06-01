@@ -1,4 +1,8 @@
-streamlit>=1.30
+# Pinned to a known-good Streamlit line. Do NOT use an open ">=" bound:
+# Streamlit Cloud auto-installs the newest release, and newer releases
+# remove deprecated APIs (st.components.v1.html, use_container_width)
+# that this app relies on — an unpinned version broke the app on 2026-06-01.
+streamlit>=1.39,<1.45
 PyPDF2>=3.0
 pandas>=2.0
 openpyxl>=3.0
