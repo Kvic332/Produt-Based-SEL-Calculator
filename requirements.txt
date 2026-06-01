@@ -3,6 +3,10 @@
 # remove deprecated APIs (st.components.v1.html, use_container_width)
 # that this app relies on — an unpinned version broke the app on 2026-06-01.
 streamlit>=1.39,<1.45
+# altair 5.5+ generates TypedDict(closed=True) schema that crashes on
+# Python 3.14 (Streamlit Cloud's runtime). Pin below 5.5 — used by
+# st.bar_chart / st.line_chart in the admin dashboard.
+altair>=5.0,<5.5
 PyPDF2>=3.0
 pandas>=2.0
 openpyxl>=3.0
