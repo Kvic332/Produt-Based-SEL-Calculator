@@ -267,6 +267,40 @@ def extract_account_no(raw_text: str) -> str:
     m4 = re.search(r'\b(\d{10})\b', raw_text[:2000])
     return m4.group(1) if m4 else ""
 
+def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = False) -> str:
+    """Render a dependency-free vertical bar chart as HTML.
+
+    Used instead of st.bar_chart/st.line_chart, which import altair —
+    altair's TypedDict(closed=True) schema crashes on Python 3.14.
+    """
+    vals = [float(v or 0) for v in values]
+    scale = max(vals) if vals and max(vals) > 0 else 1
+    BAR_H = 120
+
+    def _fmt(v: float) -> str:
+        if money_fmt:
+            return f"₦{v/1_000_000:.1f}m" if v >= 1_000_000 else f"₦{v/1_000:.0f}k" if v >= 1000 else f"₦{v:.0f}"
+        return f"{v:,.0f}"
+
+    bars = ""
+    for lbl, v in zip(labels, vals):
+        h = int(v / scale * BAR_H) if v > 0 else 0
+        bars += (
+            f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
+            f'<div style="font-size:9px;color:{color};margin-bottom:4px;white-space:nowrap">{_fmt(v)}</div>'
+            f'<div style="width:100%;height:{BAR_H}px;display:flex;align-items:flex-end;justify-content:center">'
+            f'<div style="width:70%;height:{h}px;background:linear-gradient(180deg,{color} 0%,{color}99 100%);'
+            f'border-radius:3px 3px 0 0;min-height:2px"></div></div>'
+            f'<div style="font-size:8px;color:#64748b;margin-top:6px;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;max-width:100%">{lbl}</div>'
+            f'</div>'
+        )
+    return (
+        f'<div style="display:flex;align-items:flex-end;gap:6px;padding:12px;'
+        f'background:rgba(0,0,0,.15);border:1px solid #1a3d2b;border-radius:4px">{bars}</div>'
+    )
+
+
 def card(label: str, value: str, cls: str = "") -> str:
     return (f'<div class="sel-card{"highlight" if cls=="_h" else ""}" style="margin-bottom:8px">'
             f'<div class="sel-label">{label}</div>'
@@ -3117,7 +3151,14 @@ if _qp.get("admin") == _ADMIN_KEY:
             _df_daily = pd.DataFrame(_daily).rename(
                 columns={"day": "Date", "uploads": "Uploads"}
             ).sort_values("Date")
-            st.bar_chart(_df_daily.set_index("Date")["Uploads"])
+            st.markdown(
+                html_bar_chart(
+                    [d[5:] for d in _df_daily["Date"].tolist()],  # MM-DD labels
+                    _df_daily["Uploads"].tolist(),
+                    color="#10b981",
+                ),
+                unsafe_allow_html=True,
+            )
 
         # ── Bank distribution ─────────────────────────────────────────────
         _banks = _stats.get("banks", [])
@@ -3259,10 +3300,25 @@ if _qp.get("admin") == _ADMIN_KEY:
             _ac1, _ac2 = st.columns(2)
             with _ac1:
                 st.markdown("**Assessments per month**")
-                st.bar_chart(_lbm_df.set_index("Month")["Assessments"])
+                st.markdown(
+                    html_bar_chart(
+                        _lbm_df["Month"].tolist(),
+                        _lbm_df["Assessments"].tolist(),
+                        color="#10b981",
+                    ),
+                    unsafe_allow_html=True,
+                )
             with _ac2:
                 st.markdown("**Average max loan per month**")
-                st.line_chart(_lbm_df.set_index("Month")["Avg Max Loan (NGN)"])
+                st.markdown(
+                    html_bar_chart(
+                        _lbm_df["Month"].tolist(),
+                        _lbm_df["Avg Max Loan (NGN)"].tolist(),
+                        color="#fbbf24",
+                        money_fmt=True,
+                    ),
+                    unsafe_allow_html=True,
+                )
 
         # Rejection breakdown
         _rej = _stats.get("rejection_reasons", [])
