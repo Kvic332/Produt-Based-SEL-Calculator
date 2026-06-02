@@ -1032,6 +1032,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                         _b_res    = calculate_eligibility(
                             nets=_b_nets, counts=_b_counts,
                             location=_bp_loc, product_type=_bp_prod, tenor=_bp_ten,
+                            sel_mode=(_product == "SEL"),
                         )
                         _b_avg = sum(_b_nets) / len(_b_nets)
                         _bp_rows.append({
@@ -2470,6 +2471,7 @@ if calc_btn:
             tenor=tenor, other_loans=other_loans,
             requested_loan=req_loan if req_loan > 0 else 0,
             manual_rate_percent=manual_rate if manual_rate > 0 else None,
+            sel_mode=(_product == "SEL"),
         )
         # Build combined applicant name + account number for tracking
         _acct_no = (st.session_state.account_no_a or "") or (st.session_state.account_no_b or "")
@@ -2501,6 +2503,7 @@ if calc_btn:
             "nets": nets, "counts": counts, "location": location,
             "prod_type": prod_type, "other_loans": other_loans,
             "manual_rate": manual_rate, "result": result,
+            "sel_mode": (_product == "SEL"),
         }
         st.session_state["_wi_tenor"] = tenor
         st.session_state["_wi_other"] = float(other_loans)
@@ -2643,6 +2646,7 @@ if calc_btn:
                 location=location, product_type=prod_type,
                 tenor=_t, other_loans=other_loans,
                 manual_rate_percent=manual_rate if manual_rate > 0 else None,
+                sel_mode=(_product == "SEL"),
             )
             _tenor_data.append({
                 "Tenor":              f"{'▶ ' if _t == tenor else ''}{_t} mo{'  ◀' if _t == tenor else ''}",
@@ -3074,6 +3078,7 @@ if isinstance(_lp, dict) and isinstance(_lp.get("result"), dict):
             tenor        = _wi_tenor,
             other_loans  = _wi_other,
             manual_rate_percent = _lp["manual_rate"] if _lp["manual_rate"] > 0 else None,
+            sel_mode     = _lp.get("sel_mode", False),
         )
 
         # Side-by-side comparison

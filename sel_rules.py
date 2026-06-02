@@ -107,12 +107,26 @@ def get_dti(total_net: float, product_type: str, location: str) -> float:
     return 0.0
 
 
-def applicable_turnover(nets: list[float], product_type: str) -> float:
+def applicable_turnover(nets: list[float], product_type: str,
+                        sel_mode: bool = False) -> float:
+    """Applicable turnover from the monthly eligible-income list (oldest→newest).
+
+    Rules
+    -----
+    NTB            : lower of the plain average and the trimmed average
+                     (highest & lowest month removed).
+    RENEWAL/TOP-UP : average of the 3 most recent months when SEL (6-month)
+                     assessment; otherwise the plain average of all months.
+    """
     total = sum(nets)
     average = total / len(nets) if nets else 0
     if product_type == "NTB" and len(nets) >= 3:
         trimmed = (total - min(nets) - max(nets)) / (len(nets) - 2)
         return min(average, trimmed)
+    # RENEWAL / TOP-UP under SEL → average of the 3 latest months only
+    if sel_mode and product_type in ("RENEWAL", "TOP-UP") and len(nets) >= 3:
+        latest3 = nets[-3:]
+        return sum(latest3) / 3
     return average
 
 
@@ -150,13 +164,14 @@ def calculate_eligibility(
     other_loans: float = 0,
     requested_loan: float = 0,
     manual_rate_percent: float | None = None,
+    sel_mode: bool = False,
 ) -> dict:
     total_net = sum(nets)
     average_count = sum(counts) / len(counts) if counts else 0
     # If ANY month has fewer than 12 transactions, use Monthly repayment
     any_month_below = counts and min(counts) < 12
     repayment_frequency = "Weekly" if (not any_month_below and average_count >= 12) else "Monthly"
-    turnover = applicable_turnover(nets, product_type)
+    turnover = applicable_turnover(nets, product_type, sel_mode=sel_mode)
     dti = get_dti(total_net, product_type, location)
     max_repayment_monthly = max((turnover * dti) - other_loans, 0)
     max_total_repayment = max_repayment_monthly * tenor
