@@ -706,9 +706,25 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+# ── Crash-proof HTML component wrapper ───────────────────────────────────────
+# st.components.v1.html is deprecated (removal date 2026-06-01). These JS
+# widgets (clock, badge, quotes, confetti, share) are non-essential decoration,
+# so we guard every call: if the API is unavailable or errors, the app keeps
+# running without the widget instead of crashing on load.
+try:
+    import streamlit.components.v1 as _components
+except Exception:
+    _components = None
+
+def _html(html: str, height: int = 0) -> None:
+    try:
+        if _components is not None:
+            _components.html(html, height=height)
+    except Exception:
+        pass
+
 # ── Live clock — updates every second via parent DOM ─────────────────────────
-import streamlit.components.v1 as _components
-_components.html("""
+_html("""
 <script>
 (function(){
   var p = window.parent;
@@ -730,7 +746,7 @@ _components.html("""
 """, height=0)
 
 # ── Trademark badge — floats in every 5 minutes ───────────────────────────────
-_components.html("""
+_html("""
 <script>
 (function() {
   var p = window.parent;
@@ -811,7 +827,7 @@ _components.html("""
 
 
 # ── Motivational quote toast — shows every 30 min via localStorage ────────────
-_components.html("""
+_html("""
 <script>
 (function(){
   var p = window.parent;
@@ -2571,7 +2587,7 @@ if calc_btn:
 
         # ── Confetti on approval ──────────────────────────────────────────
         if approved:
-            _components.html(
+            _html(
                 f'<script>'
                 f'(function(){{ var p=window.parent;'
                 f'if(p.__selConfetti) p.__selConfetti({loan});'
@@ -2935,7 +2951,7 @@ if st.session_state.last_share:
     )
     # Web Share API component — shares the actual PDF on mobile, falls back to
     # download + text link on desktop browsers without file-share support.
-    _components.html(f"""
+    _html(f"""
 <style>
   body{{margin:0;padding:0;background:transparent}}
   .sh-wrap{{display:flex;gap:12px}}
