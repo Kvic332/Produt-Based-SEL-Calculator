@@ -2565,6 +2565,21 @@ if calc_btn:
         banner_cls = "banner-approved" if approved else "banner-rejected"
         st.markdown(f'<div class="{banner_cls}">{decision}</div>', unsafe_allow_html=True)
 
+        # ── Turnover ceiling policy note ──────────────────────────────────
+        if result.get("turnover_capped"):
+            _cap_amt = result.get("turnover_cap_amount", 5_000_000)
+            _cap_thr = result.get("turnover_cap_threshold", 20_000_000)
+            st.markdown(
+                f'<div style="margin-top:8px;padding:10px 14px;'
+                f'background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);'
+                f'border-left:4px solid #f59e0b;border-radius:4px;font-size:12px;color:#fbbf24">'
+                f'⚑ <strong>Policy cap applied:</strong> max loan limited to {money(_cap_amt)} '
+                f'because applicable turnover ({money(result.get("applicable_turnover", 0))}) '
+                f'is below {money(_cap_thr)}. Turnover of {money(_cap_thr)}+ is required for a '
+                f'loan above {money(_cap_amt)}.</div>',
+                unsafe_allow_html=True,
+            )
+
         # ── Assessment streak badge ───────────────────────────────────────
         st.session_state.assessment_count += 1
         _ac = st.session_state.assessment_count

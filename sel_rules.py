@@ -169,6 +169,19 @@ def calculate_eligibility(
         if not manual_rate and new_loan > 0:
             rate = get_interest_rate(new_loan, location, product_type)
 
+    # ── Policy: turnover-based max-loan ceiling ───────────────────────────────
+    # Applicable turnover below NGN 20,000,000 caps the maximum loan at
+    # NGN 5,000,000. Only when applicable turnover is >= NGN 20,000,000 can the
+    # max loan exceed NGN 5,000,000 (subject to the standard product limits).
+    TURNOVER_CEILING_THRESHOLD = 20_000_000
+    TURNOVER_CAP_AMOUNT        = 5_000_000
+    turnover_capped = False
+    if turnover < TURNOVER_CEILING_THRESHOLD and new_loan > TURNOVER_CAP_AMOUNT:
+        new_loan = TURNOVER_CAP_AMOUNT
+        turnover_capped = True
+        if not manual_rate:
+            rate = get_interest_rate(new_loan, location, product_type)
+
     min_loan, max_loan = loan_limits(location, product_type)
     approved = min_loan <= new_loan <= max_loan
     weekly_payment = max_repayment_monthly / 4.33333
@@ -186,6 +199,9 @@ def calculate_eligibility(
         "max_loan": new_loan,
         "approved": approved,
         "decision": "Max loan amount" if approved else "Below product minimum",
+        "turnover_capped": turnover_capped,
+        "turnover_cap_threshold": TURNOVER_CEILING_THRESHOLD,
+        "turnover_cap_amount": TURNOVER_CAP_AMOUNT,
     }
 
     if requested_loan:
