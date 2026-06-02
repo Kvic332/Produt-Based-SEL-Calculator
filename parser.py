@@ -1,4 +1,10 @@
-from __future__ import annotations
+# NOTE: Do NOT add `from __future__ import annotations` here.
+# This module is named `parser`, which collides with the removed CPython
+# stdlib module of the same name. A dependency importing the old stdlib
+# `parser` leaves sys.modules['parser'] = None; with stringized annotations,
+# @dataclass then tries sys.modules['parser'].__dict__ and crashes on
+# Python 3.12 ("'NoneType' object has no attribute '__dict__'"). Keeping
+# real (non-stringized) annotations avoids that code path entirely.
 
 import re
 import subprocess
