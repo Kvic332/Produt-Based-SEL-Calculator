@@ -285,6 +285,7 @@ def export_audit_csv() -> str:
         "  JGET(data,dti)         AS dti, "
         "  JGET(data,product)     AS product, "
         "  JGET(data,location)    AS location, "
+        "  JGET(data,total_net)   AS total_net, "
         "  session "
         "FROM events WHERE event='eligibility_result' "
         "ORDER BY ts DESC"
@@ -294,7 +295,7 @@ def export_audit_csv() -> str:
     w = csv.writer(buf)
     w.writerow(["Timestamp (UTC)", "Officer", "Applicant", "Account No",
                 "Bank", "Decision", "Max Loan", "Tenor", "DTI %",
-                "Product", "Location", "Session"])
+                "Product", "Location", "Total Net Income", "Session"])
     for r in rows:
         _appr = r.get("approved")
         # approved arrives as bool/1/0/'true' depending on backend
@@ -311,6 +312,7 @@ def export_audit_csv() -> str:
             r.get("dti") or "",
             r.get("product") or "",
             r.get("location") or "",
+            r.get("total_net") or "",
             r.get("session", "") or "",
         ])
     return buf.getvalue()
