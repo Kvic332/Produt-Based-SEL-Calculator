@@ -361,10 +361,20 @@ def extract_pdf_text_layout(pdf_bytes: bytes) -> str:
 def detect_bank(text: str) -> str:
     t = text.lower()
 
-    # Header window: first ~1200 chars = bank name / account summary area.
-    # Narrations appear much later, so any bank keyword found here is from
-    # the actual statement header, not a "Transfer to STERLING BANK" narration.
-    t_hdr = t[:1200]
+    # Header window = everything BEFORE the transaction table begins. The bank
+    # name / account-summary area sits above the transactions, so cutting here
+    # prevents narration text (e.g. "NIP/.../UBA /", "To Zenith Bank Plc",
+    # "Transfer to STERLING BANK") from triggering a false bank match. Some
+    # statements have a dense summary where narrations start well within the
+    # first 1200 chars, which previously caused misdetection.
+    _markers = [
+        "transaction summary", "trandate valuedate", "tran date value date",
+        "tran. date value", "tran.date value", "date narration",
+        "transaction details", "transaction detail",
+    ]
+    _cuts = [t.find(m) for m in _markers]
+    _cuts = [c for c in _cuts if c != -1]
+    t_hdr = t[:min(_cuts)] if _cuts else t[:1200]
 
     # ── Renmoney MFB: MUST be before Jaiz ────────────────────────────────
     # Renmoney's column header "DateNarration Debit Credit Balance" contains
@@ -474,45 +484,42 @@ def detect_bank(text: str) -> str:
         return "Providus"
 
     # ── mybankStatement-format banks ──────────────────────────────────────
-    # All checks below use t_hdr (header area) for ambiguous keywords so
-    # that NIP narrations ("NIP/STERLING BANK/AMOUNT") never misfire.
+    # IMPORTANT: a bank's own name only legitimately appears in the statement
+    # HEADER (identity block). It must NEVER be detected from transaction
+    # narrations ("NIP/FCMB/...", "To Zenith Bank Plc", "/UBA /"), which would
+    # mislabel the statement. Therefore every bank-name check below matches
+    # against t_hdr (the strict header, cut before the transaction table),
+    # not the full text. Only structural markers (mybankstatement) use full t.
+    _fidelity_url = "fidelitybank.ng"
 
-    # GTBank: "guaranty trust" / "gtco" are header-only; "gtbank" requires
-    # mybankstatement watermark to avoid false hits in Kuda/Moniepoint narrations.
-    if "guaranty trust" in t or "gtco" in t or \
-            ("gtbank" in t and "mybankstatement" in t) or \
-            ("gt bank" in t and "mybankstatement" in t):
-        return "GTBank"
-
-    if "access bank" in t_hdr or ("access bank" in t and "mybankstatement" in t):
-        return "Access"
-    if "first bank" in t_hdr or "firstbank" in t_hdr or \
-            (("first bank" in t or "firstbank" in t) and "mybankstatement" in t):
-        return "FirstBank"
-    if "united bank for africa" in t_hdr or ("uba" in t_hdr and "mybankstatement" in t):
-        return "UBA"
-    # Fidelity Direct: native Fidelity Bank statement (has fidelitybank.ng URL
-    # in the page header and uses DD-Mon-YY dates — NOT a mybankStatement PDF).
-    if "fidelitybank.ng" in t_hdr and "mybankstatement" not in t:
+    # Fidelity Direct: native Fidelity statement (fidelitybank.ng URL in the
+    # page header, DD-Mon-YY dates — NOT a mybankStatement PDF).
+    if _fidelity_url in t_hdr and "mybankstatement" not in t:
         return "Fidelity_Direct"
-    if "fidelity bank" in t_hdr or ("fidelity bank" in t and "mybankstatement" in t):
+
+    if "guaranty trust" in t_hdr or "gtco" in t_hdr or \
+            "gtbank" in t_hdr or "gt bank" in t_hdr:
+        return "GTBank"
+    if "access bank" in t_hdr:
+        return "Access"
+    if "first bank" in t_hdr or "firstbank" in t_hdr:
+        return "FirstBank"
+    if "united bank for africa" in t_hdr or re.search(r"\buba\b", t_hdr):
+        return "UBA"
+    if "fidelity bank" in t_hdr or "fidelity" in t_hdr:
         return "Fidelity"
-    if "union bank" in t_hdr or ("union bank" in t and "mybankstatement" in t):
+    if "union bank" in t_hdr:
         return "Union"
-    if "stanbic ibtc" in t_hdr or \
-            ("stanbic" in t and ("mybankstatement" in t or "stanbic ibtc" in t)):
+    if "stanbic" in t_hdr:
         return "Stanbic"
-    # FCMB: full name OR mybankstatement watermark. Plain "fcmb" in Zenith
-    # narrations (NIP/FCMB/...) must NOT fire — Zenith_Corporate already
-    # caught above, but be explicit here too.
-    if "first city monument bank" in t or ("fcmb" in t and "mybankstatement" in t):
+    if "first city monument bank" in t_hdr or re.search(r"\bfcmb\b", t_hdr):
         return "FCMB"
-    # Wema/Sterling: restrict to header area to avoid narration false-positives
-    # (e.g. "Wema : ALAT Salary Loan" appears in ANY bank's statement).
-    if "wema bank" in t_hdr or ("wema" in t_hdr and "mybankstatement" in t):
+    if "wema bank" in t_hdr or "wema" in t_hdr:
         return "Wema"
-    if "sterling bank" in t_hdr or ("sterling bank" in t and "mybankstatement" in t):
+    if "sterling bank" in t_hdr or "sterling" in t_hdr:
         return "Sterling"
+    if "zenith" in t_hdr:
+        return "Zenith"
 
     # ── Ecobank: bank name is a logo IMAGE — never appears as text. ───────────
     # Detect via two independent signals that together are unambiguous:
@@ -537,8 +544,12 @@ def detect_bank(text: str) -> str:
     # mybankStatement-portal banks).
     if "tran date value date narration" in t and "mybankstatement" not in t:
         return "Zenith"
+    # Unidentified mybankStatement-portal bank (name is a logo image, not text).
+    # Route through the shared parser but label neutrally so it is never
+    # falsely shown as GTBank — the officer can set the correct bank via the
+    # manual override in the UI.
     if "mybankstatement" in t:
-        return "GTBank"
+        return "mybankStatement"
     if "moniepoint mfb" in t or "moniepoint microfinance" in t:
         return "Moniepoint"
     if "palmpay" in t:
@@ -3302,7 +3313,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     _MYBANKSTATEMENT_BANKS = {
         "GTBank", "Access", "FirstBank", "UBA",
         "Fidelity", "Union", "Stanbic", "FCMB", "Wema", "Sterling",
-        "Ecobank",   # logo-only bank — uses same mybankStatement portal format
+        "Ecobank",          # logo-only bank — uses same mybankStatement portal format
+        "mybankStatement",  # unidentified logo-only portal bank (officer overrides)
     }
 
     if bank == "Carbon":

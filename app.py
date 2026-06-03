@@ -1127,6 +1127,7 @@ with col2:
                     st.session_state.buckets_a  = buckets
                     st.session_state.summary_a  = summary
                     st.session_state.bank_a     = bank
+                    st.session_state.bank_override_a = bank   # seed manual override
                     st.session_state.name_a     = name
                     st.session_state.rows_a     = rows
                     st.session_state.txns_a     = txns
@@ -1193,7 +1194,45 @@ with col2:
                         st.error(f"Error: {e}")
 
 # Show breakdown table for statement A
+# ── Supported bank options for the manual override dropdown ──────────────────
+_BANK_OVERRIDE_OPTIONS = [
+    "GTBank", "Access", "UBA", "Zenith", "Ecobank", "First Bank", "Fidelity",
+    "Union", "Stanbic", "FCMB", "Wema", "Sterling", "OPay", "PalmPay", "Kuda",
+    "Moniepoint", "Carbon", "FairMoney", "Providus", "Jaiz", "Parallex",
+    "mybankStatement", "Other",
+]
+
+def _bank_override_selector(slot: str) -> None:
+    """Render an editable 'Detected Bank' selector for statement A or B.
+
+    Some statements (Zenith, UBA, Ecobank, etc.) carry the bank name only as a
+    logo image, so it can't be auto-detected from text. This lets the officer
+    set the correct bank; the choice flows into reports, tracking and exports.
+    """
+    bank_key  = f"bank_{slot}"
+    over_key  = f"bank_override_{slot}"
+    detected  = st.session_state.get(bank_key) or "mybankStatement"
+    opts = _BANK_OVERRIDE_OPTIONS if detected in _BANK_OVERRIDE_OPTIONS else [detected] + _BANK_OVERRIDE_OPTIONS
+    if over_key not in st.session_state or st.session_state[over_key] not in opts:
+        st.session_state[over_key] = detected
+    _oc1, _oc2 = st.columns([2, 3])
+    with _oc1:
+        chosen = st.selectbox(
+            "🏦 Detected Bank (correct it if the logo wasn't read)",
+            opts, key=over_key,
+        )
+    # Sync the (possibly corrected) bank back into the canonical slot
+    st.session_state[bank_key] = chosen
+    if chosen != detected:
+        with _oc2:
+            st.markdown(
+                f'<div style="margin-top:30px;font-size:11px;color:#fbbf24">'
+                f'⚑ Bank set to <strong>{chosen}</strong> (auto-detected: {detected})</div>',
+                unsafe_allow_html=True,
+            )
+
 if st.session_state.rows_a:
+    _bank_override_selector("a")
     rows_a = [r for r in st.session_state.rows_a
               if r["ym"] < __import__("datetime").date.today().strftime("%Y-%m")
               and r["gross"] > 0][-N_MONTHS:]
@@ -1834,6 +1873,7 @@ with col4:
                     st.session_state.buckets_b = buckets_b
                     st.session_state.summary_b = summary_b
                     st.session_state.bank_b    = bank_b
+                    st.session_state.bank_override_b = bank_b   # seed manual override
                     st.session_state.name_b    = name_b
                     st.session_state.rows_b    = rows_b
                     st.session_state.txns_b    = txns_b
@@ -1898,6 +1938,7 @@ with col4:
 
 # Show Statement B own analysis
 if st.session_state.rows_b:
+    _bank_override_selector("b")
     import datetime as _dt2
     _today_b = _dt2.date.today().strftime("%Y-%m")
     rows_b_own = [r for r in st.session_state.rows_b if r["ym"] < _today_b and r["gross"] > 0][-N_MONTHS:]
