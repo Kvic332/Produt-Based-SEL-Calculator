@@ -1,0 +1,16 @@
+[client]
+# Show the actual exception text on the page instead of the generic
+# "Oh no. Error running app." This makes any real code crash visible
+# (and screenshot-able) instead of hidden. If the page instead reloads
+# with no error shown, the container was killed for memory (OOM), not a bug.
+showErrorDetails = "full"
+
+[server]
+# Keep the app from holding stale websocket sessions open forever, which
+# can pile up memory on Streamlit Community Cloud.
+runOnSave = false
+
+[runner]
+# Run the script even if an earlier rerun is still finishing — avoids
+# wedged sessions that can surface as "Oh no" on a reconnect.
+fastReruns = true
