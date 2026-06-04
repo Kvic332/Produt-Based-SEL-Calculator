@@ -640,7 +640,7 @@ if not _is_signed_in:
             label_visibility="collapsed",
         )
     with _si_col2:
-        _si_btn = st.button("Sign In →", key="signin_btn", use_container_width=True)
+        _si_btn = st.button("Sign In →", key="signin_btn", width="stretch")
 
     if _si_btn:
         if not _si_name.strip():
@@ -951,7 +951,7 @@ with _off_sb1:
         unsafe_allow_html=True,
     )
 with _off_sb2:
-    if st.button("🔄 Switch Officer", key="switch_officer", use_container_width=True):
+    if st.button("🔄 Switch Officer", key="switch_officer", width="stretch"):
         # Clear sign-in state → sign-in page will show on next rerun
         st.query_params.pop("signed", None)
         st.query_params.pop("officer", None)
@@ -1008,7 +1008,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
     with _bc2: _bp_prod = st.selectbox("Product Type", ["NTB","RENEWAL","TOP-UP"],            key="batch_prod")
     with _bc3: _bp_ten  = st.selectbox("Tenor",        list(range(2, 13)), index=4,           key="batch_tenor")
 
-    if st.button("▶  Run Batch Assessment", key="btn_batch", use_container_width=True):
+    if st.button("▶  Run Batch Assessment", key="btn_batch", width="stretch"):
         if not _bp_files:
             st.error("Please upload at least one statement.")
         else:
@@ -1095,7 +1095,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
             file_name=f"SEL_Batch_{datetime.date.today():%Y%m%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="dl_batch",
-            use_container_width=True,
+            width="stretch",
         )
 
 st.markdown("---")
@@ -1493,7 +1493,7 @@ if st.session_state.rows_a:
                 file_name = f"SEL_Statement_{_safe_stmt}_{datetime.date.today():%Y%m%d}.pdf",
                 mime      = "application/pdf",
                 key       = "dl_statement_pdf",
-                use_container_width=True,
+                width     = "stretch",
             )
         with _dl2:
             st.download_button(
@@ -1502,7 +1502,7 @@ if st.session_state.rows_a:
                 file_name = f"SEL_Breakdown_{_safe_stmt}_{datetime.date.today():%Y%m%d}.xlsx",
                 mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key       = "dl_statement_xlsx",
-                use_container_width=True,
+                width     = "stretch",
             )
 
         # ── Income Consistency Score ──────────────────────────────────────
@@ -2439,7 +2439,7 @@ with st.expander("🔁  What-if: How much income is needed to qualify for ₦X?"
             unsafe_allow_html=True,
         )
 
-calc_btn = st.button("▶   Calculate Eligibility", key="calc", use_container_width=True)
+calc_btn = st.button("▶   Calculate Eligibility", key="calc", width="stretch")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2879,7 +2879,7 @@ if calc_btn:
                         file_name=f"SEL_Report_{_safe_xl}_{datetime.date.today():%Y%m%d}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="dl_audit_xlsx",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         track("download", session=_SID, officer=_OFFICER,
                               bank=st.session_state.bank_a or "", fmt="excel")
@@ -2935,7 +2935,7 @@ if calc_btn:
                         file_name="sel_classification_audit.csv",
                         mime="text/csv",
                         key="dl_audit_csv",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         track("download", session=_SID, officer=_OFFICER,
                               bank=st.session_state.bank_a or "", fmt="csv")
@@ -2957,7 +2957,7 @@ if calc_btn:
             data                = _pdf_full,
             file_name           = f"SEL_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
             mime                = "application/pdf",
-            use_container_width = True,
+            width               = "stretch",
             key                 = "dl_full_pdf",
         ):
             track("download", session=_SID, officer=_OFFICER,
@@ -3427,7 +3427,7 @@ if _qp.get("admin") == _ADMIN_KEY:
                     file_name=f"SEL_Audit_Log_{datetime.date.today():%Y%m%d}.csv",
                     mime="text/csv",
                     key="dl_audit_log",
-                    use_container_width=True,
+                    width="stretch",
                     help="Every assessment: officer, applicant, account no, decision, loan, etc.",
                 )
             except Exception as _ex_err:
@@ -3442,6 +3442,6 @@ if _qp.get("admin") == _ADMIN_KEY:
                         file_name="sel_analytics.db",
                         mime="application/octet-stream",
                         key="dl_admin_db",
-                        use_container_width=True,
+                        width="stretch",
                         help="Local SQLite snapshot. On Neon, use the CSV export for live data.",
                     )
