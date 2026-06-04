@@ -6,6 +6,7 @@
 # Python 3.12 ("'NoneType' object has no attribute '__dict__'"). Keeping
 # real (non-stringized) annotations avoids that code path entirely.
 
+import gc
 import re
 import subprocess
 from collections import defaultdict
@@ -302,11 +303,15 @@ def add_credit(buckets: dict, ym: str, amount: float,
 # PDF TEXT EXTRACTION
 # ════════════════════════════════════════════════════════════════════════════
 def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
-    reader = PdfReader(BytesIO(pdf_bytes))
+    buf = BytesIO(pdf_bytes)
+    reader = PdfReader(buf)
     if reader.is_encrypted:
         if reader.decrypt(password or "") == 0:
             raise ValueError("Incorrect or missing PDF password.")
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    del reader, buf
+    gc.collect()
+    return text
 
 
 def extract_pdf_text_pdfplumber(pdf_bytes: bytes, password: str = "") -> str:
@@ -315,8 +320,12 @@ def extract_pdf_text_pdfplumber(pdf_bytes: bytes, password: str = "") -> str:
     """
     try:
         import pdfplumber
-        with pdfplumber.open(BytesIO(pdf_bytes), password=password or "") as pdf:
-            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+        buf = BytesIO(pdf_bytes)
+        with pdfplumber.open(buf, password=password or "") as pdf:
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        del buf
+        gc.collect()
+        return text
     except Exception:
         return extract_pdf_text(pdf_bytes, password)
 
@@ -3363,6 +3372,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     else:
         buckets, account_name = parse_generic(full_text)
 
+    del full_text
+    gc.collect()
     return buckets, summary, bank, account_name, list(_txn_log)
 
 
