@@ -1,6 +1,7 @@
 # App runs on Python 3.12 (set in Streamlit Cloud → Settings → Python version).
-# Requires Streamlit 1.59+ where width='stretch' replaces use_container_width.
-streamlit>=1.59
+# Pinned to 1.58.0 — width='stretch' and st.html() are supported here.
+# Bump this pin only after verifying the next release doesn't break APIs.
+streamlit==1.58.0
 PyPDF2>=3.0
 pandas>=2.0,<4
 numpy>=1.26,<3
