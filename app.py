@@ -2449,8 +2449,12 @@ calc_btn = st.button("▶   Calculate Eligibility", key="calc", use_container_wi
 # SECTION 04 — RESULTS
 # ════════════════════════════════════════════════════════════════════════════
 if calc_btn:
-    nets   = [r["net"]   for r in inflow_data]
-    counts = [r["count"] for r in inflow_data]
+    # Exclude unfilled placeholder rows (gross=0) so that a 3-month statement
+    # doesn't pad to 6 months with zeros, which would cause RENEWAL nets[-3:]
+    # to land on the zero rows instead of the real months.
+    _active_rows = [r for r in inflow_data if r["gross"] > 0] or inflow_data
+    nets   = [r["net"]   for r in _active_rows]
+    counts = [r["count"] for r in _active_rows]
 
     if all(n == 0 for n in nets):
         st.error("Please enter monthly inflow data before calculating.")
