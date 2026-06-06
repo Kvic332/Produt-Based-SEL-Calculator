@@ -721,7 +721,11 @@ def _html(html: str, height: int = 0) -> None:
         pass
 
 # ── Live clock — updates every second via parent DOM ─────────────────────────
-_html("""
+# st.html() does not execute scripts; use st.components.v1.html (height=0
+# renders a zero-height iframe that DOES run JS and can reach window.parent).
+try:
+    import streamlit.components.v1 as _stc
+    _stc.html("""
 <script>
 (function(){
   var p = window.parent;
@@ -741,6 +745,8 @@ _html("""
 })();
 </script>
 """, height=0)
+except Exception:
+    pass
 
 # ── Trademark badge — floats in every 5 minutes ───────────────────────────────
 _html("""
