@@ -749,7 +749,8 @@ except Exception:
     pass
 
 # ── Trademark badge — floats in every 5 minutes ───────────────────────────────
-_html("""
+try:
+    _stc.html("""
 <script>
 (function() {
   var p = window.parent;
@@ -827,10 +828,13 @@ _html("""
 })();
 </script>
 """, height=0)
+except Exception:
+    pass
 
 
-# ── Motivational quote toast — shows every 30 min via localStorage ────────────
-_html("""
+# ── Motivational quote toast — shows every 5 min via localStorage ─────────────
+try:
+    _stc.html("""
 <script>
 (function(){
   var p = window.parent;
@@ -940,6 +944,8 @@ _html("""
 })();
 </script>
 """, height=0)
+except Exception:
+    pass
 
 
 # ── Officer status bar (name is locked in from sign-in gate) ─────────────────
