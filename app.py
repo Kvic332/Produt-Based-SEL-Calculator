@@ -1160,16 +1160,16 @@ with col2:
                             stated   = extract_stated_totals(raw_text)
                             verdict  = verify_extraction_accuracy(buckets, stated)
                             if verdict["pct_match"] is not None:
-                                pct = verdict["pct_match"]
+                                _pct_match = verdict["pct_match"]
                                 ext = verdict["extracted"]
                                 stl = verdict["stated_total"]
-                                colour = ("#34d399" if pct >= 95
-                                          else "#fb923c" if pct >= 90
+                                colour = ("#34d399" if _pct_match >= 95
+                                          else "#fb923c" if _pct_match >= 90
                                           else "#f87171")
                                 st.markdown(
                                     f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
                                     f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
-                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {pct}% match</span>'
+                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {_pct_match}% match</span>'
                                     f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
                                     f'stated ₦{stl:,.0f}</span><br>'
                                     f'<span style="color:#94a3b8;font-size:11px">{verdict["message"]}</span>'
@@ -1903,16 +1903,16 @@ with col4:
                             stated_b   = extract_stated_totals(raw_text_b)
                             verdict_b  = verify_extraction_accuracy(buckets_b, stated_b)
                             if verdict_b["pct_match"] is not None:
-                                pct = verdict_b["pct_match"]
+                                _pct_match = verdict_b["pct_match"]
                                 ext = verdict_b["extracted"]
                                 stl = verdict_b["stated_total"]
-                                colour = ("#34d399" if pct >= 95
-                                          else "#fb923c" if pct >= 90
+                                colour = ("#34d399" if _pct_match >= 95
+                                          else "#fb923c" if _pct_match >= 90
                                           else "#f87171")
                                 st.markdown(
                                     f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
                                     f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
-                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {pct}% match</span>'
+                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {_pct_match}% match</span>'
                                     f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
                                     f'stated ₦{stl:,.0f}</span><br>'
                                     f'<span style="color:#94a3b8;font-size:11px">{verdict_b["message"]}</span>'
