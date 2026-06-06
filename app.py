@@ -692,13 +692,12 @@ st.markdown(f"""
       <div style="font-size:13px;color:#94a3b8;margin-top:3px;font-weight:600">{_greet_sub}</div>
     </div>
     <div style="border-left:1px solid #1a3d2b;padding-left:14px;text-align:center">
-      <div id="sel-live-clock"
-           style="font-family:'Space Mono',monospace;font-size:28px;font-weight:700;
+      <div style="font-family:'Space Mono',monospace;font-size:28px;font-weight:700;
                   color:{_greet_col};letter-spacing:3px;line-height:1">
-        --:--:--
+        {datetime.datetime.now().strftime("%H:%M:%S")}
       </div>
       <div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-top:4px">
-        Live Clock
+        Session Time
       </div>
     </div>
   </div>
@@ -720,232 +719,47 @@ def _html(html: str, height: int = 0) -> None:
     except Exception:
         pass
 
-# ── Live clock — updates every second via parent DOM ─────────────────────────
-# st.html() does not execute scripts; use st.components.v1.html (height=0
-# renders a zero-height iframe that DOES run JS and can reach window.parent).
-try:
-    import streamlit.components.v1 as _stc
-    _stc.html("""
-<script>
-(function(){
-  var p = window.parent;
-  if (p.__selClockInit) return;
-  p.__selClockInit = true;
-  function tick(){
-    var el = p.document.getElementById('sel-live-clock');
-    if (!el) return;
-    var now = new Date();
-    var h = String(now.getHours()).padStart(2,'0');
-    var m = String(now.getMinutes()).padStart(2,'0');
-    var s = String(now.getSeconds()).padStart(2,'0');
-    el.textContent = h + ':' + m + ':' + s;
-  }
-  tick();
-  setInterval(tick, 1000);
-})();
-</script>
-""", height=0)
-except Exception:
-    pass
+# ── JS decorations removed ────────────────────────────────────────────────────
+# st.components.v1.html removed after 2026-06-01; st.html() does not execute
+# scripts. Clock is now Python-rendered in the header above. Badge and quote
+# toast are rendered as static HTML below.
 
-# ── Trademark badge — floats in every 5 minutes ───────────────────────────────
-try:
-    _stc.html("""
-<script>
-(function() {
-  var p = window.parent;
-  if (p.__kvicBadgeInit) return;
-  p.__kvicBadgeInit = true;
-  p.__selConfetti = function(loanAmt) {
-    /* CSS confetti injected into parent page */
-    var old = p.document.getElementById('sel-confetti-wrap');
-    if (old) old.remove();
-    var wrap = p.document.createElement('div');
-    wrap.id  = 'sel-confetti-wrap';
-    wrap.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99998;overflow:hidden';
-    var colors = ['#10b981','#34d399','#fbbf24','#f59e0b','#a78bfa','#fb923c','#f87171'];
-    if (!p.document.getElementById('sel-confetti-kf')) {
-      var sty = p.document.createElement('style');
-      sty.id  = 'sel-confetti-kf';
-      sty.textContent = '@keyframes selFall{0%{transform:translateY(-30px) rotate(0deg);opacity:1}100%{transform:translateY(105vh) rotate(800deg);opacity:0}}';
-      p.document.head.appendChild(sty);
-    }
-    for (var i = 0; i < 100; i++) {
-      var el   = p.document.createElement('div');
-      var clr  = colors[Math.floor(Math.random() * colors.length)];
-      var sz   = Math.random() * 9 + 4;
-      var dur  = (Math.random() * 2.5 + 1.5).toFixed(2);
-      var del  = (Math.random() * 1.8).toFixed(2);
-      var left = (Math.random() * 100).toFixed(1);
-      var round = Math.random() > 0.5 ? '50%' : '2px';
-      el.style.cssText = 'position:absolute;top:-30px;left:' + left + '%;width:' + sz + 'px;height:' + sz + 'px;background:' + clr + ';border-radius:' + round + ';animation:selFall ' + dur + 's ' + del + 's ease-in forwards';
-      wrap.appendChild(el);
-    }
-    p.document.body.appendChild(wrap);
-    setTimeout(function(){ if(wrap.parentNode) wrap.remove(); }, 5000);
-  };
-
-  /* Create badge */
-  var b = p.document.createElement('div');
-  b.id = 'kvic-tm';
-  b.innerHTML =
-    '<span style="font-size:9px;letter-spacing:3px;color:#6b7f74;text-transform:uppercase;display:block;margin-bottom:3px">Powered by</span>' +
-    '<span style="font-size:13px;font-weight:700;color:#10b981;letter-spacing:1px">Kenechukwu Kvic7</span>' +
-    '<span style="font-size:10px;color:#fbbf24;margin-left:4px">&#8482;</span>';
-
-  b.style.cssText = [
-    'position:fixed',
-    'bottom:28px',
-    'right:28px',
-    'background:#0f1a15',
-    'border:1px solid #1a3d2b',
-    'border-left:3px solid #10b981',
-    'border-radius:4px',
-    'padding:10px 16px',
-    'font-family:"Space Mono",monospace',
-    'box-shadow:0 4px 24px rgba(16,185,129,.18)',
-    'z-index:99999',
-    'opacity:0',
-    'transform:translateY(16px)',
-    'transition:opacity .5s ease,transform .5s ease',
-    'pointer-events:none',
-    'min-width:180px',
-  ].join(';');
-
-  p.document.body.appendChild(b);
-
-  function show() {
-    b.style.opacity  = '1';
-    b.style.transform = 'translateY(0)';
-    setTimeout(function() {
-      b.style.opacity  = '0';
-      b.style.transform = 'translateY(16px)';
-    }, 5000);   /* visible for 5 seconds */
-  }
-
-  show();                              /* show on load   */
-  setInterval(show, 5 * 60 * 1000);   /* repeat every 5 min */
-})();
-</script>
-""", height=0)
-except Exception:
-    pass
-
-
-# ── Motivational quote toast — shows every 5 min via localStorage ─────────────
-try:
-    _stc.html("""
-<script>
-(function(){
-  var p = window.parent;
-  if (p.__selQuoteInit) return;
-  p.__selQuoteInit = true;
-
-  var QUOTES = [
-    {q:"Risk comes from not knowing what you are doing.",                          a:"Warren Buffett"},
-    {q:"An investment in knowledge pays the best interest.",                       a:"Benjamin Franklin"},
-    {q:"The stock market transfers money from the impatient to the patient.",      a:"Warren Buffett"},
-    {q:"Financial freedom is available to those who learn about it and work for it.", a:"Robert Kiyosaki"},
-    {q:"Do not save what is left after spending — spend what is left after saving.", a:"Warren Buffett"},
-    {q:"Every naira lent wisely builds a stronger Nigeria.",                       a:"SEL Proverb"},
-    {q:"Credit is not given. It is earned through trust and consistency.",         a:"SEL Proverb"},
-    {q:"The goal of a good credit officer is not to say no — it is to find the right yes.", a:"SEL Proverb"},
-    {q:"Precision in underwriting protects both lender and borrower.",             a:"SEL Proverb"},
-    {q:"Data tells the story. Your judgment writes the ending.",                   a:"SEL Proverb"},
-    {q:"Diligence is the mother of good fortune.",                                 a:"Miguel de Cervantes"},
-    {q:"Success comes to those too busy to be looking for it.",                    a:"Henry David Thoreau"},
-    {q:"Small daily improvements are the key to staggering long-term results.",    a:"Robin Sharma"},
-    {q:"Your income is determined by how many people you serve and how well.",     a:"Bob Burg"},
-    {q:"Every loan decision shapes a family's future. Make it count.",             a:"SEL Proverb"},
-    {q:"Hard work beats talent when talent does not work hard.",                   a:"Tim Notke"},
-    {q:"Price is what you pay. Value is what you get.",                            a:"Warren Buffett"},
-    {q:"Be fearful when others are greedy, and greedy when others are fearful.",   a:"Warren Buffett"},
-    {q:"In credit, character is the first C for a reason.",                        a:"SEL Proverb"},
-    {q:"The secret of getting ahead is getting started.",                          a:"Mark Twain"},
-    {q:"Africa is not poor. It is poorly managed.",                                a:"Fela Durotoye"},
-    {q:"Formal education will make you a living. Self-education will make you a fortune.", a:"Jim Rohn"},
-    {q:"Wealth is not about having a lot of money — it is about having a lot of options.", a:"Chris Rock"},
-    {q:"Do not wait to buy real estate. Buy real estate and wait.",                a:"Will Rogers"},
-    {q:"The more you learn, the more you earn.",                                   a:"Warren Buffett"},
-    {q:"It always seems impossible until it is done.",                             a:"Nelson Mandela"},
-    {q:"A good decision is based on knowledge, not on numbers.",                   a:"Plato"},
-    {q:"The best time to assess a loan was yesterday. The second best time is now.", a:"SEL Proverb"},
-    {q:"Opportunities do not go away. They pass to someone else.",                 a:"SEL Proverb"},
-    {q:"Champions keep playing until they get it right.",                          a:"Billie Jean King"},
-  ];
-
-  var INTERVAL_MS = 5 * 60 * 1000;   /* 5 minutes */
-  var LS_KEY_TS   = 'sel_quote_ts';
-  var LS_KEY_IDX  = 'sel_quote_idx';
-
-  function getNextIdx(last) {
-    var next = (last + 1 + Math.floor(Math.random() * 3)) % QUOTES.length;
-    return next;
-  }
-
-  function showQuote() {
-    var lastIdx = parseInt(localStorage.getItem(LS_KEY_IDX) || '-1');
-    var idx     = getNextIdx(lastIdx);
-    var q       = QUOTES[idx];
-    localStorage.setItem(LS_KEY_TS,  Date.now().toString());
-    localStorage.setItem(LS_KEY_IDX, idx.toString());
-
-    var old = p.document.getElementById('sel-quote-toast');
-    if (old) old.remove();
-
-    var toast = p.document.createElement('div');
-    toast.id  = 'sel-quote-toast';
-    toast.innerHTML =
-      '<div style="font-size:9px;letter-spacing:3px;color:#10b981;text-transform:uppercase;margin-bottom:6px">✦ Thought for the moment</div>' +
-      '<div style="font-size:13px;color:#e2e8f0;font-style:italic;line-height:1.6;margin-bottom:6px">"' + q.q + '"</div>' +
-      '<div style="font-size:10px;color:#64748b;text-align:right">— ' + q.a + '</div>' +
-      '<div id="sel-qt-close" style="position:absolute;top:8px;right:10px;cursor:pointer;color:#64748b;font-size:14px;line-height:1">✕</div>' +
-      '<div style="position:absolute;bottom:0;left:0;height:2px;background:#10b981;border-radius:0 0 0 6px;animation:qtBar 7s linear forwards" id="sel-qt-bar"></div>';
-
-    toast.style.cssText = [
-      'position:fixed','bottom:88px','left:24px','max-width:320px',
-      'background:#0f1a15','border:1px solid #1a3d2b','border-left:4px solid #10b981',
-      'border-radius:6px','padding:14px 18px 18px 14px',
-      'font-family:"Space Mono",monospace','box-shadow:0 8px 32px rgba(16,185,129,.15)',
-      'z-index:99997','opacity:0','transform:translateY(20px)',
-      'transition:opacity .5s ease,transform .5s ease',
-    ].join(';');
-
-    if (!p.document.getElementById('sel-qt-style')) {
-      var sty = p.document.createElement('style');
-      sty.id  = 'sel-qt-style';
-      sty.textContent = '@keyframes qtBar{0%{width:100%}100%{width:0%}}';
-      p.document.head.appendChild(sty);
-    }
-
-    p.document.body.appendChild(toast);
-    setTimeout(function(){ toast.style.opacity='1'; toast.style.transform='translateY(0)'; }, 80);
-
-    var autoHide = setTimeout(function(){ hideToast(toast); }, 7000);
-
-    p.document.getElementById('sel-qt-close').addEventListener('click', function(){
-      clearTimeout(autoHide);
-      hideToast(toast);
-    });
-  }
-
-  function hideToast(el) {
-    if (!el) return;
-    el.style.opacity='0'; el.style.transform='translateY(20px)';
-    setTimeout(function(){ if(el.parentNode) el.remove(); }, 500);
-  }
-
-  /* Always show on every page load after a short settle delay */
-  setTimeout(showQuote, 3000);
-
-  /* Then repeat every 5 minutes while the tab is open */
-  setInterval(showQuote, INTERVAL_MS);
-
-})();
-</script>
-""", height=0)
-except Exception:
-    pass
+# ── Static quote (replaces JS toast — st.components.v1.html removed 2026-06-01) ─
+import random as _random
+_QUOTES = [
+    ("Risk comes from not knowing what you are doing.", "Warren Buffett"),
+    ("An investment in knowledge pays the best interest.", "Benjamin Franklin"),
+    ("Every naira lent wisely builds a stronger Nigeria.", "SEL Proverb"),
+    ("Credit is not given. It is earned through trust and consistency.", "SEL Proverb"),
+    ("The goal of a good credit officer is not to say no — it is to find the right yes.", "SEL Proverb"),
+    ("Data tells the story. Your judgment writes the ending.", "SEL Proverb"),
+    ("Diligence is the mother of good fortune.", "Miguel de Cervantes"),
+    ("Small daily improvements are the key to staggering long-term results.", "Robin Sharma"),
+    ("Every loan decision shapes a family's future. Make it count.", "SEL Proverb"),
+    ("Price is what you pay. Value is what you get.", "Warren Buffett"),
+    ("In credit, character is the first C for a reason.", "SEL Proverb"),
+    ("The secret of getting ahead is getting started.", "Mark Twain"),
+    ("Africa is not poor. It is poorly managed.", "Fela Durotoye"),
+    ("The more you learn, the more you earn.", "Warren Buffett"),
+    ("A good decision is based on knowledge, not on numbers.", "Plato"),
+    ("The best time to assess a loan was yesterday. The second best time is now.", "SEL Proverb"),
+    ("Opportunities do not go away. They pass to someone else.", "SEL Proverb"),
+    ("Champions keep playing until they get it right.", "Billie Jean King"),
+    ("Do not save what is left after spending — spend what is left after saving.", "Warren Buffett"),
+    ("Precision in underwriting protects both lender and borrower.", "SEL Proverb"),
+]
+_q, _a = _QUOTES[hash(str(datetime.date.today())) % len(_QUOTES)]
+st.markdown(
+    f'<div style="background:#0f1a15;border-left:4px solid #10b981;border-radius:4px;'
+    f'padding:10px 14px;margin-bottom:8px">'
+    f'<div style="font-size:9px;letter-spacing:3px;color:#10b981;text-transform:uppercase;margin-bottom:4px">✦ Thought for the day</div>'
+    f'<div style="font-size:12px;color:#e2e8f0;font-style:italic;line-height:1.5">"{_q}"</div>'
+    f'<div style="font-size:10px;color:#64748b;text-align:right;margin-top:4px">— {_a}</div>'
+    f'<div style="font-size:9px;letter-spacing:2px;color:#374151;margin-top:6px;text-transform:uppercase">'
+    f'Powered by Kenechukwu Kvic7 ™</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
 
 # ── Officer status bar (name is locked in from sign-in gate) ─────────────────
