@@ -1227,9 +1227,21 @@ if st.session_state.rows_a:
         trend_col   = "#34d399" if trend_delta > 0 else "#f87171" if trend_delta < 0 else "#6b7f74"
 
         bars_html = ""
-        for r in rows_a:
+        for _bi, r in enumerate(rows_a):
             g_px = int(r["gross"]           / _scale * BAR_H) if r["gross"]           > 0 else 0
             e_px = int(r["eligible_income"] / _scale * BAR_H) if r["eligible_income"] > 0 else 0
+            # Month-over-month % change vs previous month
+            _mom_html = ""
+            if _bi > 0:
+                _prev_ei = rows_a[_bi - 1]["eligible_income"]
+                if _prev_ei > 0:
+                    _mom_pct = (r["eligible_income"] - _prev_ei) / _prev_ei * 100
+                    _mom_col = "#34d399" if _mom_pct > 0 else "#f87171" if _mom_pct < 0 else "#6b7f74"
+                    _mom_arr = "▲" if _mom_pct > 0 else "▼" if _mom_pct < 0 else "▬"
+                    _mom_html = (
+                        f'<div style="font-size:8px;color:{_mom_col};margin-top:2px;white-space:nowrap">'
+                        f'{_mom_arr}{abs(_mom_pct):.0f}%</div>'
+                    )
             bars_html += (
                 f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
                 # amount label
@@ -1242,9 +1254,10 @@ if st.session_state.rows_a:
                 f'<div style="position:absolute;bottom:0;left:0;right:0;height:{e_px}px;'
                 f'background:linear-gradient(180deg,#34d399 0%,#10b981 100%);border-radius:2px 2px 0 0"></div>'
                 f'</div>'
-                # month label
+                # month label + MoM % change
                 f'<div style="font-size:9px;color:#6b7f74;margin-top:6px;white-space:nowrap">'
                 f'{r["label"]}</div>'
+                f'{_mom_html}'
                 f'</div>'
             )
 
@@ -2440,6 +2453,59 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ── Applicant History Search ──────────────────────────────────────────────────
+with st.expander("🔍  Applicant History Search — look up any previous assessment", expanded=False):
+    _hs_col1, _hs_col2 = st.columns([3, 1])
+    with _hs_col1:
+        _hs_query = st.text_input(
+            "Search by applicant name",
+            placeholder="e.g. JOHN DOE or CHUKWU ENTERPRISE",
+            key="history_search_query",
+            label_visibility="collapsed",
+        )
+    with _hs_col2:
+        _hs_go = st.button("Search", key="history_search_btn", use_container_width=True)
+
+    if _hs_go and _hs_query.strip():
+        _hs_results = get_history(_hs_query.strip())
+        if not _hs_results:
+            st.markdown(
+                f'<div style="font-size:12px;color:#64748b;padding:8px 0">'
+                f'No past assessments found for "{_hs_query.strip()}".</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            _hs_rows_html = ""
+            for _hr in _hs_results:
+                _hr_col = "#34d399" if _hr.get("approved") else "#f87171"
+                _hr_dec = "✅ Approved" if _hr.get("approved") else "❌ Below Min"
+                _hs_rows_html += (
+                    f'<tr>'
+                    f'<td style="font-size:11px;color:#94a3b8">{(_hr.get("ts") or "")[:10]}</td>'
+                    f'<td style="font-size:11px">{_hr.get("bank","—")}</td>'
+                    f'<td style="font-size:11px">{_hr.get("location","—")} / {_hr.get("product","—")}</td>'
+                    f'<td style="text-align:right;font-size:11px">{money(_hr.get("avg_income",0))}</td>'
+                    f'<td style="text-align:right;font-size:11px">{money(_hr.get("max_loan",0))}</td>'
+                    f'<td style="text-align:center;font-size:11px">{_hr.get("tenor","—")} mo</td>'
+                    f'<td style="text-align:center;color:{_hr_col};font-size:11px;font-weight:700">{_hr_dec}</td>'
+                    f'</tr>'
+                )
+            st.markdown(
+                f'<div style="font-size:10px;color:#64748b;margin-bottom:6px">'
+                f'{len(_hs_results)} assessment(s) found for <strong style="color:#e2e8f0">'
+                f'{_hs_query.strip()}</strong></div>'
+                f'<table class="preview-table"><thead><tr>'
+                f'<th style="text-align:left">Date</th>'
+                f'<th>Bank</th>'
+                f'<th>Location / Product</th>'
+                f'<th style="text-align:right">Avg Income</th>'
+                f'<th style="text-align:right">Max Loan</th>'
+                f'<th style="text-align:center">Tenor</th>'
+                f'<th style="text-align:center">Decision</th>'
+                f'</tr></thead><tbody>{_hs_rows_html}</tbody></table>',
+                unsafe_allow_html=True,
+            )
+
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 03 — LOAN PARAMETERS
 # ════════════════════════════════════════════════════════════════════════════
@@ -2738,6 +2804,108 @@ if calc_btn:
         m6.metric("Repayment Frequency",    result["repayment_frequency"])
         m7.metric("Max Repayment / Period", money(result["max_repayment_display"]))
         m8.metric("Max Total Repayment",    money(result["max_total_repayment"]))
+
+        # ── Customer Risk Score ───────────────────────────────────────────
+        try:
+            _rs_rows = [r for r in rows_a if r["eligible_income"] > 0]
+            if _rs_rows:
+                import math as _rs_math
+                import datetime as _rs_dt
+
+                # Dimension 1 — Income Consistency (CV of eligible income)
+                _rs_vals  = [r["eligible_income"] for r in _rs_rows]
+                _rs_mean  = sum(_rs_vals) / len(_rs_vals)
+                _rs_std   = (_rs_math.sqrt(sum((v - _rs_mean)**2 for v in _rs_vals) / len(_rs_vals))
+                             if len(_rs_vals) > 1 else 0)
+                _rs_cv    = _rs_std / _rs_mean if _rs_mean else 1
+                # Low CV → consistent → good; high CV → erratic → bad
+                _rs_cons  = 5 if _rs_cv < 0.15 else 4 if _rs_cv < 0.30 else 3 if _rs_cv < 0.50 else 2 if _rs_cv < 0.75 else 1
+
+                # Dimension 2 — Deduction Ratio (total deductions / total gross)
+                _rs_tgross = sum(r["gross"] for r in _rs_rows) or 1
+                _rs_tdeduct = sum(
+                    r.get("self_transfer",0) + r.get("reversal",0) +
+                    r.get("non_business",0) + r.get("loan_disbursal",0)
+                    for r in _rs_rows
+                )
+                _rs_ded_pct = _rs_tdeduct / _rs_tgross
+                _rs_ded   = 5 if _rs_ded_pct < 0.10 else 4 if _rs_ded_pct < 0.20 else 3 if _rs_ded_pct < 0.35 else 2 if _rs_ded_pct < 0.55 else 1
+
+                # Dimension 3 — Statement Freshness
+                try:
+                    _rs_latest = max(r["ym"] for r in _rs_rows)
+                    _rs_ly, _rs_lm = int(_rs_latest[:4]), int(_rs_latest[5:])
+                    _rs_today = _rs_dt.date.today()
+                    _rs_age = (_rs_today.year - _rs_ly) * 12 + (_rs_today.month - _rs_lm)
+                    _rs_fresh = 5 if _rs_age <= 1 else 4 if _rs_age <= 2 else 3 if _rs_age <= 3 else 2 if _rs_age <= 6 else 1
+                except Exception:
+                    _rs_fresh = 3
+
+                # Dimension 4 — Recycling % (self_transfer + loan_disbursal share of gross)
+                _rs_recyc_tot = sum(r.get("self_transfer",0) + r.get("loan_disbursal",0) for r in _rs_rows)
+                _rs_recyc_pct = _rs_recyc_tot / _rs_tgross
+                _rs_recyc = 5 if _rs_recyc_pct < 0.05 else 4 if _rs_recyc_pct < 0.15 else 3 if _rs_recyc_pct < 0.30 else 2 if _rs_recyc_pct < 0.50 else 1
+
+                # Composite score (weighted average, round to nearest 0.5)
+                _rs_raw = (
+                    _rs_cons  * 0.35 +
+                    _rs_ded   * 0.30 +
+                    _rs_fresh * 0.20 +
+                    _rs_recyc * 0.15
+                )
+                _rs_score = round(_rs_raw * 2) / 2   # nearest 0.5
+
+                _rs_label = ("Very Low Risk" if _rs_score >= 4.5 else
+                             "Low Risk"      if _rs_score >= 3.5 else
+                             "Moderate Risk" if _rs_score >= 2.5 else
+                             "High Risk"     if _rs_score >= 1.5 else
+                             "Very High Risk")
+                _rs_col   = ("#34d399" if _rs_score >= 4.5 else
+                             "#10b981" if _rs_score >= 3.5 else
+                             "#fbbf24" if _rs_score >= 2.5 else
+                             "#fb923c" if _rs_score >= 1.5 else
+                             "#f87171")
+
+                # Render score card
+                _rs_dims = [
+                    ("Income Consistency", _rs_cons,  f"CV={_rs_cv:.2f}"),
+                    ("Deduction Ratio",    _rs_ded,   f"{_rs_ded_pct*100:.0f}% of gross deducted"),
+                    ("Statement Freshness",_rs_fresh, f"{_rs_age} month(s) old"),
+                    ("Recycling Detected", _rs_recyc, f"{_rs_recyc_pct*100:.0f}% recycled credits"),
+                ]
+                _rs_dim_html = ""
+                for _rd_label, _rd_score, _rd_note in _rs_dims:
+                    _rd_col = ("#34d399" if _rd_score >= 4 else "#fbbf24" if _rd_score >= 3 else "#f87171")
+                    _rs_dim_html += (
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+                        f'<div style="width:120px;font-size:10px;color:#94a3b8">{_rd_label}</div>'
+                        f'<div style="display:flex;gap:2px">'
+                        + ''.join(
+                            f'<div style="width:10px;height:10px;border-radius:2px;'
+                            f'background:{"' + _rd_col + '" if _i < _rd_score else "rgba(255,255,255,.08)"}'
+                            f'"></div>'
+                            for _i in range(5)
+                        )
+                        + f'</div>'
+                        f'<div style="font-size:9px;color:#64748b">{_rd_note}</div>'
+                        f'</div>'
+                    )
+
+                st.markdown(
+                    f'<div style="margin:14px 0;padding:14px 16px;'
+                    f'background:rgba(0,0,0,.2);border:1px solid {_rs_col}44;border-radius:4px">'
+                    f'<div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">'
+                    f'<div style="font-size:9px;letter-spacing:2px;color:#6b7f74;text-transform:uppercase">Customer Risk Score</div>'
+                    f'<div style="font-size:22px;font-weight:900;color:{_rs_col}">{_rs_score:.1f}<span style="font-size:12px;color:#6b7f74">/5</span></div>'
+                    f'<div style="background:{_rs_col}22;border:1px solid {_rs_col}55;border-radius:20px;'
+                    f'padding:2px 12px;font-size:11px;font-weight:700;color:{_rs_col}">{_rs_label}</div>'
+                    f'</div>'
+                    f'{_rs_dim_html}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        except Exception:
+            pass
 
         # ── Tenor Comparison Table ────────────────────────────────────────
         st.markdown("---")
