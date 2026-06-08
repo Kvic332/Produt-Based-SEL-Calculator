@@ -570,6 +570,12 @@ def detect_bank(text: str) -> str:
         return "Wema"
     if "sterling bank" in t_hdr or "sterling" in t_hdr:
         return "Sterling"
+    # ── Zenith e-Statement (new 2025+ format) ────────────────────────────
+    # Column header: "DATE DESCRIPTION DEBIT CREDIT VALUE DATE BALANCE"
+    # Distinct from old Zenith ("Tran Date Value Date Narration").
+    # Must fire BEFORE the generic "zenith" t_hdr check below.
+    if "zenith" in t_hdr and "date description debit" in t:
+        return "Zenith_New"
     if "zenith" in t_hdr:
         return "Zenith"
 
@@ -2918,19 +2924,21 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
     """
     Jaiz Bank statement parser.
 
-    Column layout: TRANS DATE | NARRATION | VALUE DATE | DEBIT | CREDIT
-    Date format: DD-Mon-YY (2-digit year, e.g. 21-May-26 → 2026-05).
+    Column layout: TRANS DATE | NARRATION | VALUE DATE | DEBIT | CREDIT | BALANCE
+    Date format: DD-Mon-YYYY (4-digit year, e.g. 01-Nov-2025 → 2025-11).
 
-    Each transaction takes 1 or 2 text lines:
-      Line 1:  DD-Mon-YY  narration_part1
-      Line 2:  narration_part2[VALUE_DATE DEBIT CREDIT]  (concatenated)
-    Credit is read directly from the CREDIT column (DEBIT = 0.00 for credits).
-    No BALANCE column, so no balance-delta needed.
+    PyPDF2 splits each date across two lines:
+      Line A:  "DD-Mon-"          (trailing dash, year on next line)
+      Line B:  "YYYY narration"   (year glued to narration start)
+    Pre-processing joins these before parsing.
+
+    Row end pattern (value date glued to debit, no space):
+      "Ref:DD-Mon-YYYYDEBIT CREDIT BALANCE"
+    e.g. "Ref:01-Nov-202550.00 0.00 1,265,379.95"
     """
     buckets: dict = {}
 
     # ── 1. Account name ───────────────────────────────────────────────────
-    # CUSTOMER NAME field is often blank; derive from "IFO [NAME] Self" tx.
     account_name = "Unknown"
     m_self = re.search(r'\bIFO\s+([A-Z][A-Z ]{3,}?)\s+Self\b', full_text)
     if m_self:
@@ -2942,29 +2950,41 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
         if m_name:
             account_name = m_name.group(1).strip()
 
-    # ── 2. Regexes ────────────────────────────────────────────────────────
-    # Line that starts a new transaction: DD-Mon-YY followed by narration
-    TX_START = re.compile(r'^(\d{2}-[A-Za-z]{3}-\d{2})\s+(.*)')
-    # End of a complete row: VALUE_DATE  DEBIT  CREDIT at end of accumulated text
+    # ── 2. Pre-process: rejoin split dates ────────────────────────────────
+    # PyPDF2 renders "DD-Mon-\n2025" — join into "DD-Mon-2025"
+    full_text = re.sub(r'(\d{2}-[A-Za-z]{3}-)\n(\d{4})', r'\1\2', full_text)
+
+    # ── 3. Regexes ────────────────────────────────────────────────────────
+    # Transaction start: line beginning with DD-Mon-YYYY (2 or 4 digit year)
+    TX_START = re.compile(r'^(\d{2}-[A-Za-z]{3}-\d{2,4})\s+(.*)')
+
+    # Row end: value date glued to debit (no space), then credit, then balance
+    # e.g. "...Ref:01-Nov-202550.00 0.00 1,265,379.95"
     ROW_END = re.compile(
-        r'\d{2}-[A-Za-z]{3}-\d{2}\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$'
+        r'\d{2}-[A-Za-z]{3}-\d{2,4}'   # value date (glued to debit)
+        r'([\d,]+\.\d{2})'              # debit (no space before)
+        r'\s+([\d,]+\.\d{2})'           # credit
+        r'\s+([\d,]+\.\d{2})\s*$'       # balance
     )
+
     # Page-header boilerplate lines to skip
     JAIZ_HDR = re.compile(
-        r'^(?:CUSTOMER NAME:|ADDRESS:|UNCLEARED BAL|BRANCH:|ACCOUNT TYPE:|'
-        r'CURRENCY:|TRANS$|DATENARRATION|DATEDEBIT|Page\s+\d)',
+        r'^(?:CUSTOMER NAME:|SERVICES LTD|ADDRESS:|UNCLEARED|BALANCE:|'
+        r'OPENING|CLOSING|BRANCH:|ACCOUNT TYPE:|CURRENCY:|'
+        r'TRANSACTI|ON DATE|DATENARRATION|DATEDEBIT|Page\s+\d|'
+        r'JAIZ BANK|JC\d{4,}|KANO)',
         re.I,
     )
 
     def _to_ym(date_str: str) -> str:
-        """'DD-Mon-YY' → 'YYYY-MM'"""
+        """'DD-Mon-YYYY' or 'DD-Mon-YY' → 'YYYY-MM'"""
         parts = date_str.split('-')
         mm = MONTH_NUM.get(parts[1].lower(), "00")
-        return f"20{parts[2]}-{mm}"
+        yr = parts[2] if len(parts[2]) == 4 else f"20{parts[2]}"
+        return f"{yr}-{mm}"
 
-    # ── 3. Parse ──────────────────────────────────────────────────────────
+    # ── 4. Parse ──────────────────────────────────────────────────────────
     lines = full_text.splitlines()
-
     pending_ym: str | None = None
     pending_acc: list[str] = []
 
@@ -2986,19 +3006,118 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
         if not line:
             continue
         if JAIZ_HDR.match(line):
-            _flush()   # page break — current tx should already be complete
+            _flush()
             continue
 
         dm = TX_START.match(line)
         if dm:
-            _flush()                              # save previous transaction
+            _flush()
             pending_ym  = _to_ym(dm.group(1))
             pending_acc = [dm.group(2).strip()]
         elif pending_ym is not None:
-            pending_acc.append(line)              # continuation line
+            pending_acc.append(line)
 
-    _flush()   # handle final transaction
+    _flush()
+    return buckets, account_name
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# ZENITH BANK — NEW e-STATEMENT FORMAT (2025+)
+# ════════════════════════════════════════════════════════════════════════════
+def parse_zenith_new(full_text: str) -> tuple[dict, str]:
+    """
+    Zenith Bank e-Statement (new 2025+ format).
+
+    Column layout: DATE | DESCRIPTION | DEBIT | CREDIT | VALUE DATE | BALANCE
+    Date format:   DD/MM/YYYY
+
+    PyPDF2 quirks:
+    - Narration wraps onto continuation lines.
+    - The last continuation line has the reference number glued directly to
+      the debit amount with no space (e.g. "000585986050" + "0.00" →
+      "0005859860500.00"). This makes debit extraction unreliable.
+
+    Solution: Extract CREDIT as the number immediately preceding the VALUE
+    DATE (which is always CREDIT then VALUE_DATE with 0 or 1 spaces between).
+    Credit > 0 → income; credit == 0.00 → debit/fee (skip).
+    """
+    buckets: dict = {}
+
+    # ── Account name ──────────────────────────────────────────────────────
+    account_name = "Unknown"
+    m_name = re.search(
+        r'ACCOUNT NAME:\s+([A-Z][A-Z0-9 &\-\.]{2,}?)(?:\s+Account Statement)',
+        full_text
+    )
+    if m_name:
+        account_name = m_name.group(1).strip()
+    if account_name == "Unknown":
+        # Fallback: first ALL-CAPS word(s) after "ACCOUNT NAME:"
+        m2 = re.search(r'ACCOUNT NAME:\s+([A-Z][A-Z ]{3,})', full_text)
+        if m2:
+            account_name = m2.group(1).strip()
+
+    # ── Regexes ───────────────────────────────────────────────────────────
+    # Transaction start: line begins with DD/MM/YYYY
+    TX_START = re.compile(r'^(\d{2}/\d{2}/\d{4})\s+(.*)')
+
+    # Extract CREDIT + VALUE_DATE + BALANCE from end of accumulated text.
+    # KEY: credit column is the number IMMEDIATELY before the value date
+    # (may be glued with 0 spaces, or separated by 1 space).
+    # This correctly handles "0.0001/12/2025" → credit=0.00, and
+    # "234,000.00 02/12/2025" → credit=234,000.00.
+    ROW_END = re.compile(
+        r'([\d,]+\.\d{2})'             # credit column (just before value date)
+        r'\s*(\d{2}/\d{2}/\d{4})\s+'  # value date (opt space before)
+        r'([\d,]+\.\d{2})\s*$'          # balance
+    )
+
+    # Header/boilerplate lines that should not be treated as transactions
+    HDR = re.compile(
+        r'^(?:ZENITH BANK|DOPEMU|ACCOUNT NAME|CURRENCY:|ACCOUNT No|'
+        r'LAGOS|DATE DESCRIPTION|Opening Balance|Period:|'
+        r'\d\s+[A-Z]{2,}\s+STR|Page\s+\d)',
+        re.I
+    )
+
+    def _to_ym(date_str: str) -> str:
+        parts = date_str.split('/')
+        return f"{parts[2]}-{parts[1]}"
+
+    # ── Parse ─────────────────────────────────────────────────────────────
+    pending_ym: str | None = None
+    pending_acc: list[str] = []
+
+    def _flush() -> None:
+        nonlocal pending_ym, pending_acc
+        if pending_ym and pending_acc:
+            combined = ' '.join(pending_acc)
+            m = ROW_END.search(combined)
+            if m:
+                credit = float(m.group(1).replace(',', ''))
+                if credit > 0:
+                    narration = combined[:m.start()].strip()
+                    add_credit(buckets, pending_ym, credit, narration, account_name)
+        pending_ym  = None
+        pending_acc = []
+
+    for raw_line in full_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if HDR.match(line):
+            _flush()
+            continue
+
+        dm = TX_START.match(line)
+        if dm:
+            _flush()
+            pending_ym  = _to_ym(dm.group(1))
+            pending_acc = [dm.group(2).strip()]
+        elif pending_ym is not None:
+            pending_acc.append(line)
+
+    _flush()
     return buckets, account_name
 
 
@@ -3411,6 +3530,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_gtbank(_gtb_text)
     elif bank == "Zenith":
         buckets, account_name = parse_zenith(full_text)
+    elif bank == "Zenith_New":
+        buckets, account_name = parse_zenith_new(full_text)
     elif bank == "Zenith_Corporate":
         buckets, account_name = parse_zenith_corporate(full_text)
     else:
