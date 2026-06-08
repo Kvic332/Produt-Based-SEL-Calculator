@@ -9,7 +9,7 @@ import re
 import uuid
 import pandas as pd
 import streamlit as st
-from parser import (
+from bank_parser import (
     monthly_analysis, parse_transactions, parse_firstcentral,
     ym_label, CreditAccount,
     extract_stated_totals, verify_extraction_accuracy,
