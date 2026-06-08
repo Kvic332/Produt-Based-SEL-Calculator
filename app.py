@@ -949,18 +949,22 @@ with col2:
                 _size_mb_a   = len(_pdf_bytes_a) / 1_048_576
 
                 # ── File size guard ──────────────────────────────────────────
-                if _size_mb_a > 15:
+                # Hard limit raised to 30 MB — chunked page extraction in
+                # extract_pdf_text() now processes 50 pages at a time, which
+                # keeps PyPDF2 peak memory manageable for 200–300 page PDFs.
+                if _size_mb_a > 30:
                     st.error(
                         f"⚠️ This PDF is {_size_mb_a:.1f} MB — too large to process safely on "
-                        f"Streamlit Cloud (limit: 15 MB). Please export a shorter date range "
-                        f"(3–6 months) from your bank portal and upload again."
+                        f"Streamlit Cloud (limit: 30 MB). Please export a shorter date range "
+                        f"(6 months) from your bank portal and upload again."
                     )
                     del _pdf_bytes_a
                     gc.collect()
                 else:
-                    if _size_mb_a > 7:
+                    if _size_mb_a > 10:
                         st.warning(
-                            f"Large file ({_size_mb_a:.1f} MB). Processing may take 15–30 seconds…"
+                            f"Large file ({_size_mb_a:.1f} MB, ~{round(_size_mb_a * 10):.0f} pages). "
+                            f"Processing in chunks — this may take up to 60 seconds…"
                         )
 
                     track("upload", session=_SID, officer=_OFFICER, filename=file_a.name,
@@ -1722,18 +1726,19 @@ with col4:
                 _pdf_bytes_b = file_b.getvalue()
                 _size_mb_b   = len(_pdf_bytes_b) / 1_048_576
 
-                if _size_mb_b > 15:
+                if _size_mb_b > 30:
                     st.error(
                         f"⚠️ This PDF is {_size_mb_b:.1f} MB — too large to process safely on "
-                        f"Streamlit Cloud (limit: 15 MB). Please export a shorter date range "
-                        f"(3–6 months) from your bank portal and upload again."
+                        f"Streamlit Cloud (limit: 30 MB). Please export a shorter date range "
+                        f"(6 months) from your bank portal and upload again."
                     )
                     del _pdf_bytes_b
                     gc.collect()
                 else:
-                    if _size_mb_b > 7:
+                    if _size_mb_b > 10:
                         st.warning(
-                            f"Large file ({_size_mb_b:.1f} MB). Processing may take 15–30 seconds…"
+                            f"Large file ({_size_mb_b:.1f} MB, ~{round(_size_mb_b * 10):.0f} pages). "
+                            f"Processing in chunks — this may take up to 60 seconds…"
                         )
 
                     track("upload", session=_SID, officer=_OFFICER, filename=file_b.name,

@@ -322,13 +322,37 @@ def add_credit(buckets: dict, ym: str, amount: float,
 # PDF TEXT EXTRACTION
 # ════════════════════════════════════════════════════════════════════════════
 def extract_pdf_text(pdf_bytes: bytes, password: str = "") -> str:
+    """Extract all text from a PDF using PyPDF2, processing pages in chunks.
+
+    Processing in batches of CHUNK_SIZE pages (instead of all at once) lets
+    Python's GC reclaim each batch's decompressed content streams before the
+    next batch loads — critical for large PDFs (100+ pages) on memory-limited
+    hosts (Streamlit Cloud free tier = 1 GB).
+
+    PyPDF2 PdfReader reads the cross-reference table upfront but decompresses
+    page content on demand via extract_text(). Explicit gc.collect() between
+    chunks recovers the decompressed data from prior batches before the next
+    batch inflates memory again.
+    """
+    CHUNK_SIZE = 50   # pages per batch — tune down to 30 if OOM persists
     buf = BytesIO(pdf_bytes)
     reader = PdfReader(buf)
     if reader.is_encrypted:
         if reader.decrypt(password or "") == 0:
             raise ValueError("Incorrect or missing PDF password.")
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    del reader, buf
+
+    pages  = reader.pages
+    n      = len(pages)
+    parts: list[str] = []
+
+    for start in range(0, n, CHUNK_SIZE):
+        end        = min(start + CHUNK_SIZE, n)
+        chunk_text = "\n".join(pages[i].extract_text() or "" for i in range(start, end))
+        parts.append(chunk_text)
+        gc.collect()   # free decompressed page streams from this batch
+
+    text = "\n".join(parts)
+    del parts, pages, reader, buf
     gc.collect()
     return text
 
