@@ -223,6 +223,59 @@ st.markdown("""
     border-color: var(--accent) !important;
     color: var(--accent) !important;
   }
+
+  /* ── Mobile / Tablet responsive layout ────────────────────────────── */
+  @media (max-width: 768px) {
+    /* Reduce container padding on small screens */
+    .block-container { padding: 1rem 0.75rem 3rem !important; }
+
+    /* Stack Streamlit columns vertically on mobile */
+    [data-testid="stHorizontalBlock"] {
+      flex-direction: column !important;
+      gap: 0.5rem !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stVerticalBlock"] {
+      width: 100% !important;
+      min-width: 0 !important;
+      flex: 1 1 100% !important;
+    }
+
+    /* Make metric cards more compact */
+    [data-testid="stMetric"] { padding: 8px 10px !important; }
+    [data-testid="stMetricValue"] { font-size: 20px !important; }
+    [data-testid="stMetricLabel"] { font-size: 10px !important; }
+
+    /* Larger touch targets for buttons */
+    button, [data-testid="stDownloadButton"] button {
+      min-height: 44px !important;
+      font-size: 13px !important;
+    }
+
+    /* Full-width selectboxes and inputs */
+    [data-testid="stSelectbox"], [data-testid="stTextInput"],
+    [data-testid="stNumberInput"] {
+      width: 100% !important;
+    }
+
+    /* Prevent table overflow — allow horizontal scroll */
+    .preview-table { font-size: 10px !important; }
+    div[data-testid="stMarkdownContainer"] { overflow-x: auto; }
+
+    /* Shrink section titles on mobile */
+    .sel-section-title { font-size: 13px !important; letter-spacing: 1px !important; }
+
+    /* Upload areas — larger on touch screens */
+    [data-testid="stFileUploaderDropzone"] {
+      min-height: 80px !important;
+      padding: 16px !important;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .block-container { padding: 0.75rem 0.5rem 2rem !important; }
+    .sel-section-title { font-size: 11px !important; }
+    [data-testid="stMetricValue"] { font-size: 17px !important; }
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -838,14 +891,46 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
     with _bc2: _bp_prod = st.selectbox("Product Type", ["NTB","RENEWAL","TOP-UP"],            key="batch_prod")
     with _bc3: _bp_ten  = st.selectbox("Tenor",        list(range(2, 13)), index=4,           key="batch_tenor")
 
+    # ── Live queue display ────────────────────────────────────────────────
+    if _bp_files:
+        _q_slots = []
+        for _qf in _bp_files[:10]:
+            _q_slots.append(st.empty())
+
+        def _render_queue(statuses: list) -> None:
+            for _qi, (_qf, _qs) in enumerate(zip(_bp_files[:10], statuses)):
+                _qicon = ("⏳" if _qs == "queued" else "🔄" if _qs == "processing"
+                          else "✅" if _qs == "approved" else "❌" if _qs == "below_min"
+                          else "⚠" if _qs == "no_data" else "🔴")
+                _qcol  = ("#94a3b8" if _qs == "queued" else "#fbbf24" if _qs == "processing"
+                          else "#34d399" if _qs == "approved" else "#f87171" if _qs == "below_min"
+                          else "#fb923c" if _qs == "no_data" else "#ef4444")
+                _q_slots[_qi].markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;padding:4px 0;'
+                    f'font-size:11px;border-bottom:1px solid rgba(255,255,255,.04)">'
+                    f'<span style="color:{_qcol}">{_qicon}</span>'
+                    f'<span style="color:#94a3b8;flex:1;overflow:hidden;text-overflow:ellipsis;'
+                    f'white-space:nowrap">{_qf.name}</span>'
+                    f'<span style="color:{_qcol};font-weight:700;font-size:10px;'
+                    f'text-transform:uppercase">{_qs.replace("_"," ")}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        _statuses = ["queued"] * len(_bp_files[:10])
+        _render_queue(_statuses)
+
     if st.button("▶  Run Batch Assessment", key="btn_batch", use_container_width=True):
         if not _bp_files:
             st.error("Please upload at least one statement.")
         else:
             _bp_rows = []
             _bp_bar  = st.progress(0, text="Processing…")
+            _statuses = ["queued"] * len(_bp_files[:10])
             for _bfi, _bpf in enumerate(_bp_files[:10]):
-                _bp_bar.progress((_bfi) / len(_bp_files), text=f"Processing {_bpf.name}…")
+                _statuses[_bfi] = "processing"
+                _render_queue(_statuses)
+                _bp_bar.progress(_bfi / len(_bp_files[:10]), text=f"Processing {_bpf.name} ({_bfi+1}/{len(_bp_files[:10])})…")
                 try:
                     _bk, _bsumm, _bbank, _bname, _btxns = parse_transactions(
                         _bpf.getvalue(), _bp_pw, filename=_bpf.name
@@ -861,7 +946,13 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                             location=_bp_loc, product_type=_bp_prod, tenor=_bp_ten,
                             sel_mode=(_product == "SEL"),
                         )
-                        _b_avg = sum(_b_nets) / len(_b_nets)
+                        _b_avg    = sum(_b_nets) / len(_b_nets)
+                        _b_appr   = _b_res.get("approved", False)
+                        # Blacklist check for batch
+                        _b_acct   = extract_account_no(_bpf.getvalue().decode("latin-1", errors="ignore")[:5000]) if not _bpf.name.lower().endswith((".xlsx",".xls")) else ""
+                        _b_bl     = check_blacklist(_bname or "", _b_acct)
+                        _b_flag   = f"⚠ WATCHLIST: {_b_bl[0].get('value','')}" if _b_bl else ""
+                        _statuses[_bfi] = "approved" if _b_appr else "below_min"
                         _bp_rows.append({
                             "Name":          _bname or "—",
                             "Bank":          _bbank or "—",
@@ -872,24 +963,30 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                             "Tenor":         f"{_bp_ten} mo",
                             "Repayment":     round(_b_res.get("max_repayment_display", 0)),
                             "Frequency":     _b_res.get("repayment_frequency", "—"),
-                            "Decision":      "Approved" if _b_res.get("approved") else "Below Min",
+                            "Decision":      "Approved" if _b_appr else "Below Min",
+                            "Watchlist":     _b_flag,
                             "File":          _bpf.name,
                         })
                     else:
+                        _statuses[_bfi] = "no_data"
                         _bp_rows.append({
                             "Name": _bname or _bpf.name, "Bank": _bbank or "—",
                             "Months": 0, "Avg Income": 0, "Max Loan": 0,
                             "Rate": "—", "Tenor": f"{_bp_ten} mo", "Repayment": 0,
-                            "Frequency": "—", "Decision": "No data", "File": _bpf.name,
+                            "Frequency": "—", "Decision": "No data",
+                            "Watchlist": "", "File": _bpf.name,
                         })
                 except Exception as _be:
+                    _statuses[_bfi] = "error"
                     _bp_rows.append({
                         "Name": _bpf.name, "Bank": "—", "Months": 0, "Avg Income": 0,
                         "Max Loan": 0, "Rate": "—", "Tenor": f"{_bp_ten} mo",
                         "Repayment": 0, "Frequency": "—",
-                        "Decision": f"Error: {str(_be)[:40]}", "File": _bpf.name,
+                        "Decision": f"Error: {str(_be)[:40]}",
+                        "Watchlist": "", "File": _bpf.name,
                     })
-            _bp_bar.progress(1.0, text="Done.")
+                _render_queue(_statuses)
+            _bp_bar.progress(1.0, text=f"Done — {len(_bp_files[:10])} files processed.")
             st.session_state.batch_results = _bp_rows
 
     if st.session_state.batch_results:
@@ -3678,33 +3775,95 @@ if _qp.get("admin") == _ADMIN_KEY:
         else:
             st.success("✅ No parse errors recorded.")
 
-        # ── Officer Activity ───────────────────────────────────────────────
+        # ── Officer Performance Dashboard ─────────────────────────────────
         _off_act = _stats.get("officer_activity", [])
         if _off_act:
             st.markdown("---")
-            st.markdown("### 👤 Officer Activity")
+            st.markdown("### 👤 Officer Performance Dashboard")
+
+            # Compute fleet averages for outlier detection
+            _oa_all_rates = [
+                (int(_oa.get("approved") or 0) / int(_oa.get("assessments") or 1) * 100)
+                for _oa in _off_act if int(_oa.get("assessments") or 0) >= 3
+            ]
+            _oa_fleet_rate = sum(_oa_all_rates) / len(_oa_all_rates) if _oa_all_rates else None
+            _oa_all_loans  = [
+                float(_oa.get("avg_loan_approved") or 0)
+                for _oa in _off_act if (_oa.get("avg_loan_approved") or 0) > 0
+            ]
+            _oa_fleet_loan = sum(_oa_all_loans) / len(_oa_all_loans) if _oa_all_loans else None
+            _oa_all_dtis   = [
+                float(_oa.get("avg_dti") or 0)
+                for _oa in _off_act if (_oa.get("avg_dti") or 0) > 0
+            ]
+            _oa_fleet_dti  = sum(_oa_all_dtis) / len(_oa_all_dtis) if _oa_all_dtis else None
+
             _oa_rows = []
             for _oa in _off_act:
-                _oa_tot = int(_oa.get("assessments") or 0)
-                _oa_apr = int(_oa.get("approved") or 0)
+                _oa_tot  = int(_oa.get("assessments") or 0)
+                _oa_apr  = int(_oa.get("approved") or 0)
+                _oa_rate = round(_oa_apr / _oa_tot * 100, 1) if _oa_tot else 0
+                _oa_loan = float(_oa.get("avg_loan_approved") or 0)
+                _oa_dti  = float(_oa.get("avg_dti") or 0)
+                # Outlier flags (only when fleet has ≥2 officers with enough data)
+                _flags = []
+                if _oa_fleet_rate is not None and _oa_tot >= 3:
+                    if _oa_rate > _oa_fleet_rate + 20:
+                        _flags.append("⬆ approval")
+                    elif _oa_rate < _oa_fleet_rate - 20:
+                        _flags.append("⬇ approval")
+                if _oa_fleet_loan and _oa_loan > 0:
+                    if _oa_loan > _oa_fleet_loan * 1.4:
+                        _flags.append("⬆ loan size")
+                    elif _oa_loan < _oa_fleet_loan * 0.6:
+                        _flags.append("⬇ loan size")
+                if _oa_fleet_dti and _oa_dti > 0:
+                    if _oa_dti > _oa_fleet_dti * 1.25:
+                        _flags.append("⬆ DTI")
                 _oa_rows.append({
-                    "Officer":          _oa["officer"],
-                    "Assessments":      _oa_tot,
-                    "Approved":         _oa_apr,
-                    "Below Min":        _oa_tot - _oa_apr,
-                    "Approval Rate %":  round(_oa_apr / _oa_tot * 100, 1) if _oa_tot else 0,
-                    "Last Active":      _oa.get("last_active", "—"),
+                    "Officer":            _oa["officer"],
+                    "Assessments":        _oa_tot,
+                    "Approved":           _oa_apr,
+                    "Below Min":          _oa_tot - _oa_apr,
+                    "Approval Rate %":    _oa_rate,
+                    "Avg Loan (Approved)":int(_oa_loan) if _oa_loan else 0,
+                    "Avg DTI %":          _oa_dti,
+                    "Last Active":        _oa.get("last_active", "—"),
+                    "Outlier Flags":      ", ".join(_flags) if _flags else "—",
                 })
+
+            _oa_df = pd.DataFrame(_oa_rows)
             st.dataframe(
-                pd.DataFrame(_oa_rows),
+                _oa_df,
                 hide_index=True,
                 use_container_width=True,
                 column_config={
                     "Approval Rate %": st.column_config.ProgressColumn(
                         "Approval Rate %", min_value=0, max_value=100, format="%.1f%%"
                     ),
+                    "Avg Loan (Approved)": st.column_config.NumberColumn(
+                        "Avg Loan (Approved)", format="₦%d"
+                    ),
+                    "Avg DTI %": st.column_config.NumberColumn(
+                        "Avg DTI %", format="%.1f%%"
+                    ),
+                    "Outlier Flags": st.column_config.TextColumn(
+                        "Outlier Flags", help="Officers whose metrics are >20% above/below fleet average"
+                    ),
                 },
             )
+
+            # Fleet summary row
+            if _oa_fleet_rate is not None:
+                st.markdown(
+                    f'<div style="font-size:10px;color:#64748b;margin-top:4px">'
+                    f'Fleet avg (≥3 assessments): '
+                    f'<span style="color:#10b981">approval {_oa_fleet_rate:.1f}%</span>'
+                    + (f' &nbsp;|&nbsp; <span style="color:#fbbf24">avg loan ₦{_oa_fleet_loan:,.0f}</span>' if _oa_fleet_loan else '')
+                    + (f' &nbsp;|&nbsp; avg DTI {_oa_fleet_dti:.1f}%' if _oa_fleet_dti else '')
+                    + '</div>',
+                    unsafe_allow_html=True,
+                )
 
         # ── Sign-in Log ───────────────────────────────────────────────────
         # Shows every officer who signed in — even those who never ran a
