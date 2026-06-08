@@ -1030,6 +1030,36 @@ with col2:
                             except Exception:
                                 pass  # Accuracy check is best-effort; never block the main flow
 
+                        # ── Statement Freshness Warning ───────────────────────
+                        if buckets:
+                            try:
+                                import datetime as _dt_fw
+                                _latest_ym = max(buckets.keys())
+                                _fw_ly, _fw_lm = int(_latest_ym[:4]), int(_latest_ym[5:])
+                                _fw_today = _dt_fw.date.today()
+                                _fw_months_old = (_fw_today.year - _fw_ly) * 12 + (_fw_today.month - _fw_lm)
+                                if _fw_months_old > 3:
+                                    _fw_col  = "#f87171" if _fw_months_old > 6 else "#fbbf24"
+                                    _fw_icon = "🔴" if _fw_months_old > 6 else "🟡"
+                                    _fw_note = (
+                                        f"Statement is <strong>{_fw_months_old} months old</strong> "
+                                        f"(latest data: {ym_label(_latest_ym)}). "
+                                        + ("Income figures may not reflect current repayment capacity — request a fresh statement."
+                                           if _fw_months_old > 6
+                                           else "Consider requesting a more recent statement before disbursement.")
+                                    )
+                                    st.markdown(
+                                        f'<div style="background:rgba(0,0,0,.2);border:1px solid {_fw_col}55;'
+                                        f'border-radius:3px;padding:8px 14px;margin-top:8px;font-size:12px;">'
+                                        f'{_fw_icon}&nbsp;<span style="color:{_fw_col};font-weight:700">'
+                                        f'Statement Freshness Warning</span>'
+                                        f'&nbsp;&nbsp;<span style="color:#94a3b8">{_fw_note}</span>'
+                                        f'</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                            except Exception:
+                                pass
+
                     except Exception as e:
                         track("parse_error", session=_SID, officer=_OFFICER, filename=file_a.name,
                               error=str(e), error_type=type(e).__name__)
@@ -1248,6 +1278,122 @@ if st.session_state.rows_a:
             f'</div>',
             unsafe_allow_html=True,
         )
+
+        # ── Recurring Income Detection ────────────────────────────────────
+        if st.session_state.txns_a:
+            _real_txns = [t for t in st.session_state.txns_a if t.get("category") == "real_credit"]
+            if _real_txns:
+                import re as _re_rid
+                from collections import defaultdict as _dd_rid
+
+                def _sender_key(narr: str) -> str:
+                    n = narr.upper()
+                    n = _re_rid.sub(r'\b\d{6,}\b', '', n)
+                    n = _re_rid.sub(r'\d{2}/\d{2}/\d{4}', '', n)
+                    n = _re_rid.sub(r'[/|\\-]+', ' ', n)
+                    n = _re_rid.sub(r'\s{2,}', ' ', n).strip()
+                    _skip = {'FROM','TO','BY','OF','THE','A','AN','AND','FOR','AT','TRANSFER','TRF',
+                             'NIP','CR','DR','CREDIT','DEBIT','PAYMENT','INWARD','OUTWARD','FT','WT',
+                             'INT','VIA','REF','MON','TUE','WED','THU','FRI','SAT','SUN'}
+                    parts = [p for p in n.split() if len(p) >= 3 and p not in _skip]
+                    return ' '.join(parts[:2]) if parts else narr[:20].upper()
+
+                _sender_months: dict = _dd_rid(set)
+                _sender_total:  dict = _dd_rid(float)
+                for _t in _real_txns:
+                    _k = _sender_key(_t["narration"])
+                    _sender_months[_k].add(_t["ym"])
+                    _sender_total[_k] += _t["amount"]
+
+                _recurring = sorted(
+                    [(_k, len(_mv), _sender_total[_k]) for _k, _mv in _sender_months.items() if len(_mv) >= 2],
+                    key=lambda x: (-x[1], -x[2])
+                )[:15]
+
+                if _recurring:
+                    with st.expander("🔁  Recurring Income Sources", expanded=False):
+                        _rid_rows = ""
+                        _all_real_total_rid = sum(_sender_total.values()) or 1
+                        for _rk, _rm, _rt in _recurring:
+                            _tag    = "🟢 Recurring" if _rm >= 3 else "🔵 Returning"
+                            _tcolor = "#34d399" if _rm >= 3 else "#60a5fa"
+                            _avg_m  = _rt / _rm
+                            _rid_rows += (
+                                f'<tr>'
+                                f'<td style="font-size:11px;max-width:200px;overflow:hidden;'
+                                f'text-overflow:ellipsis;white-space:nowrap">{_rk.title()}</td>'
+                                f'<td style="text-align:center;font-size:11px">{_rm}</td>'
+                                f'<td style="text-align:right;font-size:11px">{money(_rt)}</td>'
+                                f'<td style="text-align:right;font-size:11px">{money(_avg_m)}</td>'
+                                f'<td style="text-align:center">'
+                                f'<span style="color:{_tcolor};font-size:10px;font-weight:700">{_tag}</span>'
+                                f'</td></tr>'
+                            )
+                        st.markdown(
+                            f'<table class="preview-table"><thead><tr>'
+                            f'<th style="text-align:left">Sender / Source</th>'
+                            f'<th style="text-align:center">Months Active</th>'
+                            f'<th style="text-align:right">Total Received</th>'
+                            f'<th style="text-align:right">Avg / Month</th>'
+                            f'<th style="text-align:center">Consistency</th>'
+                            f'</tr></thead><tbody>{_rid_rows}</tbody></table>'
+                            f'<div style="font-size:10px;color:#64748b;margin-top:6px">'
+                            f'Senders appearing in 2+ months. '
+                            f'🟢 Recurring = 3+ months &nbsp;|&nbsp; 🔵 Returning = 2 months.</div>',
+                            unsafe_allow_html=True,
+                        )
+
+        # ── Suspicious Pattern Flags ──────────────────────────────────────
+        if st.session_state.txns_a:
+            _real_txns2 = [t for t in st.session_state.txns_a if t.get("category") == "real_credit"]
+            if _real_txns2:
+                import re as _re_spf
+                from collections import defaultdict as _dd_spf
+                _spf_flags = []
+                _all_real_total2 = sum(t["amount"] for t in _real_txns2) or 1
+
+                # Flag 1 — Round-number concentration
+                _round_txns = [t for t in _real_txns2
+                               if t["amount"] > 0 and (t["amount"] % 100_000 == 0 or t["amount"] % 50_000 == 0)]
+                _round_total = sum(t["amount"] for t in _round_txns)
+                _round_pct   = _round_total / _all_real_total2 * 100
+                if _round_pct >= 40 and len(_round_txns) >= 3:
+                    _spf_flags.append((
+                        "⚠ High Round-Number Credits",
+                        f"{len(_round_txns)} credits ({_round_pct:.0f}% of income) are exact multiples of "
+                        f"₦50,000 or ₦100,000 — may indicate structured or artificial deposits.",
+                        "#fbbf24",
+                    ))
+
+                # Flag 2 — Concentration risk
+                _spf_sender: dict = _dd_spf(float)
+                for _t in _real_txns2:
+                    _spf_n = _re_spf.sub(r'[^A-Z ]', ' ', _t["narration"].upper()).split()
+                    _spf_k = ' '.join([w for w in _spf_n if len(w) >= 4][:2]) or "OTHER"
+                    _spf_sender[_spf_k] += _t["amount"]
+                if _spf_sender:
+                    _top_s = max(_spf_sender, key=lambda x: _spf_sender[x])
+                    _top_pct = _spf_sender[_top_s] / _all_real_total2 * 100
+                    if _top_pct >= 50:
+                        _spf_flags.append((
+                            "⚠ Income Concentration Risk",
+                            f'"{_top_s.title()}" accounts for {_top_pct:.0f}% of eligible income — '
+                            f'heavy reliance on a single payer increases cash-flow risk.',
+                            "#fb923c",
+                        ))
+
+                if _spf_flags:
+                    with st.expander(f"🚩  Suspicious Pattern Flags ({len(_spf_flags)} found)", expanded=True):
+                        for _ft, _fm, _fc in _spf_flags:
+                            st.markdown(
+                                f'<div style="border-left:3px solid {_fc};'
+                                f'border-radius:0 3px 3px 0;padding:8px 14px;'
+                                f'background:rgba(0,0,0,.18);margin-bottom:8px;font-size:12px">'
+                                f'<div style="color:{_fc};font-weight:700;margin-bottom:3px">{_ft}</div>'
+                                f'<div style="color:#94a3b8">{_fm}</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
 
         # ── Cash Flow Forecast (Feature 10) ──────────────────────────────
         _fcast_vals = [r["eligible_income"] for r in rows_a if r["eligible_income"] > 0]
@@ -1876,12 +2022,28 @@ if st.session_state.rows_a and st.session_state.rows_b:
     all_months = sorted(set(rows_a_map) | set(rows_b_map))[-N_MONTHS:]
 
     if all_months:
-        st.markdown('<div style="font-size:10px;letter-spacing:2px;color:#34d399;text-transform:uppercase;margin:12px 0 6px">▷ Merged Result (Union of Both Statements)</div>', unsafe_allow_html=True)
+        # ── Consolidated View header ──────────────────────────────────────
+        _overlap_months = sorted(set(rows_a_map) & set(rows_b_map))
+        _name_a_disp = st.session_state.get("name_a") or "Statement 1"
+        _name_b_disp = st.session_state.get("name_b") or "Statement 2"
+        _bank_a_disp = st.session_state.get("bank_a") or ""
+        _bank_b_disp = st.session_state.get("bank_b") or ""
+        _label_a = f"{_name_a_disp}" + (f" ({_bank_a_disp})" if _bank_a_disp else "")
+        _label_b = f"{_name_b_disp}" + (f" ({_bank_b_disp})" if _bank_b_disp else "")
+
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:2px;color:#34d399;'
+            'text-transform:uppercase;margin:16px 0 4px">'
+            '▷ Consolidated View — Both Accounts Combined</div>',
+            unsafe_allow_html=True,
+        )
+
         html = ('<table class="preview-table"><thead><tr>'
-                '<th style="text-align:left">Month</th>'
-                '<th class="col-gross">Statement 1 Net</th>'
-                '<th style="text-align:right;color:#f59e0b">Statement 2 Net</th>'
-                '<th class="col-net">Combined Net</th>'
+                f'<th style="text-align:left">Month</th>'
+                f'<th class="col-gross" title="{_label_a}">Acct 1 Income</th>'
+                f'<th style="text-align:right;color:#f59e0b" title="{_label_b}">Acct 2 Income</th>'
+                f'<th class="col-net">Combined Net</th>'
+                f'<th style="text-align:center;font-size:9px;color:#64748b">Source</th>'
                 '</tr></thead><tbody>')
         tA = tB = tC = 0
         for ym in all_months:
@@ -1891,24 +2053,42 @@ if st.session_state.rows_a and st.session_state.rows_b:
             netB = rB["eligible_income"] if rB else 0
             combined = netA + netB
             tA += netA; tB += netB; tC += combined
-            # Mark months where only one statement has data
-            _src = ""
-            if rA and not rB:
-                _src = ' <span style="font-size:9px;color:#64748b">(Stmt 1 only)</span>'
-            elif rB and not rA:
-                _src = ' <span style="font-size:9px;color:#f59e0b">(Stmt 2 only)</span>'
-            html += (f'<tr><td>{ym_label(ym)}{_src}</td>'
+            if rA and rB:
+                _src_label = '<span style="font-size:9px;color:#a78bfa">Both</span>'
+            elif rA:
+                _src_label = '<span style="font-size:9px;color:#64748b">Acct 1</span>'
+            else:
+                _src_label = '<span style="font-size:9px;color:#f59e0b">Acct 2</span>'
+            html += (f'<tr><td>{ym_label(ym)}</td>'
                      f'<td class="col-gross">{money(netA) if netA else "—"}</td>'
                      f'<td style="text-align:right;color:#f59e0b">{money(netB) if netB else "—"}</td>'
-                     f'<td class="col-net">{money(combined)}</td></tr>')
+                     f'<td class="col-net">{money(combined)}</td>'
+                     f'<td style="text-align:center">{_src_label}</td></tr>')
+
+        # Contribution % per account
+        _pct_a = round(tA / tC * 100) if tC else 0
+        _pct_b = round(tB / tC * 100) if tC else 0
         html += (f'</tbody><tfoot><tr>'
-                 f'<td style="color:#64748b;font-size:10px;text-transform:uppercase">Total</td>'
-                 f'<td class="col-gross">{money(tA)}</td>'
-                 f'<td style="text-align:right;color:#f59e0b">{money(tB)}</td>'
-                 f'<td class="col-net">{money(tC)}</td>'
+                 f'<td style="color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:1px">Total</td>'
+                 f'<td class="col-gross" style="border-top:1px solid #1a3d2b">'
+                 f'{money(tA)}<br><span style="font-size:9px;color:#64748b">{_pct_a}% of combined</span></td>'
+                 f'<td style="text-align:right;color:#f59e0b;border-top:1px solid #1a3d2b">'
+                 f'{money(tB)}<br><span style="font-size:9px;color:#a16207">{_pct_b}% of combined</span></td>'
+                 f'<td class="col-net" style="border-top:1px solid #1a3d2b;font-size:14px">{money(tC)}</td>'
+                 f'<td style="border-top:1px solid #1a3d2b"></td>'
                  f'</tr></tfoot></table>')
-        html += (f'<div style="font-size:11px;color:#64748b;margin-top:6px">'
-                 f'ℹ {len(all_months)} months shown — all months from either statement are included.</div>')
+
+        # Footer notes
+        _footer_notes = [f'{len(all_months)} months shown — union of both accounts']
+        if _overlap_months:
+            _footer_notes.append(
+                f'⚑ {len(_overlap_months)} overlapping month(s) ({", ".join(ym_label(m) for m in _overlap_months)}) '
+                f'— both accounts active; totals are additive (dedup handled above if same-owner transfers detected)'
+            )
+        html += ''.join(
+            f'<div style="font-size:10px;color:#64748b;margin-top:5px">{n}</div>'
+            for n in _footer_notes
+        )
         st.markdown(html, unsafe_allow_html=True)
 
 # ── Feature 6: Multi-Account Transfer Deduplication ──────────────────────────
