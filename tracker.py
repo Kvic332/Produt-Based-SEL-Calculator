@@ -176,6 +176,16 @@ def _init() -> None:
                 );""")
                 cur.execute("CREATE INDEX IF NOT EXISTS ix_hist_name ON history(account_name);")
                 cur.execute("CREATE INDEX IF NOT EXISTS ix_hist_ts   ON history(ts);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS blacklist (
+                    id           BIGSERIAL PRIMARY KEY,
+                    ts           TEXT,
+                    entry_type   TEXT DEFAULT 'name',
+                    value        TEXT NOT NULL,
+                    reason       TEXT DEFAULT '',
+                    added_by     TEXT DEFAULT ''
+                );""")
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_bl_val ON blacklist(value);")
             else:
                 cur.executescript("""
                 CREATE TABLE IF NOT EXISTS events (
@@ -206,6 +216,16 @@ def _init() -> None:
                 );
                 CREATE INDEX IF NOT EXISTS ix_hist_name ON history(account_name);
                 CREATE INDEX IF NOT EXISTS ix_hist_ts   ON history(ts);
+
+                CREATE TABLE IF NOT EXISTS blacklist (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts         TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now')),
+                    entry_type TEXT DEFAULT 'name',
+                    value      TEXT NOT NULL,
+                    reason     TEXT DEFAULT '',
+                    added_by   TEXT DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS ix_bl_val ON blacklist(value);
                 """)
             conn.commit()
             _INIT_DONE = True
@@ -477,3 +497,86 @@ def admin_stats() -> dict:
             conn.close()
     except Exception as exc:
         return {"_error": str(exc)}
+
+
+# ── Blacklist / Watchlist API ─────────────────────────────────────────────────
+
+def save_blacklist_entries(entries: list[dict], added_by: str = "") -> int:
+    """Upsert blacklist entries. Each dict must have 'entry_type', 'value', optionally 'reason'.
+    Returns the number of new entries inserted. Never raises."""
+    inserted = 0
+    for e in entries:
+        val = (e.get("value") or "").strip()
+        if not val:
+            continue
+        _execute(
+            "INSERT INTO blacklist (ts, entry_type, value, reason, added_by) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (_now_iso(), e.get("entry_type", "name"), val,
+             e.get("reason", ""), added_by),
+        )
+        inserted += 1
+    return inserted
+
+
+def get_blacklist() -> list[dict]:
+    """Return all blacklist entries, newest first."""
+    return _query(
+        "SELECT id, ts, entry_type, value, reason, added_by "
+        "FROM blacklist ORDER BY ts DESC LIMIT 2000"
+    )
+
+
+def delete_blacklist_entry(entry_id: int) -> None:
+    """Remove one blacklist row by id. Never raises."""
+    _execute("DELETE FROM blacklist WHERE id = ?", (entry_id,))
+
+
+def clear_blacklist() -> None:
+    """Remove all blacklist entries. Never raises."""
+    _execute("DELETE FROM blacklist", ())
+
+
+def check_blacklist(name: str, account_no: str) -> list[dict]:
+    """Return any blacklist entries that match the applicant name or account number.
+    Matching is case-insensitive substring for names, exact for account numbers."""
+    if not name and not account_no:
+        return []
+    results = []
+    all_entries = _query("SELECT id, entry_type, value, reason FROM blacklist")
+    name_lc = name.strip().lower() if name else ""
+    acct_clean = re.sub(r"\s+", "", account_no or "")
+    for e in all_entries:
+        val = (e.get("value") or "").strip()
+        etype = e.get("entry_type", "name")
+        if etype == "account_no":
+            if acct_clean and re.sub(r"\s+", "", val) == acct_clean:
+                results.append(e)
+        else:  # name — substring match
+            if name_lc and val.lower() in name_lc or (val.lower() and name_lc in val.lower()):
+                results.append(e)
+    return results
+
+
+# ── Duplicate Application Detection ──────────────────────────────────────────
+
+def check_duplicate_application(account_no: str, current_officer: str,
+                                  days: int = 30) -> list[dict]:
+    """Return eligibility_result events for the same account_no filed by a
+    DIFFERENT officer within the last `days` days. Never raises."""
+    if not account_no or not account_no.strip():
+        return []
+    cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=days)
+              ).strftime("%Y-%m-%dT%H:%M:%S")
+    rows = _query(
+        "SELECT ts, JGET(data,officer) AS officer, JGET(data,applicant) AS applicant, "
+        "       JGET(data,bank) AS bank, JGET(data,max_loan) AS max_loan "
+        "FROM events "
+        "WHERE event = 'eligibility_result' "
+        "  AND JGET(data,account_no) = ? "
+        "  AND ts >= ? "
+        "ORDER BY ts DESC LIMIT 20",
+        (account_no.strip(), cutoff),
+    )
+    officer_lc = (current_officer or "").strip().lower()
+    return [r for r in rows if (r.get("officer") or "").strip().lower() != officer_lc]

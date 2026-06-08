@@ -18,7 +18,9 @@ from bank_parser import (
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
-from tracker import track, admin_stats, save_history, get_history, export_audit_csv
+from tracker import (track, admin_stats, save_history, get_history, export_audit_csv,
+                     check_blacklist, check_duplicate_application,
+                     save_blacklist_entries, get_blacklist, delete_blacklist_entry, clear_blacklist)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -997,6 +999,29 @@ with col2:
                             st.session_state.account_no_a = ""
 
                         st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
+
+                        # ── Blacklist / Watchlist Check ───────────────────────
+                        try:
+                            _bl_hits = check_blacklist(
+                                name or "",
+                                st.session_state.get("account_no_a", ""),
+                            )
+                            for _bh in _bl_hits:
+                                _bh_type = "Account No" if _bh.get("entry_type") == "account_no" else "Name"
+                                st.markdown(
+                                    f'<div style="background:rgba(239,68,68,.1);border:2px solid #ef4444;'
+                                    f'border-radius:4px;padding:10px 16px;margin-top:8px">'
+                                    f'<div style="color:#ef4444;font-weight:900;font-size:13px;'
+                                    f'letter-spacing:1px">🚫 WATCHLIST MATCH — {_bh_type}</div>'
+                                    f'<div style="color:#fca5a5;margin-top:4px;font-size:12px">'
+                                    f'<strong>Flagged value:</strong> {_bh.get("value","")}'
+                                    + (f'&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Reason:</strong> {_bh.get("reason","")}' if _bh.get("reason") else "")
+                                    + f'</div></div>',
+                                    unsafe_allow_html=True,
+                                )
+                        except Exception:
+                            pass
+
                         _txn_count = sum(b.get("count", 0) for b in buckets.values())
                         _gross_tot = sum(b.get("gross", 0) for b in buckets.values())
                         track("parse_success", session=_SID, officer=_OFFICER, bank=bank,
@@ -2661,6 +2686,39 @@ if calc_btn:
               applicant=_report_name or "",
               account_no=_acct_no)
 
+        # ── Duplicate Application Detection ──────────────────────────────
+        if _acct_no:
+            try:
+                _dup_hits = check_duplicate_application(_acct_no, _OFFICER, days=30)
+                if _dup_hits:
+                    _dup_rows_html = "".join(
+                        f'<tr>'
+                        f'<td style="font-size:11px;color:#94a3b8">{(h.get("ts") or "")[:10]}</td>'
+                        f'<td style="font-size:11px;color:#fbbf24;font-weight:700">{h.get("officer","—")}</td>'
+                        f'<td style="font-size:11px">{h.get("bank","—")}</td>'
+                        f'<td style="text-align:right;font-size:11px">'
+                        f'{money(float(h.get("max_loan") or 0))}</td>'
+                        f'</tr>'
+                        for h in _dup_hits
+                    )
+                    st.markdown(
+                        f'<div style="background:rgba(251,191,36,.07);border:2px solid #f59e0b;'
+                        f'border-radius:4px;padding:12px 16px;margin-bottom:12px">'
+                        f'<div style="color:#f59e0b;font-weight:900;font-size:13px;letter-spacing:1px">'
+                        f'⚠ DUPLICATE APPLICATION DETECTED</div>'
+                        f'<div style="color:#94a3b8;font-size:11px;margin:6px 0">Account <strong style="color:#e2e8f0">'
+                        f'{_acct_no}</strong> was assessed {len(_dup_hits)} time(s) by a different officer '
+                        f'in the last 30 days — possible round-tripping.</div>'
+                        f'<table class="preview-table" style="margin-top:6px"><thead><tr>'
+                        f'<th style="text-align:left">Date</th><th>Officer</th>'
+                        f'<th>Bank</th><th style="text-align:right">Max Loan</th>'
+                        f'</tr></thead><tbody>{_dup_rows_html}</tbody></table>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            except Exception:
+                pass
+
         # ── Build loan params dict for all download generators ───────────
         _loan_params = {
             "location":     location,
@@ -3028,6 +3086,87 @@ if calc_btn:
                     f' — <span style="color:#f87171">{_cost_pct:.1f}%</span>'
                     f' of loan principal repaid as interest over {_n_periods} months'
                     f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── Core Banking Export ───────────────────────────────────────────
+        if approved:
+            import datetime as _cbe_dt
+            _cbe_name  = _report_name or st.session_state.get("name_a") or "UNKNOWN"
+            _cbe_bank  = st.session_state.get("bank_a") or ""
+            _cbe_acct  = st.session_state.get("account_no_a") or ""
+            _cbe_loan  = result.get("max_loan", 0)
+            _cbe_rate  = (result.get("interest_rate") or 0) * 100
+            _cbe_pmt   = result.get("max_repayment_monthly", 0)
+            _cbe_dti   = (result.get("dti") or 0) * 100
+            _cbe_today = _cbe_dt.date.today().isoformat()
+            _cbe_maturity = (_cbe_dt.date.today()
+                             .replace(day=1)  # go to first of month
+                             ).__class__(
+                                 _cbe_dt.date.today().year + (tenor // 12),
+                                 (_cbe_dt.date.today().month + tenor % 12 - 1) % 12 + 1,
+                                 1,
+                             ).isoformat()
+
+            def _make_cbe_csv(fmt: str) -> bytes:
+                import io as _io
+                buf = _io.StringIO()
+                if fmt == "flexcube":
+                    # Oracle Flexcube OD/CL loan input format
+                    hdr = ["LOAN_ACCOUNT_NO","CUSTOMER_NAME","CUSTOMER_ACCOUNT","PRODUCT_CODE",
+                           "BRANCH_CODE","CURRENCY","LOAN_AMOUNT","TENOR_MONTHS",
+                           "INTEREST_RATE_PCT","MONTHLY_REPAYMENT","DTI_PCT",
+                           "DISBURSEMENT_DATE","MATURITY_DATE","SOURCE_BANK",
+                           "ASSESSED_BY","PRODUCT_TYPE","LOCATION"]
+                    row = ["", _cbe_name, _cbe_acct, prod_type,
+                           location[:3].upper(), "NGN", f"{_cbe_loan:.2f}", str(tenor),
+                           f"{_cbe_rate:.2f}", f"{_cbe_pmt:.2f}", f"{_cbe_dti:.2f}",
+                           _cbe_today, _cbe_maturity, _cbe_bank,
+                           _OFFICER, _product, location]
+                else:  # temenos T24
+                    hdr = ["ARRANGEMENT.ID","CUSTOMER","ACCOUNT.NO","PRODUCT",
+                           "CURRENCY","AMOUNT","TERM","INT.RATE",
+                           "INSTALMENT","DTI","START.DATE","MATURITY.DATE",
+                           "BANK","OFFICER","TYPE","ZONE"]
+                    row = ["", _cbe_name, _cbe_acct, f"SEL.{prod_type}",
+                           "NGN", f"{_cbe_loan:.2f}", f"{tenor}M",
+                           f"{_cbe_rate:.4f}", f"{_cbe_pmt:.2f}", f"{_cbe_dti:.2f}",
+                           _cbe_today, _cbe_maturity,
+                           _cbe_bank, _OFFICER, _product, location]
+                buf.write(",".join(hdr) + "\r\n")
+                buf.write(",".join(f'"{v}"' for v in row) + "\r\n")
+                return buf.getvalue().encode()
+
+            with st.expander("🏦  Export to Core Banking System", expanded=False):
+                st.markdown(
+                    '<div style="font-size:11px;color:#64748b;margin-bottom:10px">'
+                    'Download a pre-filled CSV in the loan booking format for your core banking '
+                    'system — paste directly into the import screen to eliminate re-entry.</div>',
+                    unsafe_allow_html=True,
+                )
+                _cbe1, _cbe2 = st.columns(2)
+                with _cbe1:
+                    st.download_button(
+                        "⬇  Flexcube Format (Oracle)",
+                        data=_make_cbe_csv("flexcube"),
+                        file_name=f"loan_booking_flexcube_{_cbe_name.replace(' ','_')}_{_cbe_today}.csv",
+                        mime="text/csv",
+                        key="dl_cbe_flexcube",
+                        use_container_width=True,
+                    )
+                with _cbe2:
+                    st.download_button(
+                        "⬇  Temenos T24 Format",
+                        data=_make_cbe_csv("temenos"),
+                        file_name=f"loan_booking_t24_{_cbe_name.replace(' ','_')}_{_cbe_today}.csv",
+                        mime="text/csv",
+                        key="dl_cbe_t24",
+                        use_container_width=True,
+                    )
+                st.markdown(
+                    '<div style="font-size:10px;color:#64748b;margin-top:6px">'
+                    '⚑ LOAN_ACCOUNT_NO / ARRANGEMENT.ID left blank — assign in your CBS before import. '
+                    'Verify field mappings match your exact CBS version before bulk use.</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -3742,3 +3881,96 @@ if _qp.get("admin") == _ADMIN_KEY:
                         use_container_width=True,
                         help="Local SQLite snapshot. On Neon, use the CSV export for live data.",
                     )
+
+    # ── Blacklist / Watchlist Management ──────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🚫 Blacklist / Watchlist")
+    st.markdown(
+        '<div style="font-size:11px;color:#64748b;margin-bottom:10px">'
+        'Upload a CSV with flagged names or account numbers. '
+        'The app will warn officers when a match is detected at parse time.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _bl_tab1, _bl_tab2 = st.tabs(["Upload / Add", "Current Entries"])
+
+    with _bl_tab1:
+        _bl_mode = st.radio("Add method", ["Upload CSV", "Enter manually"],
+                            horizontal=True, key="bl_add_mode")
+
+        if _bl_mode == "Upload CSV":
+            st.markdown(
+                '<div style="font-size:10px;color:#64748b;margin-bottom:6px">'
+                'CSV format: <code>entry_type,value,reason</code> — '
+                'entry_type = <code>name</code> or <code>account_no</code></div>',
+                unsafe_allow_html=True,
+            )
+            _bl_file = st.file_uploader("Upload blacklist CSV", type=["csv"],
+                                        key="bl_upload", label_visibility="collapsed")
+            if _bl_file and st.button("Import Blacklist", key="bl_import_btn"):
+                import csv as _csv_mod
+                import io as _bl_io
+                _bl_content = _bl_file.read().decode("utf-8-sig")
+                _bl_reader  = _csv_mod.DictReader(_bl_io.StringIO(_bl_content))
+                _bl_entries = []
+                for _br in _bl_reader:
+                    # Normalise headers — accept variations
+                    _brow = {k.strip().lower().replace(" ", "_"): v.strip() for k, v in _br.items()}
+                    _bl_entries.append({
+                        "entry_type": _brow.get("entry_type", _brow.get("type", "name")),
+                        "value":      _brow.get("value", _brow.get("name", _brow.get("account_no", ""))),
+                        "reason":     _brow.get("reason", _brow.get("notes", "")),
+                    })
+                _bl_n = save_blacklist_entries(_bl_entries, added_by=_OFFICER)
+                st.success(f"Imported {_bl_n} entries to the watchlist.")
+
+        else:
+            _bl_m1, _bl_m2 = st.columns([2, 3])
+            with _bl_m1:
+                _bl_etype = st.selectbox("Type", ["name", "account_no"], key="bl_etype_manual")
+            with _bl_m2:
+                _bl_val = st.text_input("Value (name or account number)", key="bl_val_manual",
+                                        label_visibility="collapsed",
+                                        placeholder="e.g. JOHN DOE or 0012345678")
+            _bl_reason = st.text_input("Reason (optional)", key="bl_reason_manual",
+                                       placeholder="e.g. Previous fraud, court order")
+            if st.button("Add to Watchlist", key="bl_manual_add"):
+                if _bl_val.strip():
+                    save_blacklist_entries(
+                        [{"entry_type": _bl_etype, "value": _bl_val.strip(), "reason": _bl_reason}],
+                        added_by=_OFFICER,
+                    )
+                    st.success(f"Added '{_bl_val.strip()}' to watchlist.")
+                else:
+                    st.warning("Please enter a value before adding.")
+
+    with _bl_tab2:
+        _bl_current = get_blacklist()
+        if not _bl_current:
+            st.info("Watchlist is empty.")
+        else:
+            st.markdown(f'<div style="font-size:11px;color:#64748b;margin-bottom:6px">'
+                        f'{len(_bl_current)} entr{"ies" if len(_bl_current) != 1 else "y"} on the watchlist</div>',
+                        unsafe_allow_html=True)
+            _bl_rows_html = ""
+            for _be in _bl_current:
+                _bl_rows_html += (
+                    f'<tr>'
+                    f'<td style="font-size:10px;color:#94a3b8">{(_be.get("ts") or "")[:10]}</td>'
+                    f'<td style="font-size:11px;color:#fbbf24">{_be.get("entry_type","")}</td>'
+                    f'<td style="font-size:11px;font-weight:700">{_be.get("value","")}</td>'
+                    f'<td style="font-size:11px;color:#94a3b8">{_be.get("reason","")}</td>'
+                    f'<td style="font-size:10px;color:#64748b">{_be.get("added_by","")}</td>'
+                    f'</tr>'
+                )
+            st.markdown(
+                f'<table class="preview-table"><thead><tr>'
+                f'<th style="text-align:left">Added</th><th>Type</th>'
+                f'<th>Value</th><th>Reason</th><th>Added By</th>'
+                f'</tr></thead><tbody>{_bl_rows_html}</tbody></table>',
+                unsafe_allow_html=True,
+            )
+            if st.button("🗑  Clear Entire Watchlist", key="bl_clear_all"):
+                clear_blacklist()
+                st.success("Watchlist cleared.")
+                st.rerun()
