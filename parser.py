@@ -20,6 +20,25 @@ from PyPDF2 import PdfReader
 # ── Transaction log (reset on each parse_transactions call) ─────────────────
 _txn_log: list[dict] = []
 
+# ── Full-text cache — holds the PyPDF2 text from the most recent
+#    parse_transactions call so the caller can reuse it for account-number
+#    extraction and accuracy verification without re-parsing the PDF.
+#    Reset to "" at the start of every parse_transactions call.
+_last_full_text: str = ""
+
+
+def get_last_full_text() -> str:
+    """Return the raw extracted text from the most recent parse_transactions call.
+
+    Allows the caller (app.py) to perform account-number extraction and accuracy
+    verification using the text already produced during the main parse — avoiding
+    two or three additional PyPDF2 / pdfplumber re-parses of the same PDF file.
+    The returned string is freed by the caller after use; its lifetime ends when
+    the caller does `del text; gc.collect()`.
+    """
+    return _last_full_text
+
+
 # Excel support — openpyxl for .xlsx, xlrd for .xls
 try:
     import openpyxl
@@ -3300,8 +3319,9 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     buckets: {ym: {gross, count, self_transfer, reversal, non_business, loan_disbursal, real_credit}}
     transactions: list of {ym, narration, amount, category} for keyword search
     """
-    global _txn_log
-    _txn_log = []  # Reset for each new parse
+    global _txn_log, _last_full_text
+    _txn_log = []         # Reset for each new parse
+    _last_full_text = ""  # Clear cached text from any prior call
 
     # ── Excel detection ───────────────────────────────────────────────────
     is_excel = (filename.lower().endswith((".xlsx", ".xls")) or
@@ -3372,6 +3392,9 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     else:
         buckets, account_name = parse_generic(full_text)
 
+    # Cache full_text so caller can reuse it for account-number extraction and
+    # accuracy verification — eliminates 2–3 extra PDF re-parses in app.py.
+    _last_full_text = full_text
     del full_text
     gc.collect()
     return buckets, summary, bank, account_name, list(_txn_log)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import datetime
+import gc
 import json
 import math
 import os
@@ -13,6 +14,7 @@ from parser import (
     ym_label, CreditAccount,
     extract_stated_totals, verify_extraction_accuracy,
     extract_account_no_excel,
+    get_last_full_text,
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
 from report_generator import generate_pdf_report
@@ -942,79 +944,107 @@ with col2:
             st.error("Please select a PDF file first.")
         else:
             with st.spinner("Extracting..."):
-                track("upload", session=_SID, officer=_OFFICER, filename=file_a.name,
-                      size_kb=round(len(file_a.getvalue()) / 1024, 1))
-                try:
-                    buckets, summary, bank, name, txns = parse_transactions(file_a.getvalue(), pw_a, filename=file_a.name)
-                    rows = monthly_analysis(buckets, summary)
-                    st.session_state.buckets_a  = buckets
-                    st.session_state.summary_a  = summary
-                    st.session_state.bank_a     = bank
-                    st.session_state.bank_override_a = bank   # seed manual override
-                    st.session_state.name_a     = name
-                    st.session_state.rows_a     = rows
-                    st.session_state.txns_a     = txns
-                    # Extract account number — Excel (Mono) uses Nuban/Client ID;
-                    # PDFs use text regex (pdfplumber first, PyPDF2 fallback)
-                    try:
-                        if file_a.name.lower().endswith((".xlsx", ".xls")):
-                            st.session_state.account_no_a = extract_account_no_excel(file_a.getvalue())
-                        else:
-                            from parser import extract_pdf_text_pdfplumber as _ept_pl_a, extract_pdf_text as _ept_py_a
-                            _raw_a = _ept_pl_a(file_a.getvalue(), pw_a)
-                            _acno_a = extract_account_no(_raw_a)
-                            if not _acno_a:  # pdfplumber missed it — try PyPDF2
-                                _acno_a = extract_account_no(_ept_py_a(file_a.getvalue(), pw_a))
-                            st.session_state.account_no_a = _acno_a
-                    except Exception:
-                        st.session_state.account_no_a = ""
-                    st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
-                    _txn_count = sum(b.get("count", 0) for b in buckets.values())
-                    _gross_tot = sum(b.get("gross", 0) for b in buckets.values())
-                    track("parse_success", session=_SID, officer=_OFFICER, bank=bank,
-                          filename=file_a.name, txn_count=_txn_count,
-                          gross_total=round(_gross_tot, 2),
-                          months=len([r for r in rows if r["gross"] > 0]))
+                # ── Read file bytes ONCE — prevents 4-5 redundant BytesIO copies ──
+                _pdf_bytes_a = file_a.getvalue()
+                _size_mb_a   = len(_pdf_bytes_a) / 1_048_576
 
-                    # ── AI Accuracy Verification (free, no API key needed) ──
-                    # Only meaningful for PDF files that carry a stated total.
-                    is_pdf = not file_a.name.lower().endswith((".xlsx", ".xls"))
-                    if is_pdf and buckets:
-                        from parser import extract_pdf_text as _ept
-                        try:
-                            raw_text = _ept(file_a.getvalue(), pw_a)
-                            stated   = extract_stated_totals(raw_text)
-                            verdict  = verify_extraction_accuracy(buckets, stated)
-                            if verdict["pct_match"] is not None:
-                                _pct_match = verdict["pct_match"]
-                                ext = verdict["extracted"]
-                                stl = verdict["stated_total"]
-                                colour = ("#34d399" if _pct_match >= 95
-                                          else "#fb923c" if _pct_match >= 90
-                                          else "#f87171")
-                                st.markdown(
-                                    f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
-                                    f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
-                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {_pct_match}% match</span>'
-                                    f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
-                                    f'stated ₦{stl:,.0f}</span><br>'
-                                    f'<span style="color:#94a3b8;font-size:11px">{verdict["message"]}</span>'
-                                    f'</div>',
-                                    unsafe_allow_html=True,
-                                )
-                        except Exception:
-                            pass  # Accuracy check is best-effort; never block the main flow
-
-                except Exception as e:
-                    track("parse_error", session=_SID, officer=_OFFICER, filename=file_a.name,
-                          error=str(e), error_type=type(e).__name__)
-                    if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
-                        st.error(
-                            "This PDF appears to be corrupted or incomplete. "
-                            "Please download the bank statement again from your bank app/portal."
+                # ── File size guard ──────────────────────────────────────────
+                if _size_mb_a > 15:
+                    st.error(
+                        f"⚠️ This PDF is {_size_mb_a:.1f} MB — too large to process safely on "
+                        f"Streamlit Cloud (limit: 15 MB). Please export a shorter date range "
+                        f"(3–6 months) from your bank portal and upload again."
+                    )
+                    del _pdf_bytes_a
+                    gc.collect()
+                else:
+                    if _size_mb_a > 7:
+                        st.warning(
+                            f"Large file ({_size_mb_a:.1f} MB). Processing may take 15–30 seconds…"
                         )
-                    else:
-                        st.error(f"Error: {e}")
+
+                    track("upload", session=_SID, officer=_OFFICER, filename=file_a.name,
+                          size_kb=round(_size_mb_a * 1024, 1))
+                    try:
+                        buckets, summary, bank, name, txns = parse_transactions(
+                            _pdf_bytes_a, pw_a, filename=file_a.name
+                        )
+                        rows = monthly_analysis(buckets, summary)
+                        st.session_state.buckets_a       = buckets
+                        st.session_state.summary_a       = summary
+                        st.session_state.bank_a          = bank
+                        st.session_state.bank_override_a = bank   # seed manual override
+                        st.session_state.name_a          = name
+                        st.session_state.rows_a          = rows
+                        st.session_state.txns_a          = txns
+
+                        # ── Reuse text already extracted by parse_transactions ──
+                        # Eliminates the previous pdfplumber + PyPDF2 re-parses
+                        # (which each used 100–200 MB for a large PDF).
+                        _reused_text_a = get_last_full_text()
+
+                        # Extract account number — Excel: file bytes; PDF: reuse text
+                        try:
+                            if file_a.name.lower().endswith((".xlsx", ".xls")):
+                                st.session_state.account_no_a = extract_account_no_excel(_pdf_bytes_a)
+                            else:
+                                st.session_state.account_no_a = extract_account_no(_reused_text_a)
+                        except Exception:
+                            st.session_state.account_no_a = ""
+
+                        st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
+                        _txn_count = sum(b.get("count", 0) for b in buckets.values())
+                        _gross_tot = sum(b.get("gross", 0) for b in buckets.values())
+                        track("parse_success", session=_SID, officer=_OFFICER, bank=bank,
+                              filename=file_a.name, txn_count=_txn_count,
+                              gross_total=round(_gross_tot, 2),
+                              months=len([r for r in rows if r["gross"] > 0]))
+
+                        # ── Accuracy Verification — reuses cached text, no re-parse ──
+                        is_pdf = not file_a.name.lower().endswith((".xlsx", ".xls"))
+                        if is_pdf and buckets and _reused_text_a:
+                            try:
+                                stated  = extract_stated_totals(_reused_text_a)
+                                verdict = verify_extraction_accuracy(buckets, stated)
+                                if verdict["pct_match"] is not None:
+                                    _pct_match = verdict["pct_match"]
+                                    ext = verdict["extracted"]
+                                    stl = verdict["stated_total"]
+                                    colour = ("#34d399" if _pct_match >= 95
+                                              else "#fb923c" if _pct_match >= 90
+                                              else "#f87171")
+                                    st.markdown(
+                                        f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
+                                        f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
+                                        f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {_pct_match}% match</span>'
+                                        f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
+                                        f'stated ₦{stl:,.0f}</span><br>'
+                                        f'<span style="color:#94a3b8;font-size:11px">{verdict["message"]}</span>'
+                                        f'</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                            except Exception:
+                                pass  # Accuracy check is best-effort; never block the main flow
+
+                    except Exception as e:
+                        track("parse_error", session=_SID, officer=_OFFICER, filename=file_a.name,
+                              error=str(e), error_type=type(e).__name__)
+                        if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
+                            st.error(
+                                "This PDF appears to be corrupted or incomplete. "
+                                "Please download the bank statement again from your bank app/portal."
+                            )
+                        else:
+                            st.error(f"Error: {e}")
+                    finally:
+                        # Free raw bytes + cached text immediately — a 10 MB PDF
+                        # leaves ~100-200 MB of PyPDF2 residuals if not freed.
+                        del _pdf_bytes_a
+                        try:
+                            del _reused_text_a
+                        except NameError:
+                            pass
+                        gc.collect()
 
 # Show breakdown table for statement A
 # ── Supported bank options for the manual override dropdown ──────────────────
@@ -1688,76 +1718,100 @@ with col4:
             st.error("Please extract the first statement first.")
         else:
             with st.spinner("Extracting second statement..."):
-                track("upload", session=_SID, officer=_OFFICER, filename=file_b.name,
-                      size_kb=round(len(file_b.getvalue()) / 1024, 1), slot="B")
-                try:
-                    buckets_b, summary_b, bank_b, name_b, txns_b = parse_transactions(file_b.getvalue(), pw_b, filename=file_b.name)
-                    rows_b = monthly_analysis(buckets_b, summary_b)
-                    st.session_state.buckets_b = buckets_b
-                    st.session_state.summary_b = summary_b
-                    st.session_state.bank_b    = bank_b
-                    st.session_state.bank_override_b = bank_b   # seed manual override
-                    st.session_state.name_b    = name_b
-                    st.session_state.rows_b    = rows_b
-                    st.session_state.txns_b    = txns_b
-                    try:
-                        if file_b.name.lower().endswith((".xlsx", ".xls")):
-                            st.session_state.account_no_b = extract_account_no_excel(file_b.getvalue())
-                        else:
-                            from parser import extract_pdf_text_pdfplumber as _ept_pl_b, extract_pdf_text as _ept_py_b
-                            _raw_b = _ept_pl_b(file_b.getvalue(), pw_b)
-                            _acno_b = extract_account_no(_raw_b)
-                            if not _acno_b:
-                                _acno_b = extract_account_no(_ept_py_b(file_b.getvalue(), pw_b))
-                            st.session_state.account_no_b = _acno_b
-                    except Exception:
-                        st.session_state.account_no_b = ""
-                    st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
-                    _txn_count_b = sum(b.get("count", 0) for b in buckets_b.values())
-                    _gross_tot_b = sum(b.get("gross", 0) for b in buckets_b.values())
-                    track("parse_success", session=_SID, officer=_OFFICER, bank=bank_b,
-                          filename=file_b.name, txn_count=_txn_count_b,
-                          gross_total=round(_gross_tot_b, 2),
-                          months=len([r for r in rows_b if r["gross"] > 0]), slot="B")
+                # ── Read file bytes ONCE ──────────────────────────────────────
+                _pdf_bytes_b = file_b.getvalue()
+                _size_mb_b   = len(_pdf_bytes_b) / 1_048_576
 
-                    # ── Accuracy Verification for statement B ──
-                    is_pdf_b = not file_b.name.lower().endswith((".xlsx", ".xls"))
-                    if is_pdf_b and buckets_b:
-                        from parser import extract_pdf_text as _ept2
-                        try:
-                            raw_text_b = _ept2(file_b.getvalue(), pw_b)
-                            stated_b   = extract_stated_totals(raw_text_b)
-                            verdict_b  = verify_extraction_accuracy(buckets_b, stated_b)
-                            if verdict_b["pct_match"] is not None:
-                                _pct_match = verdict_b["pct_match"]
-                                ext = verdict_b["extracted"]
-                                stl = verdict_b["stated_total"]
-                                colour = ("#34d399" if _pct_match >= 95
-                                          else "#fb923c" if _pct_match >= 90
-                                          else "#f87171")
-                                st.markdown(
-                                    f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
-                                    f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
-                                    f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {_pct_match}% match</span>'
-                                    f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
-                                    f'stated ₦{stl:,.0f}</span><br>'
-                                    f'<span style="color:#94a3b8;font-size:11px">{verdict_b["message"]}</span>'
-                                    f'</div>',
-                                    unsafe_allow_html=True,
-                                )
-                        except Exception:
-                            pass
-
-                except Exception as e:
-                    track("parse_error", session=_SID, officer=_OFFICER, filename=file_b.name,
-                          error=str(e), error_type=type(e).__name__, slot="B")
-                    if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
-                        st.error(
-                            "This PDF appears to be corrupted or incomplete. "
-                            "Please download the bank statement again from your bank app/portal."
+                if _size_mb_b > 15:
+                    st.error(
+                        f"⚠️ This PDF is {_size_mb_b:.1f} MB — too large to process safely on "
+                        f"Streamlit Cloud (limit: 15 MB). Please export a shorter date range "
+                        f"(3–6 months) from your bank portal and upload again."
+                    )
+                    del _pdf_bytes_b
+                    gc.collect()
+                else:
+                    if _size_mb_b > 7:
+                        st.warning(
+                            f"Large file ({_size_mb_b:.1f} MB). Processing may take 15–30 seconds…"
                         )
-                    else:
-                        st.error(f"Error: {e}")
+
+                    track("upload", session=_SID, officer=_OFFICER, filename=file_b.name,
+                          size_kb=round(_size_mb_b * 1024, 1), slot="B")
+                    try:
+                        buckets_b, summary_b, bank_b, name_b, txns_b = parse_transactions(
+                            _pdf_bytes_b, pw_b, filename=file_b.name
+                        )
+                        rows_b = monthly_analysis(buckets_b, summary_b)
+                        st.session_state.buckets_b       = buckets_b
+                        st.session_state.summary_b       = summary_b
+                        st.session_state.bank_b          = bank_b
+                        st.session_state.bank_override_b = bank_b   # seed manual override
+                        st.session_state.name_b          = name_b
+                        st.session_state.rows_b          = rows_b
+                        st.session_state.txns_b          = txns_b
+
+                        _reused_text_b = get_last_full_text()
+
+                        try:
+                            if file_b.name.lower().endswith((".xlsx", ".xls")):
+                                st.session_state.account_no_b = extract_account_no_excel(_pdf_bytes_b)
+                            else:
+                                st.session_state.account_no_b = extract_account_no(_reused_text_b)
+                        except Exception:
+                            st.session_state.account_no_b = ""
+
+                        st.success(f"Second statement extracted: {bank_b} — {name_b or 'account holder'}")
+                        _txn_count_b = sum(b.get("count", 0) for b in buckets_b.values())
+                        _gross_tot_b = sum(b.get("gross", 0) for b in buckets_b.values())
+                        track("parse_success", session=_SID, officer=_OFFICER, bank=bank_b,
+                              filename=file_b.name, txn_count=_txn_count_b,
+                              gross_total=round(_gross_tot_b, 2),
+                              months=len([r for r in rows_b if r["gross"] > 0]), slot="B")
+
+                        # ── Accuracy Verification — reuses cached text, no re-parse ──
+                        is_pdf_b = not file_b.name.lower().endswith((".xlsx", ".xls"))
+                        if is_pdf_b and buckets_b and _reused_text_b:
+                            try:
+                                stated_b  = extract_stated_totals(_reused_text_b)
+                                verdict_b = verify_extraction_accuracy(buckets_b, stated_b)
+                                if verdict_b["pct_match"] is not None:
+                                    _pct_match = verdict_b["pct_match"]
+                                    ext = verdict_b["extracted"]
+                                    stl = verdict_b["stated_total"]
+                                    colour = ("#34d399" if _pct_match >= 95
+                                              else "#fb923c" if _pct_match >= 90
+                                              else "#f87171")
+                                    st.markdown(
+                                        f'<div style="background:rgba(0,0,0,.2);border:1px solid {colour}33;'
+                                        f'border-radius:3px;padding:10px 14px;margin-top:8px;font-size:12px;">'
+                                        f'<span style="color:{colour};font-weight:700">▶ Accuracy Check — {_pct_match}% match</span>'
+                                        f'&nbsp;&nbsp;<span style="color:#64748b">Extracted ₦{ext:,.0f} vs '
+                                        f'stated ₦{stl:,.0f}</span><br>'
+                                        f'<span style="color:#94a3b8;font-size:11px">{verdict_b["message"]}</span>'
+                                        f'</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                            except Exception:
+                                pass
+
+                    except Exception as e:
+                        track("parse_error", session=_SID, officer=_OFFICER, filename=file_b.name,
+                              error=str(e), error_type=type(e).__name__, slot="B")
+                        if "EOF marker not found" in str(e) or "Unexpected EOF" in str(e):
+                            st.error(
+                                "This PDF appears to be corrupted or incomplete. "
+                                "Please download the bank statement again from your bank app/portal."
+                            )
+                        else:
+                            st.error(f"Error: {e}")
+                    finally:
+                        del _pdf_bytes_b
+                        try:
+                            del _reused_text_b
+                        except NameError:
+                            pass
+                        gc.collect()
 
 # Show Statement B own analysis
 if st.session_state.rows_b:
