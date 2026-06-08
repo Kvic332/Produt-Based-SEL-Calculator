@@ -3219,6 +3219,70 @@ if _qp.get("admin") == _ADMIN_KEY:
                 },
             )
 
+        # ── Sign-in Log ───────────────────────────────────────────────────
+        # Shows every officer who signed in — even those who never ran a
+        # calculation.  Useful for attendance / access-control monitoring.
+        st.markdown("---")
+        st.markdown("### 🔐 Sign-in Log")
+
+        _signin_today  = _stats.get("signin_today", 0)
+        _signin_log    = _stats.get("signin_log", [])
+        _signin_summ   = _stats.get("signin_summary", [])
+
+        _sl1, _sl2, _sl3 = st.columns(3)
+        _sl1.metric("Sign-ins Today",   _signin_today)
+        _sl2.metric("Total Sign-ins",   len(_signin_log))
+        _sl3.metric("Unique Officers",  len(_signin_summ))
+
+        if _signin_summ:
+            st.markdown("#### Officers — All-time Sign-in Summary")
+            # Flag officers who only signed in but never ran a calculation
+            _calc_officers = {
+                str(_oa.get("officer", "")).strip().lower()
+                for _oa in _stats.get("officer_activity", [])
+            }
+            _ss_rows = []
+            for _ss in _signin_summ:
+                _off = str(_ss.get("officer") or "Unknown")
+                _used_calc = _off.strip().lower() in _calc_officers
+                _ss_rows.append({
+                    "Officer":        _off,
+                    "Total Sign-ins": int(_ss.get("total_signins") or 0),
+                    "Last Seen":      _ss.get("last_seen") or "—",
+                    "Used Calculator": "✅ Yes" if _used_calc else "🔲 Sign-in only",
+                })
+            st.dataframe(
+                pd.DataFrame(_ss_rows),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+        if _signin_log:
+            st.markdown("#### Recent Sign-ins (newest first)")
+            _sl_rows = []
+            for _sl in _signin_log:
+                _ts_raw = _sl.get("ts", "")
+                # Format timestamp: "2025-06-03T14:22:11" → "03 Jun 2025  14:22"
+                try:
+                    _dt = datetime.datetime.strptime(_ts_raw[:16], "%Y-%m-%dT%H:%M")
+                    _ts_fmt = _dt.strftime("%d %b %Y  %H:%M") + " UTC"
+                except Exception:
+                    _ts_fmt = _ts_raw
+                _sl_rows.append({
+                    "Date / Time (UTC)": _ts_fmt,
+                    "Officer":           _sl.get("officer") or "—",
+                    "Session ID":        (_sl.get("session") or "")[:16] + "…"
+                                         if len(_sl.get("session") or "") > 16
+                                         else (_sl.get("session") or "—"),
+                })
+            st.dataframe(
+                pd.DataFrame(_sl_rows),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.info("No sign-in events recorded yet.")
+
         # ── Feature 11: Portfolio Analytics ───────────────────────────────
         st.markdown("---")
         st.markdown("### 📈 Portfolio Analytics")

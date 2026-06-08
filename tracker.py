@@ -427,6 +427,34 @@ def admin_stats() -> dict:
                 "GROUP BY officer ORDER BY assessments DESC"
             )
 
+            # ── Sign-in log: every officer who opened the app, whether or
+            #    not they ran a calculation.  Newest first, last 500 rows.
+            signin_log = q(
+                "SELECT ts, "
+                "  COALESCE(JGET(data,officer),'—') AS officer, "
+                "  session "
+                "FROM events WHERE event='signin' "
+                "ORDER BY ts DESC LIMIT 500"
+            )
+
+            # ── Today's sign-in count (UTC date) ─────────────────────────
+            signin_today = q(
+                "SELECT COUNT(*) AS cnt FROM events "
+                "WHERE event='signin' AND substr(ts,1,10) = substr(?,1,10)",
+                (_now_iso(),),
+            )
+
+            # ── Per-officer sign-in summary ───────────────────────────────
+            signin_summary = q(
+                "SELECT "
+                "  COALESCE(JGET(data,officer),'Unknown') AS officer, "
+                "  COUNT(*)             AS total_signins, "
+                "  MAX(substr(ts,1,10)) AS last_seen "
+                "FROM events WHERE event='signin' "
+                "  AND COALESCE(JGET(data,officer),'') != '' "
+                "GROUP BY officer ORDER BY last_seen DESC"
+            )
+
             return {
                 "backend":           STORAGE_BACKEND,
                 "summary":           summary,
@@ -441,6 +469,9 @@ def admin_stats() -> dict:
                 "rejection_reasons": rejection_reasons,
                 "download_formats":  download_formats,
                 "officer_activity":  officer_activity,
+                "signin_log":        signin_log,
+                "signin_today":      int((signin_today[0].get("cnt") or 0) if signin_today else 0),
+                "signin_summary":    signin_summary,
             }
         finally:
             conn.close()
