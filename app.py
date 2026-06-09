@@ -4161,9 +4161,9 @@ if _qp.get("admin") == _ADMIN_KEY:
             _lbm_df = _lbm_df.sort_values("Month")
             _ac1, _ac2 = st.columns(2)
             with _ac1:
-                st.markdown("**Assessments per month**")
+                st.markdown("**Assessment volume trend**")
                 st.markdown(
-                    html_bar_chart(
+                    html_line_chart(
                         _lbm_df["Month"].tolist(),
                         _lbm_df["Assessments"].tolist(),
                         color="#10b981",
@@ -4171,9 +4171,9 @@ if _qp.get("admin") == _ADMIN_KEY:
                     unsafe_allow_html=True,
                 )
             with _ac2:
-                st.markdown("**Average max loan per month**")
+                st.markdown("**Average max loan trend**")
                 st.markdown(
-                    html_bar_chart(
+                    html_line_chart(
                         _lbm_df["Month"].tolist(),
                         _lbm_df["Avg Max Loan (NGN)"].tolist(),
                         color="#fbbf24",
