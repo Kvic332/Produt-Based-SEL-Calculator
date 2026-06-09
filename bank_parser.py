@@ -627,6 +627,16 @@ def detect_bank(text: str) -> str:
             and "mybankstatement" not in t:
         return "OPay"
 
+    # ── PalmPay Business format ───────────────────────────────────────────
+    # PyPDF2 splits "BUSINESS_ACCOUNT" across two table cells producing the
+    # distinctive substring "BUSINESS_ACCOU" (followed by "NT" in next cell).
+    # Combined with ISO-format dates (YYYY-MM-DD HH:MM:SS) this uniquely
+    # identifies PalmPay Business Account statements.
+    # Columns: Date+Time | Description | Debit | Credit | Balance | Extra | TxnID
+    if ("business_accou" in t and
+            re.search(r'\b20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\b', t)):
+        return "PalmPay_Business"
+
     # ── PalmPay NEW format ────────────────────────────────────────────────
     # Identified by its unique column headers: "Transaction Detail",
     # "Transaction ID", and "Money In (NGN)". The bank name "PalmPay" may
@@ -2018,6 +2028,84 @@ def parse_palmpay_new(full_text: str) -> tuple[dict, str]:
 
     if pending_ym:
         _flush_pending(pending_narr)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# PALMPAY BUSINESS ACCOUNT PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_palmpay_business(full_text: str) -> tuple[dict, str]:
+    """
+    Parser for PalmPay Business Account Statement (ISO-date format).
+
+    Row layout as extracted by PyPDF2 (all tokens space-separated):
+        YYYY-MM-DD HH:MM:SS  DESCRIPTION  DEBIT  CREDIT  BALANCE  [EXTRA...]  TXNID
+
+    - Date: ISO format YYYY-MM-DD HH:MM:SS (not US-style like PalmPay_New)
+    - DEBIT and CREDIT columns: one is 0.00, the other holds the amount
+    - BALANCE: running account balance
+    - EXTRA: optional — sender/receiver name, bank name, phone number
+    - TXNID: last space-separated token on each row (alphanumeric, no spaces)
+
+    Typical transaction types:
+      Credits: "Pay With Transfer", "POS Card Purchase", "Withdraw from Agent"
+      Debits:  "Send", "Stamp Duty", "Data bundle", "Top up Airtime"
+
+    Detection signal: PyPDF2 splits "BUSINESS_ACCOUNT" (a cell in the Stamp Duty
+    rows) into "BUSINESS_ACCOU" + "NT" because the word crosses a table-cell
+    boundary.  Combined with ISO-format date stamps, this uniquely identifies
+    this format.
+    """
+    from collections import Counter
+
+    buckets: dict = {}
+    account_name = ""
+
+    # Account name: POS card purchases repeat the cardholder name before
+    # "BALANCE_ACC". Count occurrences and pick the most common.
+    name_cands = re.findall(
+        r'([A-Z]{2,}(?:\s+[A-Z]{2,}){1,3})\s+BALANCE[_\s]ACC',
+        full_text,
+    )
+    if name_cands:
+        account_name = Counter(name_cands).most_common(1)[0][0]
+    if not account_name:
+        account_name = _extract_account_name(full_text)
+
+    # Split the flat text at every ISO date-time stamp.
+    # re.split() with a capturing group interleaves separators and segments:
+    #   [preamble, date1, content1, date2, content2, ...]
+    DATE_SPLIT_RE = re.compile(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})')
+    parts = DATE_SPLIT_RE.split(full_text)
+
+    # Three consecutive decimal amounts: debit  credit  balance
+    AMT3_RE = re.compile(r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})')
+
+    # Walk pairs (date_str, row_content)
+    idx = 1
+    while idx + 1 < len(parts):
+        date_str = parts[idx]      # "YYYY-MM-DD HH:MM:SS"
+        row_text = parts[idx + 1]  # everything after the date until next date
+        idx += 2
+
+        ym = date_str[:7]  # "YYYY-MM"
+
+        am = AMT3_RE.search(row_text)
+        if not am:
+            continue
+
+        debit  = float(am.group(1).replace(',', ''))
+        credit = float(am.group(2).replace(',', ''))
+        # Narration: everything before the first amount trio, cleaned up
+        narration = ' '.join(row_text[:am.start()].split()).strip()
+        if not narration:
+            continue
+
+        if credit > 0 and debit == 0:
+            add_credit(buckets, ym, credit, narration, account_name)
+        elif debit > 0 and credit == 0:
+            add_debit(ym, narration, debit)
 
     return buckets, account_name
 
@@ -3799,6 +3887,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_kuda(full_text)
     elif bank == "PalmPay_New":
         buckets, account_name = parse_palmpay_new(full_text)
+    elif bank == "PalmPay_Business":
+        buckets, account_name = parse_palmpay_business(full_text)
     elif bank == "Access_Oracle":
         buckets, account_name = parse_access_oracle(full_text)
     elif bank == "Fidelity_Direct":
