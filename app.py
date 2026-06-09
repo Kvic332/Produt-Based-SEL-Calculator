@@ -1630,23 +1630,81 @@ if st.session_state.rows_a:
                 _fc_reliable   = _fc_r2 >= 0.60
                 _fc_col        = "#34d399" if _fc_slope > 0 else "#f87171" if _fc_slope < 0 else "#64748b"
                 _fc_trend_lbl  = "Growing" if _fc_slope > 0 else "Declining" if _fc_slope < 0 else "Flat"
-                _fc_scale      = max(_forecast) if max(_forecast) > 0 else 1
-                FC_H           = 70
+                _fc_scale = max(_forecast) if max(_forecast) > 0 else 1
 
-                _fc_bars = ""
-                for _fl, _fv in zip(_fc_labels, _forecast):
-                    _fpx = int(_fv / _fc_scale * FC_H)
-                    _fc_bars += (
-                        f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
-                        f'<div style="font-size:9px;color:{_fc_col};margin-bottom:4px;white-space:nowrap">{_fmt_v(_fv)}</div>'
-                        f'<div style="width:70%;height:{FC_H}px;position:relative">'
-                        f'<div style="position:absolute;bottom:0;left:0;right:0;height:{_fpx}px;'
-                        f'background:{"rgba(52,211,153,.18)" if _fc_slope >= 0 else "rgba(248,113,113,.18)"};'
-                        f'border-top:2px dashed {_fc_col};border-radius:2px 2px 0 0"></div>'
-                        f'</div>'
-                        f'<div style="font-size:9px;color:#4a6a58;margin-top:6px;white-space:nowrap">{_fl}</div>'
-                        f'</div>'
+                # ── SVG line graph for forecast ───────────────────────────
+                _FC_W   = 600
+                _FC_H   = 140
+                _FC_PL  = 10
+                _FC_PR  = 10
+                _FC_PT  = 28    # top padding for value labels
+                _FC_PB  = 32    # bottom for month labels
+                _fc_pw  = _FC_W - _FC_PL - _FC_PR
+                _fc_ph  = _FC_H - _FC_PT - _FC_PB
+                _fc_n   = len(_forecast)
+                _fc_area_col = "rgba(52,211,153,.08)" if _fc_slope >= 0 else "rgba(248,113,113,.08)"
+                _fc_dot_col  = _fc_col
+
+                def _fcx(i):
+                    return _FC_PL + (_fc_pw / (_fc_n - 1) * i if _fc_n > 1 else _fc_pw / 2)
+
+                def _fcy(v):
+                    return _FC_PT + _fc_ph - (v / _fc_scale * _fc_ph)
+
+                _fc_pts = " ".join(f"{_fcx(i):.1f},{_fcy(v):.1f}" for i, v in enumerate(_forecast))
+                _fc_area_pts = (
+                    f"{_fcx(0):.1f},{_FC_PT + _fc_ph:.1f} "
+                    + _fc_pts +
+                    f" {_fcx(_fc_n - 1):.1f},{_FC_PT + _fc_ph:.1f}"
+                )
+
+                # grid lines
+                _fc_grid = ""
+                for _fg in [0.33, 0.66]:
+                    _fgy = _FC_PT + _fc_ph * (1 - _fg)
+                    _fc_grid += (
+                        f'<line x1="{_FC_PL}" y1="{_fgy:.1f}" x2="{_FC_W - _FC_PR}" y2="{_fgy:.1f}" '
+                        f'stroke="#1a3d2b" stroke-width="1" stroke-dasharray="4 4"/>'
                     )
+
+                _fc_dots_svg  = ""
+                _fc_vlabels   = ""
+                _fc_mlabels   = ""
+                for _fi, (_fl, _fv) in enumerate(zip(_fc_labels, _forecast)):
+                    _cx = _fcx(_fi)
+                    _cy = _fcy(_fv)
+                    # dot: outer ring + inner fill
+                    _fc_dots_svg += (
+                        f'<circle cx="{_cx:.1f}" cy="{_cy:.1f}" r="5.5" fill="#0f1a15" '
+                        f'stroke="{_fc_dot_col}" stroke-width="2.5"/>'
+                        f'<circle cx="{_cx:.1f}" cy="{_cy:.1f}" r="2.5" fill="{_fc_dot_col}"/>'
+                    )
+                    # value label above dot
+                    _fc_vlabels += (
+                        f'<text x="{_cx:.1f}" y="{_cy - 9:.1f}" text-anchor="middle" '
+                        f'font-size="9" fill="{_fc_dot_col}" font-family="Space Mono,monospace">'
+                        f'{_fmt_v(_fv)}</text>'
+                    )
+                    # month label below
+                    _fc_mlabels += (
+                        f'<text x="{_cx:.1f}" y="{_FC_PT + _fc_ph + 14}" text-anchor="middle" '
+                        f'font-size="9" fill="#4a6a58" font-family="Space Mono,monospace">'
+                        f'{_fl}</text>'
+                    )
+
+                _fc_svg = (
+                    f'<svg viewBox="0 0 {_FC_W} {_FC_H}" xmlns="http://www.w3.org/2000/svg" '
+                    f'style="width:100%;height:auto;display:block">'
+                    + _fc_grid
+                    + f'<polygon points="{_fc_area_pts}" fill="{_fc_area_col}"/>'
+                    + f'<polyline points="{_fc_pts}" fill="none" stroke="{_fc_col}" '
+                    f'stroke-width="3.5" stroke-dasharray="7 4" '
+                    f'stroke-linejoin="round" stroke-linecap="round"/>'
+                    + _fc_dots_svg
+                    + _fc_vlabels
+                    + _fc_mlabels
+                    + f'</svg>'
+                )
 
                 _grow_note = ""
                 if _fc_slope > 0 and _fc_reliable:
@@ -1677,9 +1735,9 @@ if st.session_state.rows_a:
                     f'{_fc_trend_lbl} &nbsp;{_slope_pct:+.1f}%/mo'
                     f'{"  ·  R²="+str(round(_fc_r2,2)) if _fc_reliable else "  ·  low confidence"}'
                     f'</div></div>'
-                    f'<div style="display:flex;align-items:flex-end;gap:6px">{_fc_bars}</div>'
-                    f'{_grow_note}'
-                    f'</div>',
+                    + _fc_svg
+                    + _grow_note
+                    + f'</div>',
                     unsafe_allow_html=True,
                 )
 
