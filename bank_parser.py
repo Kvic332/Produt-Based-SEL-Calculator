@@ -842,11 +842,13 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
         r"^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}",
         re.I,
     )
-    # Three amounts + channel — amounts may be glued to surrounding text
+    # Three amounts + channel.  Use strict comma-formatted pattern only —
+    # bare \d+ would swallow transaction reference numbers that PyPDF2
+    # sometimes concatenates directly onto the next line's amount token.
     AMT_RE = re.compile(
-        r"((?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}|--)\s+"
-        r"((?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}|--)\s+"
-        r"((?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2})\s*"
+        r"((?:\d{1,3}(?:,\d{3})*)\.\d{2}|--)\s+"
+        r"((?:\d{1,3}(?:,\d{3})*)\.\d{2}|--)\s+"
+        r"((?:\d{1,3}(?:,\d{3})*)\.\d{2})\s*"
         r"(?:Mobile|POS|Web|USSD|ATM|Agent)",
         re.I,
     )
