@@ -824,7 +824,7 @@ def parse_opay(full_text: str) -> tuple[dict, str]:
     return buckets, account_name
 
 
-def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
+def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> tuple[dict, list]:
     """
     PyPDF2-based fallback for OPay v2 statements.
 
@@ -863,6 +863,7 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
     section_count = 0
     current_ym: str | None = None
     pending: list[str] = []
+    debit_rows: list[tuple] = []   # (ym, desc, amount) — flushed to _debit_log by caller
 
     def _flush():
         nonlocal current_ym, pending
@@ -881,7 +882,7 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
             if debit_tok != "--":
                 debit = float(debit_tok.replace(",", ""))
                 if debit > 0:
-                    add_debit(current_ym, desc, debit)
+                    debit_rows.append((current_ym, desc, debit))
         pending.clear()
 
     for line in full_text.splitlines():
@@ -913,7 +914,7 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
                 pending.append(s)
 
     _flush()
-    return buckets
+    return buckets, debit_rows
 
 
 def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
@@ -1006,6 +1007,7 @@ def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
 
     # ── Parse main Wallet section only (layout-based) ─────────────────────
     buckets: dict = {}
+    layout_debit_rows: list[tuple] = []   # (ym, desc, amount)
 
     if layout_text:
         pre_desc: list[str] = []
@@ -1051,7 +1053,7 @@ def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
                     if debit_tok != "--":
                         debit = float(debit_tok.replace(",", ""))
                         if debit > 0:
-                            add_debit(ym, full_desc, debit)
+                            layout_debit_rows.append((ym, full_desc, debit))
 
                 pre_desc = []
                 state = "post"
@@ -1074,12 +1076,19 @@ def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
     # pdftotext v4.00 (Glyph & Cog) can produce misaligned columns that cause
     # the layout parser to find some but not all transactions.  The PyPDF2 parser
     # reliably finds >99% of transactions. We pick the result with higher total.
+    # IMPORTANT: debits are NOT added to _debit_log until the winner is decided,
+    # to avoid double-counting when both parsers run.
+    winning_debit_rows = layout_debit_rows
     if full_text:
-        pypdf2_buckets = _parse_opay_v2_pypdf2(full_text, account_name)
+        pypdf2_buckets, pypdf2_debit_rows = _parse_opay_v2_pypdf2(full_text, account_name)
         layout_gross  = sum(b.get("gross", 0) for b in buckets.values())
         pypdf2_gross  = sum(b.get("gross", 0) for b in pypdf2_buckets.values())
         if pypdf2_gross > layout_gross:
             buckets = pypdf2_buckets
+            winning_debit_rows = pypdf2_debit_rows
+
+    for ym, desc, amount in winning_debit_rows:
+        add_debit(ym, desc, amount)
 
     return buckets, account_name
 
