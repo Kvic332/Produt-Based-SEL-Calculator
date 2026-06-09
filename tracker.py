@@ -424,6 +424,17 @@ def admin_stats() -> dict:
                 "GROUP BY month ORDER BY month"
             )
 
+            # Daily breakdown — last 62 days (covers current + previous full month)
+            loans_by_day = q(
+                "SELECT substr(ts,1,10) AS day, "
+                "  ROUND(AVG(CAST(JGET(data,max_loan) AS REAL))) AS avg_loan, "
+                "  COUNT(*) AS count, "
+                "  SUM(CASE WHEN JTRUE(data,approved) THEN 1 ELSE 0 END) AS approved "
+                "FROM events WHERE event='eligibility_result' "
+                "  AND substr(ts,1,10) >= date('now','-62 days') "
+                "GROUP BY day ORDER BY day"
+            )
+
             rejection_reasons = q(
                 "SELECT "
                 "  COALESCE(JGET(data,product),'—')  AS product, "
@@ -495,6 +506,7 @@ def admin_stats() -> dict:
                 "rate":              rate_row[0]        if rate_row        else {},
                 "approval_by_bank":  approval_by_bank,
                 "loans_by_month":    loans_by_month,
+                "loans_by_day":      loans_by_day,
                 "rejection_reasons": rejection_reasons,
                 "download_formats":  download_formats,
                 "officer_activity":  officer_activity,

@@ -4151,34 +4151,80 @@ if _qp.get("admin") == _ADMIN_KEY:
             )
 
         # Loan volume & approval by month
+        # ── Daily loan trend (current + previous month) ───────────────────
+        _lbd = _stats.get("loans_by_day", [])
         _lbm = _stats.get("loans_by_month", [])
-        if _lbm:
-            st.markdown("#### Loan Volume by Month")
-            _lbm_df = pd.DataFrame(_lbm).rename(columns={
-                "month": "Month", "avg_loan": "Avg Max Loan (NGN)",
-                "count": "Assessments", "approved": "Approved",
-            })
-            _lbm_df = _lbm_df.sort_values("Month")
+        if _lbd:
+            # Build full date range: fill missing days with 0
+            import datetime as _dt2
+            _today      = _dt2.date.today()
+            _prev_month = (_today.replace(day=1) - _dt2.timedelta(days=1)).replace(day=1)
+            _day_map_count   = {r["day"]: int(r["count"]   or 0) for r in _lbd}
+            _day_map_avgloan = {r["day"]: float(r["avg_loan"] or 0) for r in _lbd}
+            # Generate all days from start of previous month to today
+            _day_labels = []
+            _day_counts = []
+            _day_loans  = []
+            _cur = _prev_month
+            _month_markers = {}   # index → month label for divider
+            while _cur <= _today:
+                _ds = str(_cur)
+                if _cur.day == 1:
+                    _month_markers[len(_day_labels)] = _cur.strftime("%b %Y")
+                _day_labels.append(_cur.strftime("%d"))   # just the day number
+                _day_counts.append(_day_map_count.get(_ds, 0))
+                _day_loans.append(_day_map_avgloan.get(_ds, 0))
+                _cur += _dt2.timedelta(days=1)
+
+            # Build x-axis labels: show month name at day=1, else day number
+            _xlabels = []
+            for _di, _lbl in enumerate(_day_labels):
+                if _di in _month_markers:
+                    _xlabels.append(_month_markers[_di])
+                else:
+                    _xlabels.append(_lbl)
+
+            st.markdown("#### Daily Assessment Trend (previous + current month)")
             _ac1, _ac2 = st.columns(2)
             with _ac1:
-                st.markdown("**Assessment volume trend**")
+                st.markdown("**Daily assessments**")
                 st.markdown(
                     html_line_chart(
-                        _lbm_df["Month"].tolist(),
-                        _lbm_df["Assessments"].tolist(),
+                        _xlabels,
+                        _day_counts,
                         color="#10b981",
                     ),
                     unsafe_allow_html=True,
                 )
             with _ac2:
-                st.markdown("**Average max loan trend**")
+                st.markdown("**Daily avg max loan**")
                 st.markdown(
                     html_line_chart(
-                        _lbm_df["Month"].tolist(),
-                        _lbm_df["Avg Max Loan (NGN)"].tolist(),
+                        _xlabels,
+                        _day_loans,
                         color="#fbbf24",
                         money_fmt=True,
                     ),
+                    unsafe_allow_html=True,
+                )
+        elif _lbm:
+            # Fallback: no daily data yet — show monthly aggregates
+            st.markdown("#### Loan Volume by Month")
+            _lbm_df = pd.DataFrame(_lbm).rename(columns={
+                "month": "Month", "avg_loan": "Avg Max Loan (NGN)",
+                "count": "Assessments", "approved": "Approved",
+            }).sort_values("Month")
+            _ac1, _ac2 = st.columns(2)
+            with _ac1:
+                st.markdown("**Assessment volume trend**")
+                st.markdown(
+                    html_line_chart(_lbm_df["Month"].tolist(), _lbm_df["Assessments"].tolist(), color="#10b981"),
+                    unsafe_allow_html=True,
+                )
+            with _ac2:
+                st.markdown("**Average max loan trend**")
+                st.markdown(
+                    html_line_chart(_lbm_df["Month"].tolist(), _lbm_df["Avg Max Loan (NGN)"].tolist(), color="#fbbf24", money_fmt=True),
                     unsafe_allow_html=True,
                 )
 
