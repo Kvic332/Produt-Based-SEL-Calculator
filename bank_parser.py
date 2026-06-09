@@ -341,6 +341,14 @@ def classify_debit(narration: str) -> tuple[str, str]:
     """
     text = narration.lower()
 
+    # ── Priority guard: "Charges -" prefix means bank transfer fee ──────────
+    # Jaiz (and some other banks) prepend "Charges - " to the original transfer
+    # narration when posting the ₦54 (or similar) inter-bank transfer fee.
+    # The rest of the narration may mention "Loan Repayment" or other keywords
+    # from the underlying transfer, but this row is ALWAYS a bank charge.
+    if text.startswith("charges -") or text.startswith("charge -"):
+        return "bank_charge", "⚪ Bank Charge / Fee"
+
     # Loan repayments — must contain explicit loan/repayment language
     # Use precise multi-word phrases or standalone words (with word boundaries
     # where needed) to avoid false positives like "ZEN" matching Zenith Bank.
@@ -360,7 +368,12 @@ def classify_debit(narration: str) -> tuple[str, str]:
         "quick credit repay", "lendigo", "lendha repay",
         "flexpay repay", "creditcorp", "lapo repay",
     ]
-    if any(k in text for k in loan_kw):
+    # Exclude "repayment for material/goods/supply" — these are vendor payments
+    _loan_exclusions = [
+        "repayment for material", "repayment for good", "repayment for supply",
+        "repayment for item", "repayment for product",
+    ]
+    if any(k in text for k in loan_kw) and not any(e in text for e in _loan_exclusions):
         return "loan_repayment", "🔴 Loan Repayment"
 
     # Credit card payments
@@ -369,8 +382,13 @@ def classify_debit(narration: str) -> tuple[str, str]:
         return "credit_card", "🔴 Credit Card Payment"
 
     # Rent / property
+    # NOTE: "service charge" is intentionally excluded here — in Nigerian
+    # banking narrations "service charge" almost always means a vendor payment
+    # for maintenance/repair work (e.g. "Generator Service Charge",
+    # "Materials & Service Charge") which should NOT be flagged as rent.
+    # True rent/property payments use "rent", "landlord", "estate" etc.
     rent_kw = ["rent", "landlord", "property", "estate agency", "caution fee",
-               "service charge", "agency fee", "ground rent"]
+               "agency fee", "ground rent"]
     if any(k in text for k in rent_kw):
         return "rent", "🟠 Rent / Property"
 
