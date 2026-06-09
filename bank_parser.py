@@ -215,7 +215,14 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
         r"\bloan\s+disburs", r"\bdisbursement\b", r"\bcredit\s+disburs",
         r"\bloan\s+credit\b", r"\bloan\s+repay",
     ]
-    if any(k in text for k in loan_exact):
+    # "renmoney" in narration could mean the DESTINATION bank (e.g. "To RenMoney
+    # Microfinance Bank | Payment for goods") — not a loan disbursement.
+    # Only treat "renmoney" as a loan keyword when it is NOT the destination bank.
+    _active_loan_exact = [
+        k for k in loan_exact
+        if k != "renmoney" or not re.search(r"\bto\s*:?\s*renmoney\b", text)
+    ]
+    if any(k in text for k in _active_loan_exact):
         return "loan_disbursal", "Loan app keyword"
     for pat in loan_regex:
         if re.search(pat, text):
