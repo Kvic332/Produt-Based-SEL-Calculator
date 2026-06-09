@@ -401,7 +401,7 @@ def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fa
             )
         lbl_els += (
             f'<text x="{cx:.1f}" y="{PT+ph+16}" text-anchor="middle" '
-            f'font-size="8" fill="#64748b" font-family="Space Mono,monospace">{lbl}</text>'
+            f'font-size="10" font-weight="600" fill="#94a3b8" font-family="Space Mono,monospace">{lbl}</text>'
         )
 
     svg = (
