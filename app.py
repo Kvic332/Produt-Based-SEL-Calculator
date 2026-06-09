@@ -324,15 +324,22 @@ def extract_account_no(raw_text: str) -> str:
     m4 = re.search(r'\b(\d{10})\b', raw_text[:2000])
     return m4.group(1) if m4 else ""
 
-def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = False) -> str:
+def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = False,
+                   height: int = 120) -> str:
     """Render a dependency-free vertical bar chart as HTML.
 
     Used instead of st.bar_chart/st.line_chart, which import altair —
     altair's TypedDict(closed=True) schema crashes on Python 3.14.
+
+    height: bar column height in px (default 120; pass 180+ for full-width charts).
     """
-    vals = [float(v or 0) for v in values]
+    vals  = [float(v or 0) for v in values]
     scale = max(vals) if vals and max(vals) > 0 else 1
-    BAR_H = 120
+    n     = len(vals)
+    BAR_H = height
+
+    # label density — show every Nth label to avoid crowding on dense charts
+    _show_every = max(1, n // 20)
 
     def _fmt(v: float) -> str:
         if money_fmt:
@@ -340,21 +347,36 @@ def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fal
         return f"{v:,.0f}"
 
     bars = ""
-    for lbl, v in zip(labels, vals):
+    for i, (lbl, v) in enumerate(zip(labels, vals)):
         h = int(v / scale * BAR_H) if v > 0 else 0
+        # value label: only on non-zero bars at display-every interval
+        _val_lbl = (
+            f'<div style="font-size:9px;font-weight:600;color:{color};margin-bottom:3px;'
+            f'white-space:nowrap;min-height:14px">'
+            + (_fmt(v) if (i % _show_every == 0 or i == n - 1) and v > 0 else "")
+            + '</div>'
+        )
+        # x-axis label: thin on dense charts
+        _x_lbl = (
+            f'<div style="font-size:9px;font-weight:600;color:#94a3b8;margin-top:5px;'
+            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'
+            + (lbl if i % _show_every == 0 or i == n - 1 else "")
+            + '</div>'
+        )
         bars += (
             f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
-            f'<div style="font-size:9px;color:{color};margin-bottom:4px;white-space:nowrap">{_fmt(v)}</div>'
-            f'<div style="width:100%;height:{BAR_H}px;display:flex;align-items:flex-end;justify-content:center">'
-            f'<div style="width:70%;height:{h}px;background:linear-gradient(180deg,{color} 0%,{color}99 100%);'
-            f'border-radius:3px 3px 0 0;min-height:2px"></div></div>'
-            f'<div style="font-size:8px;color:#64748b;margin-top:6px;white-space:nowrap;'
-            f'overflow:hidden;text-overflow:ellipsis;max-width:100%">{lbl}</div>'
+            + _val_lbl
+            + f'<div style="width:100%;height:{BAR_H}px;display:flex;align-items:flex-end;justify-content:center">'
+            f'<div style="width:80%;height:{h}px;'
+            f'background:linear-gradient(180deg,{color} 0%,{color}88 100%);'
+            f'border-radius:3px 3px 0 0;min-height:{"3" if v > 0 else "0"}px"></div>'
             f'</div>'
+            + _x_lbl
+            + '</div>'
         )
     return (
-        f'<div style="display:flex;align-items:flex-end;gap:6px;padding:12px;'
-        f'background:rgba(0,0,0,.15);border:1px solid #1a3d2b;border-radius:4px">{bars}</div>'
+        f'<div style="display:flex;align-items:flex-end;gap:3px;padding:16px 14px 10px;'
+        f'background:rgba(0,0,0,.18);border:1px solid #1a3d2b;border-radius:6px">{bars}</div>'
     )
 
 
@@ -4211,23 +4233,23 @@ if _qp.get("admin") == _ADMIN_KEY:
             st.markdown("#### Daily Assessment Trend (previous + current month)")
             st.markdown("**Daily assessments**")
             st.markdown(
-                html_line_chart(
+                html_bar_chart(
                     _xlabels,
                     _day_counts,
                     color="#10b981",
-                    height=240,
+                    height=180,
                 ),
                 unsafe_allow_html=True,
             )
             st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
             st.markdown("**Daily avg max loan**")
             st.markdown(
-                html_line_chart(
+                html_bar_chart(
                     _xlabels,
                     _day_loans,
                     color="#fbbf24",
                     money_fmt=True,
-                    height=240,
+                    height=180,
                 ),
                 unsafe_allow_html=True,
             )
