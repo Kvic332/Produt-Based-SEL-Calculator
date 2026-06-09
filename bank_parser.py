@@ -341,15 +341,24 @@ def classify_debit(narration: str) -> tuple[str, str]:
     """
     text = narration.lower()
 
-    # Loan repayments — highest priority flag
+    # Loan repayments — must contain explicit loan/repayment language
+    # Use precise multi-word phrases or standalone words (with word boundaries
+    # where needed) to avoid false positives like "ZEN" matching Zenith Bank.
     loan_kw = [
         "loan repay", "loan payment", "loan deduction", "loan instalment",
-        "loan installment", "emi ", "equated monthly", "credit repay",
-        "facility repay", "overdraft repay", "lapo", "renmoney repay",
-        "fairmoney repay", "carbon repay", "migo repay", "palmcredit",
-        "creditwave", "page financials", "quick credit", "branch repay",
-        "aella repay", "lidya repay", "lendigo", "lendha", "flexpay",
-        "creditcorp", "loanrepay", "loan/repay", "repayment",
+        "loan installment", "loan/repay", "loanrepay",
+        " loan ",       # standalone word "loan" surrounded by spaces
+        "/loan",        # e.g. "ref/loan123"
+        "loan-",        # e.g. "loan-id"
+        " laon ",       # common typo for loan (e.g. "isiaka laon")
+        "equated monthly", "emi payment",
+        "credit repay", "facility repay", "overdraft repay",
+        "repayment",    # explicit word
+        "renmoney repay", "fairmoney repay", "carbon repay",
+        "migo repay", "branch repay", "aella repay", "lidya repay",
+        "palmcredit repay", "creditwave", "page financials",
+        "quick credit repay", "lendigo", "lendha repay",
+        "flexpay repay", "creditcorp", "lapo repay",
     ]
     if any(k in text for k in loan_kw):
         return "loan_repayment", "🔴 Loan Repayment"
