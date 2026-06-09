@@ -425,14 +425,17 @@ def admin_stats() -> dict:
             )
 
             # Daily breakdown — last 62 days (covers current + previous full month)
+            # Use Python-computed cutoff so the same SQL works on both SQLite and PostgreSQL
+            _cutoff_day = (datetime.datetime.utcnow() - datetime.timedelta(days=62)).strftime("%Y-%m-%d")
             loans_by_day = q(
                 "SELECT substr(ts,1,10) AS day, "
                 "  ROUND(AVG(CAST(JGET(data,max_loan) AS REAL))) AS avg_loan, "
                 "  COUNT(*) AS count, "
                 "  SUM(CASE WHEN JTRUE(data,approved) THEN 1 ELSE 0 END) AS approved "
                 "FROM events WHERE event='eligibility_result' "
-                "  AND substr(ts,1,10) >= date('now','-62 days') "
-                "GROUP BY day ORDER BY day"
+                "  AND substr(ts,1,10) >= ? "
+                "GROUP BY day ORDER BY day",
+                (_cutoff_day,),
             )
 
             rejection_reasons = q(
