@@ -2239,10 +2239,13 @@ def parse_moniepoint_business(full_text: str) -> tuple[dict, str]:
             # Edge case: date line already contains amounts (PyPDF2 merge)
             m3 = AMT3_RE.search(stripped)
             if m3 and current_ym:
+                debit  = float(m3.group(1).replace(',', ''))
                 credit = float(m3.group(2).replace(',', ''))
+                narr   = stripped[:m3.start()].strip()
                 if credit > 0:
-                    narr = stripped[:m3.start()].strip()
                     add_credit(buckets, current_ym, credit, narr, account_name)
+                elif debit > 0:
+                    add_debit(current_ym, narr, debit)
             continue
 
         if not current_ym:
@@ -2250,10 +2253,13 @@ def parse_moniepoint_business(full_text: str) -> tuple[dict, str]:
 
         m3 = AMT3_RE.search(stripped)
         if m3:
+            debit  = float(m3.group(1).replace(',', ''))
             credit = float(m3.group(2).replace(',', ''))
+            narr   = stripped[:m3.start()].strip()
             if credit > 0:
-                narr = stripped[:m3.start()].strip()
                 add_credit(buckets, current_ym, credit, narr, account_name)
+            elif debit > 0:
+                add_debit(current_ym, narr, debit)
 
     return buckets, account_name
 
@@ -2356,12 +2362,32 @@ def parse_moniepoint_business_v2(full_text: str) -> tuple[dict, str]:
                 credit = float(cm.group(1).replace(",", ""))
                 if credit > 0:
                     ym = f"{current_year}-{current_month}"
-                    # Narration = everything after the 4 matched amounts
                     after = stripped[cm.end():].strip()
-                    # Strip leading phone number (10+ digits) if present
                     after = re.sub(r"^\d{10,}\s*", "", after).strip()
                     narration = after if after else "Credit transfer"
                     add_credit(buckets, ym, credit, narration, account_name)
+
+        # ── Debit transaction line ────────────────────────────────────────
+        elif (current_year and current_month
+                and "_DEBIT_" in stripped
+                and "_EMTL" not in stripped):          # skip charge rows
+            # Debit pattern: Settlement Credit=0.00 immediately after debit amount
+            # Extract: DEBIT_AMOUNT  0.00  BAL_BEFORE  BAL_AFTER
+            DEBIT_V2 = re.compile(
+                r'([\d,]+\.\d{2})\s+'       # Settlement Debit (captured)
+                r'(?<![0-9])0\.00\s+'       # Settlement Credit = 0.00
+                r'[\d,]+\.\d{2}\s+'         # Balance Before
+                r'[\d,]+\.\d{2}'            # Balance After
+            )
+            dm2 = DEBIT_V2.search(stripped)
+            if dm2:
+                debit = float(dm2.group(1).replace(",", ""))
+                if debit > 0:
+                    ym = f"{current_year}-{current_month}"
+                    after = stripped[dm2.end():].strip()
+                    after = re.sub(r"^\d{10,}\s*", "", after).strip()
+                    narration = after if after else "Debit transfer"
+                    add_debit(ym, narration, debit)
 
         i += 1
 
