@@ -3317,28 +3317,35 @@ def parse_zenith_new(full_text: str) -> tuple[dict, str]:
         parts = date_str.split('/')
         return f"{parts[2]}-{parts[1]}"
 
+    # ── Opening balance seeds the delta chain ─────────────────────────────
+    ob_m = re.search(r'Opening\s+Balance\s+([\d,]+\.\d{2})', full_text, re.I)
+
     # ── Parse ─────────────────────────────────────────────────────────────
     pending_ym: str | None = None
     pending_acc: list[str] = []
+    prev_balance: float | None = float(ob_m.group(1).replace(',', '')) if ob_m else None
 
     def _flush() -> None:
-        nonlocal pending_ym, pending_acc
+        nonlocal pending_ym, pending_acc, prev_balance
         if pending_ym and pending_acc:
             combined = ' '.join(pending_acc)
             m = ROW_END.search(combined)
             if m:
-                credit = float(m.group(1).replace(',', ''))
+                credit  = float(m.group(1).replace(',', ''))
+                balance = float(m.group(3).replace(',', ''))
                 narration = combined[:m.start()].strip()
                 if credit > 0:
                     add_credit(buckets, pending_ym, credit, narration, account_name)
-                else:
-                    # credit == 0.00 → debit row; extract debit amount from narration
-                    dm = re.search(r'([\d,]+\.\d{2})\s*$', narration)
-                    if dm:
-                        damt = float(dm.group(1).replace(',', ''))
-                        dnarr = narration[:dm.start()].strip()
-                        if damt > 0:
-                            add_debit(pending_ym, dnarr, damt)
+                elif prev_balance is not None:
+                    # Debit: use balance delta (ref# glued to debit makes direct
+                    # extraction unreliable — delta is always correct)
+                    delta = prev_balance - balance
+                    if delta > 0.005:
+                        # Clean narration: strip trailing long digit string
+                        # (reference number concatenated by PyPDF2)
+                        clean_narr = re.sub(r'\s*\d{8,}\s*$', '', narration).strip()
+                        add_debit(pending_ym, clean_narr or narration, round(delta, 2))
+                prev_balance = balance
         pending_ym  = None
         pending_acc = []
 
