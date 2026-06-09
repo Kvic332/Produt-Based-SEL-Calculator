@@ -1557,6 +1557,9 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
             if credit > 0 and debit == 0:
                 pending_cr = credit
             else:
+                # Debit transaction — log for officer visibility
+                if debit > 0 and pending_ym:
+                    add_debit(pending_ym, pending_narr.strip(), debit)
                 pending_cr   = 0.0
                 pending_narr = ""
         elif m2:
@@ -1568,6 +1571,9 @@ def parse_gtbank(full_text: str) -> tuple[dict, str]:
             if kind == "credit":
                 pending_cr = float(true_amt)
             else:
+                # Debit transaction — log for officer visibility
+                if float(true_amt) > 0 and pending_ym:
+                    add_debit(pending_ym, pending_narr.strip(), float(true_amt))
                 pending_cr   = 0.0
                 pending_narr = ""
 
@@ -2864,21 +2870,20 @@ def _parse_excel_direct(file_bytes: bytes) -> tuple[dict, str]:
     if hdr_row_idx is None:
         raise ValueError("Could not find header row (Date/Credit/Debit) in Excel file.")
 
-    # ── Parse credit rows ─────────────────────────────────────────────────
+    # ── Find debit column from same header row ────────────────────────────
+    _hdr_rd2  = _row_dict(xml_rows[hdr_row_idx])
+    _hdr_inv2 = {v.lower().strip(): col for col, v in _hdr_rd2.items() if v.strip()}
+    debit_col_d = _hdr_inv2.get("debit")
+
+    # ── Parse credit + debit rows ─────────────────────────────────────────
     buckets: dict = {}
     for xml_row in xml_rows[hdr_row_idx + 1:]:
         rd = _row_dict(xml_row)
         date_raw   = rd.get(date_col, "")
         credit_raw = rd.get(credit_col, "")
-        if not date_raw or not credit_raw:
+        if not date_raw:
             continue
-        try:
-            credit = float(str(credit_raw).replace(",", ""))
-        except ValueError:
-            continue
-        if credit <= 0:
-            continue
-        # Date: try serial first (Moniepoint Business), then ISO/DD-MM-YYYY strings
+        # Date: try serial first, then ISO/DD-MM-YYYY strings
         ym = _serial_to_ym(date_raw)
         if not ym:
             m = re.match(r"^(20\d{2})-(\d{2})", date_raw)
@@ -2890,6 +2895,24 @@ def _parse_excel_direct(file_bytes: bytes) -> tuple[dict, str]:
         if not ym:
             continue
         narration = rd.get(narr_col, "").strip() if narr_col else ""
+
+        # Log debit for officer visibility
+        if debit_col_d:
+            try:
+                debit = float(str(rd.get(debit_col_d, "") or "").replace(",", ""))
+                if debit > 0:
+                    add_debit(ym, narration, debit)
+            except (ValueError, TypeError):
+                pass
+
+        if not credit_raw:
+            continue
+        try:
+            credit = float(str(credit_raw).replace(",", ""))
+        except ValueError:
+            continue
+        if credit <= 0:
+            continue
         add_credit(buckets, ym, credit, narration, account_name)
 
     return buckets, account_name
@@ -2943,6 +2966,7 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
     date_col     = fmt["date_col"]
     narr_col     = fmt["narration_col"]
     credit_col   = fmt["credit_col"]
+    debit_col    = fmt.get("debit_col")
     fmt_type     = fmt["type"]
 
     for row in rows[hdr_idx + 1:]:
@@ -2963,16 +2987,27 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
         if not ym:
             continue
 
+        narration = str(row[narr_col] or "").strip() if narr_col is not None else ""
+
         try:
             credit_raw = str(row[credit_col] or "").replace(",", "").strip()
             credit = float(credit_raw) if credit_raw else 0.0
         except ValueError:
             credit = 0.0
 
+        # Log debit transactions for officer visibility
+        if debit_col is not None:
+            try:
+                debit_raw = str(row[debit_col] or "").replace(",", "").strip()
+                debit = float(debit_raw) if debit_raw else 0.0
+                if debit > 0:
+                    add_debit(ym, narration, debit)
+            except (ValueError, IndexError):
+                pass
+
         if credit <= 0:
             continue
 
-        narration = str(row[narr_col] or "").strip() if narr_col is not None else ""
         add_credit(buckets, ym, credit, narration, account_name)
 
     return buckets, account_name
