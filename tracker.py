@@ -40,11 +40,17 @@ from contextlib import suppress
 # ── Resolve Postgres connection string (Neon) ────────────────────────────────
 # Priority: Streamlit secret  →  environment variable.  Empty → SQLite fallback.
 def _resolve_dsn() -> str:
-    with suppress(Exception):
+    try:
         import streamlit as st
-        v = st.secrets.get("DATABASE_URL", "")
-        if v:
-            return str(v)
+        # st.secrets may not support .get() in all versions — use [] with try/except
+        try:
+            v = st.secrets["DATABASE_URL"]
+            if v:
+                return str(v)
+        except (KeyError, AttributeError, FileNotFoundError):
+            pass
+    except Exception:
+        pass
     return os.environ.get("DATABASE_URL", "")
 
 
