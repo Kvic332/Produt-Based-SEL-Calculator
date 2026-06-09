@@ -879,7 +879,7 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
             if debit_tok != "--":
                 debit = float(debit_tok.replace(",", ""))
                 if debit > 0:
-                    add_debit(buckets, current_ym, debit, desc, account_name)
+                    add_debit(current_ym, desc, debit)
         pending.clear()
 
     for line in full_text.splitlines():
@@ -1049,7 +1049,7 @@ def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
                     if debit_tok != "--":
                         debit = float(debit_tok.replace(",", ""))
                         if debit > 0:
-                            add_debit(buckets, ym, debit, full_desc, account_name)
+                            add_debit(ym, full_desc, debit)
 
                 pre_desc = []
                 state = "post"
