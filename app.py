@@ -1943,6 +1943,181 @@ if st.session_state.rows_a:
                 unsafe_allow_html=True,
             )
 
+# ── Debit Transaction Visibility Panel ───────────────────────────────────────
+# For officer visibility only — NOT used in credit decisioning.
+def _render_debit_panel(debit_txns: list, label: str = "") -> None:
+    if not debit_txns:
+        return
+
+    _PRIORITY = {"loan_repayment", "credit_card", "rent"}
+
+    # Summary metrics
+    _total_debit  = sum(t["amount"] for t in debit_txns)
+    _flagged      = [t for t in debit_txns if t["category"] in _PRIORITY]
+    _loan_repays  = [t for t in debit_txns if t["category"] == "loan_repayment"]
+    _total_loan_r = sum(t["amount"] for t in _loan_repays)
+    _total_rent   = sum(t["amount"] for t in debit_txns if t["category"] == "rent")
+
+    # Monthly debit totals
+    from collections import defaultdict as _dd_deb
+    _monthly_deb: dict = _dd_deb(float)
+    for _t in debit_txns:
+        _monthly_deb[_t["ym"]] += _t["amount"]
+
+    # Bold section header outside expander so it's always visible
+    st.markdown(
+        f'<div style="margin-top:20px;margin-bottom:6px;padding:10px 16px;'
+        f'background:rgba(248,113,113,.10);border-left:5px solid #f87171;border-radius:4px;'
+        f'font-size:13px;font-weight:700;color:#fca5a5;letter-spacing:1px">'
+        f'💳 &nbsp;DEBIT VISIBILITY PANEL{(" — " + label.upper()) if label else ""}'
+        f'<span style="font-size:10px;font-weight:400;color:#fda4af;margin-left:12px">'
+        f'Officer view only · Not used in decisioning</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander(f"Show / Hide Debit Detail — {label or 'All'}", expanded=True):
+        st.markdown(
+            f'<div style="background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.4);'
+            f'border-left:4px solid #f87171;border-radius:4px;padding:10px 14px;margin-bottom:14px;'
+            f'font-size:11px;color:#fca5a5;font-weight:500">'
+            f'ℹ️ &nbsp;Debit data is shown for <strong style="color:#fda4af">officer visibility only</strong> — '
+            f'it is <strong style="color:#fda4af">not used in credit decisioning</strong> or loan calculations.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Summary cards ──────────────────────────────────────────────────
+        _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+        with _dc1:
+            st.markdown(
+                f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
+                f'border-radius:6px;padding:12px 14px">'
+                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                f'font-weight:600;margin-bottom:6px">Total Debits</div>'
+                f'<div style="font-size:18px;font-weight:800;color:#f87171">{money(_total_debit)}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _dc2:
+            st.markdown(
+                f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
+                f'border-radius:6px;padding:12px 14px">'
+                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                f'font-weight:600;margin-bottom:6px">Loan Repayments</div>'
+                f'<div style="font-size:18px;font-weight:800;color:#f87171">{money(_total_loan_r)}</div>'
+                f'<div style="font-size:10px;color:#fca5a5;margin-top:3px">{len(_loan_repays)} transaction(s)</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _dc3:
+            st.markdown(
+                f'<div style="background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.4);'
+                f'border-radius:6px;padding:12px 14px">'
+                f'<div style="font-size:9px;letter-spacing:2px;color:#fcd34d;text-transform:uppercase;'
+                f'font-weight:600;margin-bottom:6px">Rent / Property</div>'
+                f'<div style="font-size:18px;font-weight:800;color:#f59e0b">{money(_total_rent)}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _dc4:
+            st.markdown(
+                f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
+                f'border-radius:6px;padding:12px 14px">'
+                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                f'font-weight:600;margin-bottom:6px">Priority Flags</div>'
+                f'<div style="font-size:18px;font-weight:800;color:#f87171">{len(_flagged)}</div>'
+                f'<div style="font-size:10px;color:#fca5a5;margin-top:3px">loan repay · credit card · rent</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+
+        # ── Category breakdown table ───────────────────────────────────────
+        _cat_totals: dict = _dd_deb(float)
+        _cat_counts: dict = _dd_deb(int)
+        for _t in debit_txns:
+            _cat_totals[_t["label"]] += _t["amount"]
+            _cat_counts[_t["label"]] += 1
+
+        _cat_rows = sorted(_cat_totals.items(), key=lambda x: -x[1])
+        _cat_html = "".join(
+            f'<tr style="border-bottom:1px solid rgba(248,113,113,.15)">'
+            f'<td style="padding:7px 10px;font-size:12px;color:#e2e8f0;font-weight:500">{lbl}</td>'
+            f'<td style="padding:7px 10px;font-size:12px;color:#cbd5e1;text-align:right">{_cat_counts[lbl]}</td>'
+            f'<td style="padding:7px 10px;font-size:12px;color:#f87171;text-align:right;font-weight:700">{money(_cat_totals[lbl])}</td>'
+            f'</tr>'
+            for lbl, _ in _cat_rows
+        )
+        st.markdown(
+            f'<div style="font-size:10px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+            f'font-weight:600;margin-bottom:8px">📊 Debit Category Breakdown</div>'
+            f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+            f'background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.3);border-radius:6px">'
+            f'<thead><tr style="border-bottom:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.12)">'
+            f'<th style="padding:8px 10px;font-size:10px;color:#fca5a5;text-align:left;text-transform:uppercase;'
+            f'letter-spacing:1px;font-weight:700">Category</th>'
+            f'<th style="padding:8px 10px;font-size:10px;color:#fca5a5;text-align:right;text-transform:uppercase;'
+            f'letter-spacing:1px;font-weight:700">Count</th>'
+            f'<th style="padding:8px 10px;font-size:10px;color:#fca5a5;text-align:right;text-transform:uppercase;'
+            f'letter-spacing:1px;font-weight:700">Total</th>'
+            f'</tr></thead><tbody>{_cat_html}</tbody></table></div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+
+        # ── Flagged transactions (loan repayment, credit card, rent) ──────
+        if _flagged:
+            st.markdown(
+                f'<div style="font-size:10px;letter-spacing:2px;color:#f87171;text-transform:uppercase;'
+                f'font-weight:700;margin-bottom:8px">'
+                f'🔴 &nbsp;Flagged Transactions ({len(_flagged)}) — Loan Repayments · Credit Cards · Rent</div>',
+                unsafe_allow_html=True,
+            )
+            _flag_rows_html = "".join(
+                f'<tr style="border-bottom:1px solid rgba(248,113,113,.15)">'
+                f'<td style="padding:6px 10px;font-size:11px;color:#cbd5e1;font-weight:500">{t.get("ym","")}</td>'
+                f'<td style="padding:6px 10px;font-size:11px;color:#e2e8f0;max-width:260px;word-break:break-word">{t["narration"][:80]}</td>'
+                f'<td style="padding:6px 10px;font-size:11px;color:#f87171;text-align:right;font-weight:700">{money(t["amount"])}</td>'
+                f'<td style="padding:6px 10px;font-size:11px;color:#fca5a5;font-weight:500">{t["label"]}</td>'
+                f'</tr>'
+                for t in sorted(_flagged, key=lambda x: -x["amount"])[:50]
+            )
+            st.markdown(
+                f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                f'background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.3);border-radius:6px">'
+                f'<thead><tr style="border-bottom:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.12)">'
+                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Month</th>'
+                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Narration</th>'
+                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:right;font-weight:700">Amount</th>'
+                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Flag</th>'
+                f'</tr></thead><tbody>{_flag_rows_html}</tbody></table></div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+
+        # ── All debit transactions (collapsible) ──────────────────────────
+        with st.expander("📋  All Debit Transactions (full list)", expanded=False):
+            _all_rows_html = "".join(
+                f'<tr style="border-bottom:1px solid rgba(248,113,113,.10)">'
+                f'<td style="padding:5px 10px;font-size:11px;color:#cbd5e1">{t.get("ym","")}</td>'
+                f'<td style="padding:5px 10px;font-size:11px;color:#e2e8f0;max-width:300px;word-break:break-word">{t["narration"][:90]}</td>'
+                f'<td style="padding:5px 10px;font-size:11px;color:#f87171;text-align:right;font-weight:600">{money(t["amount"])}</td>'
+                f'<td style="padding:5px 10px;font-size:11px;color:#fca5a5">{t["label"]}</td>'
+                f'</tr>'
+                for t in sorted(debit_txns, key=lambda x: (-x["amount"]))
+            )
+            st.markdown(
+                f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                f'background:rgba(248,113,113,.05);border:1px solid rgba(248,113,113,.2)">'
+                f'<thead><tr style="border-bottom:1px solid rgba(248,113,113,.25);background:rgba(248,113,113,.10)">'
+                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Month</th>'
+                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Narration</th>'
+                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:right;font-weight:700">Amount</th>'
+                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Category</th>'
+                f'</tr></thead><tbody>{_all_rows_html}</tbody></table></div>',
+                unsafe_allow_html=True,
+            )
+
+
 # ── Debit Visibility Panel — Statement A ─────────────────────────────────────
 if st.session_state.get("debit_txns_a"):
     _render_debit_panel(st.session_state.debit_txns_a, label="Statement 1")
@@ -2581,182 +2756,6 @@ if st.session_state.txns_a and st.session_state.txns_b:
             st.markdown(
                 f'<div style="font-size:10px;color:#64748b;margin-top:4px">'
                 f'… and {len(_dedup_flags)-20} more. Use Transaction Search above to investigate.</div>',
-                unsafe_allow_html=True,
-            )
-
-# ── Debit Transaction Visibility Panel ───────────────────────────────────────
-# For officer visibility only — NOT used in credit decisioning.
-def _render_debit_panel(debit_txns: list, label: str = "") -> None:
-    if not debit_txns:
-        return
-
-    _PRIORITY = {"loan_repayment", "credit_card", "rent"}
-
-    # Summary metrics
-    _total_debit  = sum(t["amount"] for t in debit_txns)
-    _flagged      = [t for t in debit_txns if t["category"] in _PRIORITY]
-    _loan_repays  = [t for t in debit_txns if t["category"] == "loan_repayment"]
-    _total_loan_r = sum(t["amount"] for t in _loan_repays)
-    _total_rent   = sum(t["amount"] for t in debit_txns if t["category"] == "rent")
-
-    # Monthly debit totals
-    from collections import defaultdict as _dd_deb
-    _monthly_deb: dict = _dd_deb(float)
-    for _t in debit_txns:
-        _monthly_deb[_t["ym"]] += _t["amount"]
-
-    _title = f"💳  Debit Transactions — Visibility Panel{' (' + label + ')' if label else ''}"
-
-    # Bold section header outside expander so it's always visible
-    st.markdown(
-        f'<div style="margin-top:20px;margin-bottom:6px;padding:10px 16px;'
-        f'background:rgba(248,113,113,.10);border-left:5px solid #f87171;border-radius:4px;'
-        f'font-size:13px;font-weight:700;color:#fca5a5;letter-spacing:1px">'
-        f'💳 &nbsp;DEBIT VISIBILITY PANEL{(" — " + label.upper()) if label else ""}'
-        f'<span style="font-size:10px;font-weight:400;color:#fda4af;margin-left:12px">'
-        f'Officer view only · Not used in decisioning</span></div>',
-        unsafe_allow_html=True,
-    )
-
-    with st.expander(f"Show / Hide Debit Detail — {label or 'All'}", expanded=True):
-        st.markdown(
-            f'<div style="background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.4);'
-            f'border-left:4px solid #f87171;border-radius:4px;padding:10px 14px;margin-bottom:14px;'
-            f'font-size:11px;color:#fca5a5;font-weight:500">'
-            f'ℹ️ &nbsp;Debit data is shown for <strong style="color:#fda4af">officer visibility only</strong> — '
-            f'it is <strong style="color:#fda4af">not used in credit decisioning</strong> or loan calculations.'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        # ── Summary cards ──────────────────────────────────────────────────
-        _dc1, _dc2, _dc3, _dc4 = st.columns(4)
-        with _dc1:
-            st.markdown(
-                f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
-                f'font-weight:600;margin-bottom:6px">Total Debits</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f87171">{money(_total_debit)}</div></div>',
-                unsafe_allow_html=True,
-            )
-        with _dc2:
-            st.markdown(
-                f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
-                f'font-weight:600;margin-bottom:6px">Loan Repayments</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f87171">{money(_total_loan_r)}</div>'
-                f'<div style="font-size:10px;color:#fca5a5;margin-top:3px">{len(_loan_repays)} transaction(s)</div></div>',
-                unsafe_allow_html=True,
-            )
-        with _dc3:
-            st.markdown(
-                f'<div style="background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fcd34d;text-transform:uppercase;'
-                f'font-weight:600;margin-bottom:6px">Rent / Property</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f59e0b">{money(_total_rent)}</div></div>',
-                unsafe_allow_html=True,
-            )
-        with _dc4:
-            st.markdown(
-                f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
-                f'font-weight:600;margin-bottom:6px">Priority Flags</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f87171">{len(_flagged)}</div>'
-                f'<div style="font-size:10px;color:#fca5a5;margin-top:3px">loan repay · credit card · rent</div></div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
-
-        # ── Category breakdown table ───────────────────────────────────────
-        _cat_totals: dict = _dd_deb(float)
-        _cat_counts: dict = _dd_deb(int)
-        for _t in debit_txns:
-            _cat_totals[_t["label"]] += _t["amount"]
-            _cat_counts[_t["label"]] += 1
-
-        _cat_rows = sorted(_cat_totals.items(), key=lambda x: -x[1])
-        _cat_html = "".join(
-            f'<tr style="border-bottom:1px solid rgba(248,113,113,.15)">'
-            f'<td style="padding:7px 10px;font-size:12px;color:#e2e8f0;font-weight:500">{lbl}</td>'
-            f'<td style="padding:7px 10px;font-size:12px;color:#cbd5e1;text-align:right">{_cat_counts[lbl]}</td>'
-            f'<td style="padding:7px 10px;font-size:12px;color:#f87171;text-align:right;font-weight:700">{money(_cat_totals[lbl])}</td>'
-            f'</tr>'
-            for lbl, _ in _cat_rows
-        )
-        st.markdown(
-            f'<div style="font-size:10px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
-            f'font-weight:600;margin-bottom:8px">📊 Debit Category Breakdown</div>'
-            f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
-            f'background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.3);border-radius:6px">'
-            f'<thead><tr style="border-bottom:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.12)">'
-            f'<th style="padding:8px 10px;font-size:10px;color:#fca5a5;text-align:left;text-transform:uppercase;'
-            f'letter-spacing:1px;font-weight:700">Category</th>'
-            f'<th style="padding:8px 10px;font-size:10px;color:#fca5a5;text-align:right;text-transform:uppercase;'
-            f'letter-spacing:1px;font-weight:700">Count</th>'
-            f'<th style="padding:8px 10px;font-size:10px;color:#fca5a5;text-align:right;text-transform:uppercase;'
-            f'letter-spacing:1px;font-weight:700">Total</th>'
-            f'</tr></thead><tbody>{_cat_html}</tbody></table></div>',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
-
-        # ── Flagged transactions (loan repayment, credit card, rent) ──────
-        if _flagged:
-            st.markdown(
-                f'<div style="font-size:10px;letter-spacing:2px;color:#f87171;text-transform:uppercase;'
-                f'font-weight:700;margin-bottom:8px">'
-                f'🔴 &nbsp;Flagged Transactions ({len(_flagged)}) — Loan Repayments · Credit Cards · Rent</div>',
-                unsafe_allow_html=True,
-            )
-            _flag_rows_html = "".join(
-                f'<tr style="border-bottom:1px solid rgba(248,113,113,.15)">'
-                f'<td style="padding:6px 10px;font-size:11px;color:#cbd5e1;font-weight:500">{t.get("ym","")}</td>'
-                f'<td style="padding:6px 10px;font-size:11px;color:#e2e8f0;max-width:260px;word-break:break-word">{t["narration"][:80]}</td>'
-                f'<td style="padding:6px 10px;font-size:11px;color:#f87171;text-align:right;font-weight:700">{money(t["amount"])}</td>'
-                f'<td style="padding:6px 10px;font-size:11px;color:#fca5a5;font-weight:500">{t["label"]}</td>'
-                f'</tr>'
-                for t in sorted(_flagged, key=lambda x: -x["amount"])[:50]
-            )
-            st.markdown(
-                f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
-                f'background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.3);border-radius:6px">'
-                f'<thead><tr style="border-bottom:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.12)">'
-                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Month</th>'
-                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Narration</th>'
-                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:right;font-weight:700">Amount</th>'
-                f'<th style="padding:7px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Flag</th>'
-                f'</tr></thead><tbody>{_flag_rows_html}</tbody></table></div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
-
-        # ── All debit transactions (collapsible) ──────────────────────────
-        with st.expander("📋  All Debit Transactions (full list)", expanded=False):
-            _all_rows_html = "".join(
-                f'<tr style="border-bottom:1px solid rgba(248,113,113,.10)">'
-                f'<td style="padding:5px 10px;font-size:11px;color:#cbd5e1">{t.get("ym","")}</td>'
-                f'<td style="padding:5px 10px;font-size:11px;color:#e2e8f0;max-width:300px;word-break:break-word">{t["narration"][:90]}</td>'
-                f'<td style="padding:5px 10px;font-size:11px;color:#f87171;text-align:right;font-weight:600">{money(t["amount"])}</td>'
-                f'<td style="padding:5px 10px;font-size:11px;color:#fca5a5">{t["label"]}</td>'
-                f'</tr>'
-                for t in sorted(debit_txns, key=lambda x: (-x["amount"]))
-            )
-            st.markdown(
-                f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
-                f'background:rgba(248,113,113,.05);border:1px solid rgba(248,113,113,.2)">'
-                f'<thead><tr style="border-bottom:1px solid rgba(248,113,113,.25);background:rgba(248,113,113,.10)">'
-                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Month</th>'
-                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Narration</th>'
-                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:right;font-weight:700">Amount</th>'
-                f'<th style="padding:6px 10px;font-size:10px;color:#fca5a5;text-align:left;font-weight:700">Category</th>'
-                f'</tr></thead><tbody>{_all_rows_html}</tbody></table></div>',
                 unsafe_allow_html=True,
             )
 
