@@ -358,8 +358,12 @@ def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fal
     )
 
 
-def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = False) -> str:
-    """Render a bold SVG line chart — no altair dependency."""
+def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = False,
+                    height: int = 180) -> str:
+    """Render a bold SVG line chart — no altair dependency.
+
+    height: viewBox height in px (default 180; pass 240+ for full-width stacked charts).
+    """
     vals  = [float(v or 0) for v in values]
     scale = max(vals) if vals and max(vals) > 0 else 1
     n     = len(vals)
@@ -369,10 +373,13 @@ def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fa
             return f"₦{v/1_000_000:.1f}m" if v >= 1_000_000 else f"₦{v/1_000:.0f}k" if v >= 1000 else f"₦{v:.0f}"
         return f"{v:,.0f}"
 
-    SVG_W = 700; SVG_H = 180
-    PL = 12; PR = 12; PT = 28; PB = 34
+    SVG_W = 900          # wider viewBox for full-width use
+    SVG_H = height
+    PL = 14; PR = 14
+    PT = 32              # top  — room for value labels
+    PB = 40              # bottom — room for date labels
     pw = SVG_W - PL - PR
-    ph = SVG_H - PT  - PB
+    ph = SVG_H - PT - PB
 
     def _x(i): return PL + (pw / (n - 1) * i if n > 1 else pw / 2)
     def _y(v): return PT + ph - (v / scale * ph)
@@ -380,29 +387,46 @@ def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fa
     pts  = " ".join(f"{_x(i):.1f},{_y(v):.1f}" for i, v in enumerate(vals))
     area = f"{_x(0):.1f},{PT+ph:.1f} {pts} {_x(n-1):.1f},{PT+ph:.1f}"
 
+    # grid lines at 25 / 50 / 75 %
     grid = "".join(
         f'<line x1="{PL}" y1="{PT + ph*(1-f):.1f}" x2="{SVG_W-PR}" y2="{PT + ph*(1-f):.1f}" '
-        f'stroke="#1a3d2b" stroke-width="1" stroke-dasharray="4 4"/>'
+        f'stroke="#1a3d2b" stroke-width="1" stroke-dasharray="5 4"/>'
         for f in [0.25, 0.5, 0.75]
     )
+
+    # decide label density: show every Nth value label to avoid crowding
+    _show_every = max(1, n // 20)   # ~20 value labels max regardless of density
 
     dots = val_labels = lbl_els = ""
     for i, (lbl, v) in enumerate(zip(labels, vals)):
         cx = _x(i); cy = _y(v)
+
+        # dot size scales slightly with height
+        r_outer = 6 if height >= 220 else 5
+        r_inner = 3 if height >= 220 else 2.5
+        sw      = 3  if height >= 220 else 2.5
+
         dots += (
-            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5" fill="#0d1f17" stroke="{color}" stroke-width="2.5"/>'
-            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="2.5" fill="{color}"/>'
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_outer}" fill="#0d1f17" '
+            f'stroke="{color}" stroke-width="{sw}"/>'
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_inner}" fill="{color}"/>'
         )
-        # show label only every other point when dense (>10 points)
-        if n <= 10 or i % 2 == 0 or i == n - 1:
+
+        # value label — only on non-zero peaks and every Nth point to stay readable
+        if (i % _show_every == 0 or i == n - 1) and v > 0:
             val_labels += (
-                f'<text x="{cx:.1f}" y="{cy-9:.1f}" text-anchor="middle" '
-                f'font-size="9" fill="{color}" font-family="Space Mono,monospace">{_fmt(v)}</text>'
+                f'<text x="{cx:.1f}" y="{cy-11:.1f}" text-anchor="middle" '
+                f'font-size="10" font-weight="600" fill="{color}" '
+                f'font-family="Space Mono,monospace">{_fmt(v)}</text>'
             )
-        lbl_els += (
-            f'<text x="{cx:.1f}" y="{PT+ph+16}" text-anchor="middle" '
-            f'font-size="10" font-weight="600" fill="#94a3b8" font-family="Space Mono,monospace">{lbl}</text>'
-        )
+
+        # x-axis label — every Nth to avoid overlap on dense charts
+        if i % _show_every == 0 or i == n - 1:
+            lbl_els += (
+                f'<text x="{cx:.1f}" y="{PT+ph+18}" text-anchor="middle" '
+                f'font-size="10" font-weight="600" fill="#94a3b8" '
+                f'font-family="Space Mono,monospace">{lbl}</text>'
+            )
 
     svg = (
         f'<svg viewBox="0 0 {SVG_W} {SVG_H}" xmlns="http://www.w3.org/2000/svg" '
@@ -410,13 +434,13 @@ def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fa
         + grid
         + f'<polygon points="{area}" fill="{color}18"/>'
         + f'<polyline points="{pts}" fill="none" stroke="{color}" '
-        f'stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>'
+        f'stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>'
         + dots + val_labels + lbl_els
         + '</svg>'
     )
     return (
-        f'<div style="padding:14px 12px 8px;background:rgba(0,0,0,.15);'
-        f'border:1px solid #1a3d2b;border-radius:4px">{svg}</div>'
+        f'<div style="padding:16px 14px 10px;background:rgba(0,0,0,.18);'
+        f'border:1px solid #1a3d2b;border-radius:6px">{svg}</div>'
     )
 
 
@@ -4185,28 +4209,28 @@ if _qp.get("admin") == _ADMIN_KEY:
                     _xlabels.append(_lbl)
 
             st.markdown("#### Daily Assessment Trend (previous + current month)")
-            _ac1, _ac2 = st.columns(2)
-            with _ac1:
-                st.markdown("**Daily assessments**")
-                st.markdown(
-                    html_line_chart(
-                        _xlabels,
-                        _day_counts,
-                        color="#10b981",
-                    ),
-                    unsafe_allow_html=True,
-                )
-            with _ac2:
-                st.markdown("**Daily avg max loan**")
-                st.markdown(
-                    html_line_chart(
-                        _xlabels,
-                        _day_loans,
-                        color="#fbbf24",
-                        money_fmt=True,
-                    ),
-                    unsafe_allow_html=True,
-                )
+            st.markdown("**Daily assessments**")
+            st.markdown(
+                html_line_chart(
+                    _xlabels,
+                    _day_counts,
+                    color="#10b981",
+                    height=240,
+                ),
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+            st.markdown("**Daily avg max loan**")
+            st.markdown(
+                html_line_chart(
+                    _xlabels,
+                    _day_loans,
+                    color="#fbbf24",
+                    money_fmt=True,
+                    height=240,
+                ),
+                unsafe_allow_html=True,
+            )
         elif _lbm:
             # Fallback: no daily data yet — show monthly aggregates
             st.markdown("#### Loan Volume by Month")
