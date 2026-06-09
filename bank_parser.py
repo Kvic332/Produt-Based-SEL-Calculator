@@ -2746,6 +2746,7 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
 
         if h and h[0] == "transaction date":
             credit_col = next((j for j, v in enumerate(h) if "credit" in v), None)
+            debit_col  = next((j for j, v in enumerate(h) if "debit"  in v), None)
             narration_col = next((j for j, v in enumerate(h)
                                   if "narration" in v or "description" in v), None)
             if credit_col is not None:
@@ -2755,14 +2756,16 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
                     "date_col": 0,
                     "narration_col": narration_col or 5,
                     "credit_col": credit_col,
+                    "debit_col": debit_col,
                 }
 
         has_date   = any("date" in v for v in h)
         has_credit = any("credit" in v for v in h)
         has_debit  = any("debit" in v for v in h)
         if has_date and has_credit and has_debit:
-            date_col   = next((j for j, v in enumerate(h) if "date" in v), 0)
+            date_col   = next((j for j, v in enumerate(h) if "date"   in v), 0)
             credit_col = next((j for j, v in enumerate(h) if "credit" in v), None)
+            debit_col  = next((j for j, v in enumerate(h) if "debit"  in v), None)
             narr_col   = next((j for j, v in enumerate(h)
                                if "narration" in v or "description" in v or "details" in v), None)
             if credit_col is not None:
@@ -2772,6 +2775,7 @@ def _detect_excel_format(rows: list) -> Optional[dict]:
                     "date_col": date_col,
                     "narration_col": narr_col or 1,
                     "credit_col": credit_col,
+                    "debit_col": debit_col,
                 }
     return None
 
