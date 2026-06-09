@@ -868,12 +868,18 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> dict:
             return
         block = " ".join(pending)
         m = AMT_RE.search(block)
-        if m and m.group(2) != "--":
-            credit = float(m.group(2).replace(",", ""))
-            if credit > 0:
-                raw_desc = block[: m.start()]
-                desc = STRIP_DTS.sub("", raw_desc).strip()
-                add_credit(buckets, current_ym, credit, desc, account_name)
+        if m:
+            raw_desc = block[: m.start()]
+            desc = STRIP_DTS.sub("", raw_desc).strip()
+            debit_tok, credit_tok = m.group(1), m.group(2)
+            if credit_tok != "--":
+                credit = float(credit_tok.replace(",", ""))
+                if credit > 0:
+                    add_credit(buckets, current_ym, credit, desc, account_name)
+            if debit_tok != "--":
+                debit = float(debit_tok.replace(",", ""))
+                if debit > 0:
+                    add_debit(buckets, current_ym, debit, desc, account_name)
         pending.clear()
 
     for line in full_text.splitlines():
@@ -1029,16 +1035,21 @@ def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
 
                 amt_m = AMOUNTS_PAT.search(line)
                 if amt_m:
+                    debit_tok  = amt_m.group(1)
                     credit_tok = amt_m.group(2)
-                    credit = (0.0 if credit_tok == "--"
-                              else float(credit_tok.replace(",", "")))
                     inline_desc = line[38:amt_m.start()].strip()
                     parts = pre_desc[:]
                     if inline_desc:
                         parts.append(inline_desc)
                     full_desc = " ".join(parts).strip()
-                    if credit > 0:
-                        add_credit(buckets, ym, credit, full_desc, account_name)
+                    if credit_tok != "--":
+                        credit = float(credit_tok.replace(",", ""))
+                        if credit > 0:
+                            add_credit(buckets, ym, credit, full_desc, account_name)
+                    if debit_tok != "--":
+                        debit = float(debit_tok.replace(",", ""))
+                        if debit > 0:
+                            add_debit(buckets, ym, debit, full_desc, account_name)
 
                 pre_desc = []
                 state = "post"
