@@ -358,6 +358,68 @@ def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fal
     )
 
 
+def html_line_chart(labels, values, color: str = "#10b981", money_fmt: bool = False) -> str:
+    """Render a bold SVG line chart — no altair dependency."""
+    vals  = [float(v or 0) for v in values]
+    scale = max(vals) if vals and max(vals) > 0 else 1
+    n     = len(vals)
+
+    def _fmt(v: float) -> str:
+        if money_fmt:
+            return f"₦{v/1_000_000:.1f}m" if v >= 1_000_000 else f"₦{v/1_000:.0f}k" if v >= 1000 else f"₦{v:.0f}"
+        return f"{v:,.0f}"
+
+    SVG_W = 700; SVG_H = 180
+    PL = 12; PR = 12; PT = 28; PB = 34
+    pw = SVG_W - PL - PR
+    ph = SVG_H - PT  - PB
+
+    def _x(i): return PL + (pw / (n - 1) * i if n > 1 else pw / 2)
+    def _y(v): return PT + ph - (v / scale * ph)
+
+    pts  = " ".join(f"{_x(i):.1f},{_y(v):.1f}" for i, v in enumerate(vals))
+    area = f"{_x(0):.1f},{PT+ph:.1f} {pts} {_x(n-1):.1f},{PT+ph:.1f}"
+
+    grid = "".join(
+        f'<line x1="{PL}" y1="{PT + ph*(1-f):.1f}" x2="{SVG_W-PR}" y2="{PT + ph*(1-f):.1f}" '
+        f'stroke="#1a3d2b" stroke-width="1" stroke-dasharray="4 4"/>'
+        for f in [0.25, 0.5, 0.75]
+    )
+
+    dots = val_labels = lbl_els = ""
+    for i, (lbl, v) in enumerate(zip(labels, vals)):
+        cx = _x(i); cy = _y(v)
+        dots += (
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5" fill="#0d1f17" stroke="{color}" stroke-width="2.5"/>'
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="2.5" fill="{color}"/>'
+        )
+        # show label only every other point when dense (>10 points)
+        if n <= 10 or i % 2 == 0 or i == n - 1:
+            val_labels += (
+                f'<text x="{cx:.1f}" y="{cy-9:.1f}" text-anchor="middle" '
+                f'font-size="9" fill="{color}" font-family="Space Mono,monospace">{_fmt(v)}</text>'
+            )
+        lbl_els += (
+            f'<text x="{cx:.1f}" y="{PT+ph+16}" text-anchor="middle" '
+            f'font-size="8" fill="#64748b" font-family="Space Mono,monospace">{lbl}</text>'
+        )
+
+    svg = (
+        f'<svg viewBox="0 0 {SVG_W} {SVG_H}" xmlns="http://www.w3.org/2000/svg" '
+        f'style="width:100%;height:auto;display:block">'
+        + grid
+        + f'<polygon points="{area}" fill="{color}18"/>'
+        + f'<polyline points="{pts}" fill="none" stroke="{color}" '
+        f'stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>'
+        + dots + val_labels + lbl_els
+        + '</svg>'
+    )
+    return (
+        f'<div style="padding:14px 12px 8px;background:rgba(0,0,0,.15);'
+        f'border:1px solid #1a3d2b;border-radius:4px">{svg}</div>'
+    )
+
+
 def card(label: str, value: str, cls: str = "") -> str:
     return (f'<div class="sel-card{"highlight" if cls=="_h" else ""}" style="margin-bottom:8px">'
             f'<div class="sel-label">{label}</div>'
@@ -3826,7 +3888,7 @@ if _qp.get("admin") == _ADMIN_KEY:
                 columns={"day": "Date", "uploads": "Uploads"}
             ).sort_values("Date")
             st.markdown(
-                html_bar_chart(
+                html_line_chart(
                     [d[5:] for d in _df_daily["Date"].tolist()],  # MM-DD labels
                     _df_daily["Uploads"].tolist(),
                     color="#10b981",
