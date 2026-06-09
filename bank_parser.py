@@ -864,16 +864,41 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> tuple[dict,
     current_ym: str | None = None
     pending: list[str] = []
     debit_rows: list[tuple] = []   # (ym, desc, amount) — flushed to _debit_log by caller
+    # Ref-number filter: bare 8+ digit strings are transaction references, not desc
+    REF_RE = re.compile(r"^\d{8,}$")
+    # Tokens to strip from tail: channel keywords, standalone digits, date parts
+    _MONTH_NAMES = {"Jan","Feb","Mar","Apr","May","Jun",
+                    "Jul","Aug","Sep","Oct","Nov","Dec"}
+    _NOISE_WORDS  = {"Mobile","POS","Web","USSD","ATM","Agent","LANG","NG"}
 
-    def _flush():
+    def _is_tail_noise(tok: str) -> bool:
+        return (REF_RE.match(tok)
+                or re.match(r"^\d{1,4}$", tok)            # short digit fragments
+                or re.match(r"^\d{2}:\d{2}:\d{2}$", tok)  # time token HH:MM:SS
+                or re.match(r"^20\d{2}$", tok)             # year token
+                or tok.capitalize() in _MONTH_NAMES        # month name
+                or tok in _NOISE_WORDS)
+
+    DATE_NOISE = re.compile(
+        r"\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}"
+        r"(?:\s+\d{2}:\d{2}:\d{2})?",
+        re.I,
+    )
+
+    def _flush() -> list[str]:
+        """Process current pending block. Returns clean tail tokens (post-amounts
+        text stripped of date/ref noise) as pre-description for the next txn."""
         nonlocal current_ym, pending
         if not pending or current_ym is None:
-            return
+            return []
         block = " ".join(pending)
         m = AMT_RE.search(block)
+        tail: list[str] = []
         if m:
             raw_desc = block[: m.start()]
-            desc = STRIP_DTS.sub("", raw_desc).strip()
+            # Strip leading date stamps and any stray date fragments
+            desc = DATE_NOISE.sub(" ", STRIP_DTS.sub("", raw_desc)).strip()
+            desc = re.sub(r"\s{2,}", " ", desc).strip()
             debit_tok, credit_tok = m.group(1), m.group(2)
             if credit_tok != "--":
                 credit = float(credit_tok.replace(",", ""))
@@ -883,7 +908,11 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> tuple[dict,
                 debit = float(debit_tok.replace(",", ""))
                 if debit > 0:
                     debit_rows.append((current_ym, desc, debit))
+            # Tail = post-amount tokens, scrubbed of refs, digits, and date parts.
+            post = block[m.end():].strip()
+            tail = [t for t in post.split() if not _is_tail_noise(t)]
         pending.clear()
+        return tail
 
     for line in full_text.splitlines():
         if re.search(r"Trans\.\s*Time", line, re.I):
@@ -905,9 +934,12 @@ def _parse_opay_v2_pypdf2(full_text: str, account_name: str = "") -> tuple[dict,
 
         dm = DT_RE.match(line.strip())
         if dm:
-            _flush()
+            # tail = post-amount text from the previous block = pre-description
+            # for THIS transaction (lines that visually precede the date anchor).
+            tail = _flush()
             current_ym = f"{dm.group(3)}-{MONTH_NUM[dm.group(2).lower()[:3]]}"
-            pending = [line.strip()]
+            pending = tail + [line.strip()]
+            pre_desc = []
         elif current_ym is not None:
             s = line.strip()
             if s:
