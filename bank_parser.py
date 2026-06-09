@@ -1272,9 +1272,6 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
         # Lone "spend" token = spend+save deduction → outward
         if not is_outward and cat_tokens and re.match(r"^spend$", cat_tokens[0], re.I):
             is_outward = True
-        if is_outward:
-            i = j
-            continue
 
         # Parse date: DD/MM/YY → YYYY-MM
         parts = date_str.split("/")
@@ -1286,6 +1283,11 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
 
         amount = float(amounts[0].replace(",", ""))
         narration = re.sub(r"\s+", " ", re.sub(r"\t", " ", " ".join(text_tokens))).strip()
+
+        if is_outward:
+            add_debit(ym, narration, amount)
+            i = j
+            continue
 
         # Skip stamp duty and government levies (these are bank charges, not income)
         if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
@@ -1323,6 +1325,7 @@ def parse_zenith(full_text: str) -> tuple[dict, str]:
         is_cr  = bool(re.search(r"\b(?:nip\s*cr|cip\s*cr|inflow|etz\s+inflow)\b", lower)) or is_rev
         is_chg = bool(re.search(r"\b(?:stamp duty|sms alert|vat charge|charge\+vat|levy)\b", lower))
         if not is_cr or (is_chg and not is_rev):
+            add_debit(ym, narration, amount)
             return
         add_credit(buckets, ym, amount, narration, account_name)
 
@@ -1793,6 +1796,8 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
 
         if credit > 0 and debit == 0:
             add_credit(buckets, ym, credit, narration, account_name)
+        elif debit > 0 and credit == 0:
+            add_debit(ym, narration, debit)
 
     return buckets, account_name
 
@@ -1845,6 +1850,8 @@ def parse_fairmoney(full_text: str) -> tuple[dict, str]:
         if pending_sign == "+" and pending_amount > 0:
             add_credit(buckets, pending_ym, pending_amount,
                        pending_narr.strip(), account_name)
+        elif pending_sign == "-" and pending_amount > 0:
+            add_debit(pending_ym, pending_narr.strip(), pending_amount)
         pending_sign   = None
         pending_amount = 0.0
         pending_ym     = ""
@@ -1932,10 +1939,13 @@ def parse_palmpay_new(full_text: str) -> tuple[dict, str]:
     def _flush_pending(narr: str) -> None:
         nonlocal pending_ym, pending_narr
         am = AMT_RE.search(narr)
-        if am and am.group(1) == "+" and pending_ym:
+        if am and pending_ym:
             amount = float(am.group(2).replace(",", ""))
             clean_narr = narr[:am.start()].strip()
-            add_credit(buckets, pending_ym, amount, clean_narr, account_name)
+            if am.group(1) == "+":
+                add_credit(buckets, pending_ym, amount, clean_narr, account_name)
+            else:
+                add_debit(pending_ym, clean_narr, amount)
         pending_ym = ""
         pending_narr = ""
 
@@ -1963,9 +1973,12 @@ def parse_palmpay_new(full_text: str) -> tuple[dict, str]:
 
             am = AMT_RE.search(rest)
             if am:
+                amount = float(am.group(2).replace(",", ""))
+                narr_clean = rest[:am.start()].strip()
                 if am.group(1) == "+":
-                    amount = float(am.group(2).replace(",", ""))
-                    add_credit(buckets, pending_ym, amount, rest[:am.start()].strip(), account_name)
+                    add_credit(buckets, pending_ym, amount, narr_clean, account_name)
+                else:
+                    add_debit(pending_ym, narr_clean, amount)
                 pending_ym = ""
                 pending_narr = ""
             else:
@@ -1974,10 +1987,12 @@ def parse_palmpay_new(full_text: str) -> tuple[dict, str]:
             combined = (pending_narr + " " + stripped).strip()
             am = AMT_RE.search(combined)
             if am:
+                amount = float(am.group(2).replace(",", ""))
+                narr_clean = combined[:am.start()].strip()
                 if am.group(1) == "+":
-                    amount = float(am.group(2).replace(",", ""))
-                    add_credit(buckets, pending_ym, amount,
-                               combined[:am.start()].strip(), account_name)
+                    add_credit(buckets, pending_ym, amount, narr_clean, account_name)
+                else:
+                    add_debit(pending_ym, narr_clean, amount)
                 pending_ym = ""
                 pending_narr = ""
             else:
@@ -2056,6 +2071,20 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
         if mc:
             credit = float(mc.group(1).replace(",", ""))
             return (credit, text[:mc.start()].strip()) if credit > 0 else (0, "")
+
+    def _try_debit(text: str) -> tuple[float, str]:
+        """Return (debit_amount, narration) if a debit row; else (0, '')."""
+        m3 = THREE_AMT.search(text)
+        if m3:
+            debit  = float(m3.group(1).replace(",", ""))
+            credit = float(m3.group(2).replace(",", ""))
+            if debit > 0 and credit == 0:
+                return debit, text[:m3.start()].strip()
+            return 0, ""
+        md = DEBIT_AMT.search(text)
+        if md:
+            debit = float(md.group(1).replace(",", ""))
+            return (debit, text[:md.start()].strip()) if debit > 0 else (0, "")
         return 0, ""
 
     def _has_amounts(text: str) -> bool:
@@ -2114,7 +2143,10 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
                 pending_ym = ""
                 pending_narr = ""
             elif _has_amounts(rest):
-                # Debit row — complete, discard
+                # Debit row — complete, log it
+                damt, dnarr = _try_debit(rest)
+                if damt > 0:
+                    add_debit(pending_ym, dnarr, damt)
                 pending_ym = ""
                 pending_narr = ""
             else:
@@ -2128,7 +2160,10 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
                 pending_ym = ""
                 pending_narr = ""
             elif _has_amounts(combined):
-                # Debit row complete — discard
+                # Debit row complete — log it
+                damt, dnarr = _try_debit(combined)
+                if damt > 0:
+                    add_debit(pending_ym, dnarr, damt)
                 pending_ym = ""
                 pending_narr = ""
             else:
@@ -2139,6 +2174,10 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
         amt, narr = _try_credit(pending_narr)
         if amt > 0:
             add_credit(buckets, pending_ym, amt, narr, account_name)
+        else:
+            damt, dnarr = _try_debit(pending_narr)
+            if damt > 0:
+                add_debit(pending_ym, dnarr, damt)
 
     return buckets, account_name
 
@@ -2403,11 +2442,22 @@ def parse_carbon(full_text: str) -> tuple[dict, str]:
     current_ym   = ""
     current_narr = ""
 
+    # Debit amount+balance pattern: "- AMOUNT BALANCE"
+    DEBIT_RE = re.compile(r'^-\s*([\d,]+(?:\.\d{1,2})?)\s+([\d,]+\.\d{1,2})$')
+
     def _flush_channel(rest: str) -> None:
-        """Parse amounts from 'Carbon Account<rest>'; add credit if applicable."""
+        """Parse amounts from 'Carbon Account<rest>'; add credit/debit."""
         r = rest.strip()
-        if not r or r.startswith('-'):
-            return   # debit or service charge — skip
+        if not r:
+            return
+        if r.startswith('-'):
+            # Debit row
+            md = DEBIT_RE.match(r)
+            if md and current_ym:
+                amount = float(md.group(1).replace(',', ''))
+                if amount > 0:
+                    add_debit(current_ym, current_narr.strip(), amount)
+            return
         m = CREDIT_RE.match(r)
         if m and current_ym:
             amount = float(m.group(1).replace(',', ''))
@@ -2559,6 +2609,9 @@ def parse_providus(full_text: str) -> tuple[dict, str]:
             amount = delta
             if not DEBIT_NARR.match(raw_narr):
                 add_credit(buckets, ym, amount, raw_narr, account_name)
+        elif delta is not None and delta < -0.01:
+            # Debit
+            add_debit(ym, raw_narr, abs(delta))
 
         return True
 
@@ -3145,10 +3198,13 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
             combined = ' '.join(pending_acc)
             m = ROW_END.search(combined)
             if m:
+                debit  = float(m.group(1).replace(',', ''))
                 credit = float(m.group(2).replace(',', ''))
+                narration = combined[:m.start()].strip()
                 if credit > 0:
-                    narration = combined[:m.start()].strip()
                     add_credit(buckets, pending_ym, credit, narration, account_name)
+                elif debit > 0:
+                    add_debit(pending_ym, narration, debit)
         pending_ym  = None
         pending_acc = []
 
@@ -3246,9 +3302,17 @@ def parse_zenith_new(full_text: str) -> tuple[dict, str]:
             m = ROW_END.search(combined)
             if m:
                 credit = float(m.group(1).replace(',', ''))
+                narration = combined[:m.start()].strip()
                 if credit > 0:
-                    narration = combined[:m.start()].strip()
                     add_credit(buckets, pending_ym, credit, narration, account_name)
+                else:
+                    # credit == 0.00 → debit row; extract debit amount from narration
+                    dm = re.search(r'([\d,]+\.\d{2})\s*$', narration)
+                    if dm:
+                        damt = float(dm.group(1).replace(',', ''))
+                        dnarr = narration[:dm.start()].strip()
+                        if damt > 0:
+                            add_debit(pending_ym, dnarr, damt)
         pending_ym  = None
         pending_acc = []
 
@@ -3334,9 +3398,11 @@ def parse_parallex(full_text: str) -> tuple[dict, str]:
         credit    = float(m.group(3).replace(',', ''))
         narration = (m.group(4) or '').strip()
 
+        ym = _to_ym(trans_date)
         if credit > 0 and debit == 0:
-            ym = _to_ym(trans_date)
             add_credit(buckets, ym, credit, narration, account_name)
+        elif debit > 0 and credit == 0:
+            add_debit(ym, narration, debit)
 
     return buckets, account_name
 
@@ -3461,6 +3527,23 @@ def parse_renmoney(full_text: str) -> tuple[dict, str]:
         ym = f"{date_str[:4]}-{date_str[5:7]}"
         add_credit(buckets, ym, amount, "INTEREST_APPLIED", account_name)
 
+    # ── Pass 5: DEBIT entries ─────────────────────────────────────────────────
+    # Debit inline: YYYY-MM-DD|narration₦amount - ₦balance  (₦ BEFORE dash)
+    _DEBIT_RE = re.compile(
+        r'^(20\d{2})-(\d{2})-\d{2}\|'
+        r'(?!CREDIT\s*\||INTEREST_APPLIED)'
+        r'(.+?)'
+        r'[₦?]\s*([\d,]+\.\d{2})'
+        r'\s*-\s*[₦?]\s*[\d,]+\.\d{2}\s*$',
+        re.MULTILINE,
+    )
+    for m in _DEBIT_RE.finditer(text_n):
+        ym     = f"{m.group(1)}-{m.group(2)}"
+        narr   = m.group(3).strip()
+        amount = float(m.group(4).replace(',', ''))
+        if amount > 0:
+            add_debit(ym, narr, amount)
+
     return buckets, account_name
 
 
@@ -3558,6 +3641,8 @@ def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
             delta     = curr_bal - prev_bal
             if delta > 0:
                 add_credit(buckets, ym, round(delta, 2), narration, account_name)
+            elif delta < 0:
+                add_debit(ym, narration, round(abs(delta), 2), tx_date)
             prev_bal = curr_bal
             i += 1
             continue
@@ -3591,6 +3676,8 @@ def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
                 delta     = curr_bal - prev_bal
                 if delta > 0:
                     add_credit(buckets, ym, round(delta, 2), narration, account_name)
+                elif delta < 0:
+                    add_debit(ym, narration, round(abs(delta), 2), tx_date)
                 prev_bal = curr_bal
                 i += 1
                 break
