@@ -1348,40 +1348,110 @@ if st.session_state.rows_a:
         trend_icon  = "▲" if trend_delta > 0 else "▼" if trend_delta < 0 else "▬"
         trend_col   = "#34d399" if trend_delta > 0 else "#f87171" if trend_delta < 0 else "#6b7f74"
 
-        bars_html = ""
+        # ── SVG line graph ────────────────────────────────────────────────
+        _SVG_W  = 600   # viewBox width
+        _SVG_H  = 160   # viewBox height
+        _PAD_L  = 10    # left padding
+        _PAD_R  = 10    # right padding
+        _PAD_T  = 28    # top padding (room for value labels)
+        _PAD_B  = 36    # bottom padding (room for month labels + MoM %)
+        _plot_w = _SVG_W - _PAD_L - _PAD_R
+        _plot_h = _SVG_H - _PAD_T - _PAD_B
+        _n      = len(rows_a)
+        _scale_svg = max(
+            max(r["gross"]           for r in rows_a),
+            max(r["eligible_income"] for r in rows_a),
+        ) or 1
+
+        def _x(i):
+            return _PAD_L + (_plot_w / (_n - 1) * i if _n > 1 else _plot_w / 2)
+
+        def _y(v):
+            return _PAD_T + _plot_h - (v / _scale_svg * _plot_h)
+
+        # build polyline point strings
+        _pts_gross   = " ".join(f"{_x(i):.1f},{_y(r['gross']):.1f}"           for i, r in enumerate(rows_a))
+        _pts_elig    = " ".join(f"{_x(i):.1f},{_y(r['eligible_income']):.1f}" for i, r in enumerate(rows_a))
+
+        # filled area under eligible line
+        _first_x = f"{_x(0):.1f}"
+        _last_x  = f"{_x(_n-1):.1f}"
+        _base_y  = f"{_PAD_T + _plot_h:.1f}"
+        _area_pts = f"{_first_x},{_base_y} {_pts_elig} {_last_x},{_base_y}"
+
+        # dots, labels, month names
+        _dots_gross = ""
+        _dots_elig  = ""
+        _val_labels = ""
+        _mon_labels = ""
+        _mom_labels = ""
+
         for _bi, r in enumerate(rows_a):
-            g_px = int(r["gross"]           / _scale * BAR_H) if r["gross"]           > 0 else 0
-            e_px = int(r["eligible_income"] / _scale * BAR_H) if r["eligible_income"] > 0 else 0
-            # Month-over-month % change vs previous month
-            _mom_html = ""
+            cx = _x(_bi)
+            cy_g = _y(r["gross"])
+            cy_e = _y(r["eligible_income"])
+
+            # gross dot (faint)
+            _dots_gross += f'<circle cx="{cx:.1f}" cy="{cy_g:.1f}" r="4" fill="rgba(16,185,129,.25)" stroke="#10b981" stroke-width="1.5"/>'
+            # eligible dot (bright, white centre)
+            _dots_elig  += (
+                f'<circle cx="{cx:.1f}" cy="{cy_e:.1f}" r="5.5" fill="#0f1a15" stroke="#34d399" stroke-width="2.5"/>'
+                f'<circle cx="{cx:.1f}" cy="{cy_e:.1f}" r="2.5" fill="#34d399"/>'
+            )
+            # value label above eligible dot
+            _val_labels += (
+                f'<text x="{cx:.1f}" y="{cy_e - 9:.1f}" text-anchor="middle" '
+                f'font-size="9" fill="#34d399" font-family="Space Mono,monospace">'
+                f'{_fmt_v(r["eligible_income"])}</text>'
+            )
+            # month label below
+            _mon_y = _PAD_T + _plot_h + 14
+            _mon_labels += (
+                f'<text x="{cx:.1f}" y="{_mon_y}" text-anchor="middle" '
+                f'font-size="9" fill="#6b7f74" font-family="Space Mono,monospace">'
+                f'{r["label"]}</text>'
+            )
+            # MoM % label
             if _bi > 0:
                 _prev_ei = rows_a[_bi - 1]["eligible_income"]
                 if _prev_ei > 0:
                     _mom_pct = (r["eligible_income"] - _prev_ei) / _prev_ei * 100
-                    _mom_col = "#34d399" if _mom_pct > 0 else "#f87171" if _mom_pct < 0 else "#6b7f74"
-                    _mom_arr = "▲" if _mom_pct > 0 else "▼" if _mom_pct < 0 else "▬"
-                    _mom_html = (
-                        f'<div style="font-size:8px;color:{_mom_col};margin-top:2px;white-space:nowrap">'
-                        f'{_mom_arr}{abs(_mom_pct):.0f}%</div>'
+                    _mom_col = "#34d399" if _mom_pct > 0 else "#f87171"
+                    _mom_arr = "▲" if _mom_pct > 0 else "▼"
+                    _mom_labels += (
+                        f'<text x="{cx:.1f}" y="{_mon_y + 13}" text-anchor="middle" '
+                        f'font-size="8" fill="{_mom_col}" font-family="Space Mono,monospace">'
+                        f'{_mom_arr}{abs(_mom_pct):.0f}%</text>'
                     )
-            bars_html += (
-                f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
-                # amount label
-                f'<div style="font-size:9px;color:#34d399;margin-bottom:4px;white-space:nowrap">'
-                f'{_fmt_v(r["eligible_income"])}</div>'
-                # bar stack
-                f'<div style="width:70%;height:{BAR_H}px;position:relative">'
-                f'<div style="position:absolute;bottom:0;left:0;right:0;height:{g_px}px;'
-                f'background:rgba(16,185,129,.13);border-radius:2px 2px 0 0"></div>'
-                f'<div style="position:absolute;bottom:0;left:0;right:0;height:{e_px}px;'
-                f'background:linear-gradient(180deg,#34d399 0%,#10b981 100%);border-radius:2px 2px 0 0"></div>'
-                f'</div>'
-                # month label + MoM % change
-                f'<div style="font-size:9px;color:#6b7f74;margin-top:6px;white-space:nowrap">'
-                f'{r["label"]}</div>'
-                f'{_mom_html}'
-                f'</div>'
+
+        # horizontal grid lines (3 levels)
+        _grid = ""
+        for _frac in [0.25, 0.5, 0.75]:
+            _gy = _PAD_T + _plot_h * (1 - _frac)
+            _grid += (
+                f'<line x1="{_PAD_L}" y1="{_gy:.1f}" x2="{_SVG_W - _PAD_R}" y2="{_gy:.1f}" '
+                f'stroke="#1a3d2b" stroke-width="1" stroke-dasharray="4 4"/>'
             )
+
+        _svg = (
+            f'<svg viewBox="0 0 {_SVG_W} {_SVG_H}" xmlns="http://www.w3.org/2000/svg" '
+            f'style="width:100%;height:auto;display:block">'
+            # grid
+            f'{_grid}'
+            # filled area under eligible line
+            f'<polygon points="{_area_pts}" fill="rgba(16,185,129,.07)"/>'
+            # gross line (dashed, faint)
+            f'<polyline points="{_pts_gross}" fill="none" stroke="rgba(16,185,129,.30)" '
+            f'stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"/>'
+            # eligible line (bold, solid)
+            f'<polyline points="{_pts_elig}" fill="none" stroke="#34d399" '
+            f'stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>'
+            # dots
+            f'{_dots_gross}{_dots_elig}'
+            # labels
+            f'{_val_labels}{_mon_labels}{_mom_labels}'
+            f'</svg>'
+        )
 
         st.markdown(
             f'<div style="margin-top:20px;padding:16px 14px 14px;background:rgba(0,0,0,.18);'
@@ -1392,8 +1462,8 @@ if st.session_state.rows_a:
             f'<div style="font-size:10px;color:{trend_col};letter-spacing:1px">'
             f'{trend_icon} {_fmt_v(abs(trend_delta))} vs first month</div>'
             f'</div>'
-            # bars row
-            f'<div style="display:flex;align-items:flex-end;gap:6px">{bars_html}</div>'
+            # SVG line graph
+            + _svg +
             # averages + legend footer
             f'<div style="display:flex;gap:24px;margin-top:12px;padding-top:10px;border-top:1px solid #1a3d2b;align-items:center">'
             f'<div><div style="font-size:8px;letter-spacing:2px;color:#6b7f74;text-transform:uppercase;margin-bottom:2px">6-mo avg</div>'
@@ -1402,13 +1472,12 @@ if st.session_state.rows_a:
             f'<div style="font-size:13px;font-weight:700;color:#fbbf24">{_fmt_v(avg3)}</div></div>'
             f'<div style="margin-left:auto;display:flex;gap:12px;align-items:center">'
             f'<span style="font-size:9px;color:#6b7f74">'
-            f'<span style="display:inline-block;width:8px;height:8px;'
-            f'background:linear-gradient(180deg,#34d399,#10b981);border-radius:1px;'
-            f'margin-right:3px;vertical-align:middle"></span>Eligible</span>'
+            f'<span style="display:inline-block;width:24px;height:3px;'
+            f'background:#34d399;border-radius:2px;margin-right:4px;vertical-align:middle"></span>Eligible</span>'
             f'<span style="font-size:9px;color:#6b7f74">'
-            f'<span style="display:inline-block;width:8px;height:8px;'
-            f'background:rgba(16,185,129,.2);border-radius:1px;'
-            f'margin-right:3px;vertical-align:middle"></span>Gross</span>'
+            f'<span style="display:inline-block;width:24px;height:2px;'
+            f'background:rgba(16,185,129,.35);border-radius:2px;margin-right:4px;vertical-align:middle;'
+            f'border-top:2px dashed rgba(16,185,129,.5)"></span>Gross</span>'
             f'</div></div>'
             f'</div>',
             unsafe_allow_html=True,
