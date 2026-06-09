@@ -1073,14 +1073,16 @@ def parse_opay_v2(pdf_bytes: bytes, full_text: str = "") -> tuple[dict, str]:
                         pre_desc.append(text)
 
     # ── PyPDF2 fallback: always run and use whichever parser found more data ───
-    # pdftotext v4.00 (Glyph & Cog) can produce misaligned columns that cause
-    # the layout parser to find some but not all transactions.  The PyPDF2 parser
-    # reliably finds >99% of transactions. We pick the result with higher total.
+    # Text-based fallback: use pdfplumber text (cleaner than PyPDF2 — no
+    # reference-number concatenation).  Falls back to full_text (PyPDF2) if
+    # pdfplumber is unavailable.  Pick whichever parser found more credit gross.
     # IMPORTANT: debits are NOT added to _debit_log until the winner is decided,
     # to avoid double-counting when both parsers run.
     winning_debit_rows = layout_debit_rows
-    if full_text:
-        pypdf2_buckets, pypdf2_debit_rows = _parse_opay_v2_pypdf2(full_text, account_name)
+    plumber_text = extract_pdf_text_pdfplumber(pdf_bytes) if pdf_bytes else full_text
+    fallback_text = plumber_text or full_text
+    if fallback_text:
+        pypdf2_buckets, pypdf2_debit_rows = _parse_opay_v2_pypdf2(fallback_text, account_name)
         layout_gross  = sum(b.get("gross", 0) for b in buckets.values())
         pypdf2_gross  = sum(b.get("gross", 0) for b in pypdf2_buckets.values())
         if pypdf2_gross > layout_gross:
