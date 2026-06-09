@@ -346,29 +346,53 @@ def html_bar_chart(labels, values, color: str = "#10b981", money_fmt: bool = Fal
             return f"₦{v/1_000_000:.1f}m" if v >= 1_000_000 else f"₦{v/1_000:.0f}k" if v >= 1000 else f"₦{v:.0f}"
         return f"{v:,.0f}"
 
+    # detect which labels are month-name markers (e.g. "Jun 2026") vs day numbers
+    def _is_month_label(lbl): return len(lbl) > 3  # day numbers are "01".."31"
+
     bars = ""
     for i, (lbl, v) in enumerate(zip(labels, vals)):
         h = int(v / scale * BAR_H) if v > 0 else 0
-        # value label: only on non-zero bars at display-every interval
+        _is_month = _is_month_label(lbl)
+
+        # value label: show on every non-zero bar
         _val_lbl = (
             f'<div style="font-size:9px;font-weight:600;color:{color};margin-bottom:3px;'
             f'white-space:nowrap;min-height:14px">'
-            + (_fmt(v) if (i % _show_every == 0 or i == n - 1) and v > 0 else "")
+            + (_fmt(v) if v > 0 else "")
             + '</div>'
         )
-        # x-axis label: thin on dense charts
+        # x-axis label:
+        #   - month names always shown (truncated to "M..." if too narrow)
+        #   - day numbers shown only on active (non-zero) bars
+        if _is_month:
+            _show_lbl = lbl[:4] + "…" if len(lbl) > 6 else lbl
+            _lbl_col  = "#e2e8f0"    # bright white for month markers
+            _lbl_size = "9px"
+        elif v > 0:
+            _show_lbl = lbl
+            _lbl_col  = "#94a3b8"
+            _lbl_size = "9px"
+        else:
+            _show_lbl = ""
+            _lbl_col  = "#94a3b8"
+            _lbl_size = "9px"
+
         _x_lbl = (
-            f'<div style="font-size:9px;font-weight:600;color:#94a3b8;margin-top:5px;'
-            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'
-            + (lbl if i % _show_every == 0 or i == n - 1 else "")
+            f'<div style="font-size:{_lbl_size};font-weight:{"700" if _is_month else "600"};'
+            f'color:{_lbl_col};margin-top:5px;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;max-width:100%">'
+            + _show_lbl
             + '</div>'
+        )
+        # bar colour: month-marker column gets a subtle highlight
+        _bar_bg = (
+            f'background:linear-gradient(180deg,{color} 0%,{color}88 100%)'
         )
         bars += (
             f'<div style="flex:1;display:flex;flex-direction:column;align-items:center;min-width:0">'
             + _val_lbl
             + f'<div style="width:100%;height:{BAR_H}px;display:flex;align-items:flex-end;justify-content:center">'
-            f'<div style="width:80%;height:{h}px;'
-            f'background:linear-gradient(180deg,{color} 0%,{color}88 100%);'
+            f'<div style="width:80%;height:{h}px;{_bar_bg};'
             f'border-radius:3px 3px 0 0;min-height:{"3" if v > 0 else "0"}px"></div>'
             f'</div>'
             + _x_lbl
