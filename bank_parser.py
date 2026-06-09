@@ -318,6 +318,109 @@ def add_credit(buckets: dict, ym: str, amount: float,
     _txn_log.append({"ym": ym, "narration": narration, "amount": amount, "category": cat})
 
 
+# ── Debit transaction log (visibility only — not used in decisioning) ─────────
+_debit_log: list[dict] = []
+
+
+def classify_debit(narration: str) -> tuple[str, str]:
+    """Classify a debit transaction into a flagged category.
+
+    Returns (category, label) — for display only, not used in credit decisioning.
+
+    Categories
+    ----------
+    loan_repayment   Repayment of an existing loan / credit facility
+    credit_card      Credit card payment
+    rent             Rent or property-related payment
+    utility          NEPA/electricity, water, cable TV, internet
+    airtime_data     Airtime top-up or data purchase
+    bank_charge      Bank fees, stamp duty, COT, VAT on transactions
+    cash_withdrawal  ATM or counter cash withdrawal
+    pos_purchase     POS / card purchase / online payment
+    transfer_out     Regular outward transfer (default catch-all)
+    """
+    text = narration.lower()
+
+    # Loan repayments — highest priority flag
+    loan_kw = [
+        "loan repay", "loan payment", "loan deduction", "loan instalment",
+        "loan installment", "emi ", "equated monthly", "credit repay",
+        "facility repay", "overdraft repay", "lapo", "renmoney repay",
+        "fairmoney repay", "carbon repay", "migo repay", "palmcredit",
+        "creditwave", "page financials", "quick credit", "branch repay",
+        "aella repay", "lidya repay", "lendigo", "lendha", "flexpay",
+        "creditcorp", "loanrepay", "loan/repay", "repayment",
+    ]
+    if any(k in text for k in loan_kw):
+        return "loan_repayment", "🔴 Loan Repayment"
+
+    # Credit card payments
+    cc_kw = ["credit card", "card payment", "creditcard", "card repay"]
+    if any(k in text for k in cc_kw):
+        return "credit_card", "🔴 Credit Card Payment"
+
+    # Rent / property
+    rent_kw = ["rent", "landlord", "property", "estate agency", "caution fee",
+               "service charge", "agency fee", "ground rent"]
+    if any(k in text for k in rent_kw):
+        return "rent", "🟠 Rent / Property"
+
+    # Utilities
+    util_kw = ["nepa", "phcn", "ekedc", "ikedc", "phedc", "aedc", "kedco",
+               "jed", "bedc", "electricity", "dstv", "gotv", "startimes",
+               "multichoice", "lawma", "water board", "waterboard",
+               "internet", "mtn", "airtel", "glo ", "9mobile", "spectranet",
+               "swift network", "smile ", "ipnx"]
+    if any(k in text for k in util_kw):
+        return "utility", "🟡 Utility / Bill"
+
+    # Airtime / data
+    airtime_kw = ["airtime", "vtu", "data recharge", "data purchase",
+                  "recharge", "topup", "top-up", "top up"]
+    if any(k in text for k in airtime_kw):
+        return "airtime_data", "⚪ Airtime / Data"
+
+    # Bank charges
+    charge_kw = ["bank charge", "stamp duty", "cot ", "vat ", "sms alert",
+                 "maintenance fee", "card maintenance", "annual fee",
+                 "account maintenance", "service fee", "commission",
+                 "excise duty", "e-banking fee", "management fee"]
+    if any(k in text for k in charge_kw):
+        return "bank_charge", "⚪ Bank Charge / Fee"
+
+    # Cash withdrawals
+    cash_kw = ["atm ", "cash withdrawal", "counter withdrawal", "teller",
+               "cash out", "cashout", "withdrawal"]
+    if any(k in text for k in cash_kw):
+        return "cash_withdrawal", "🟡 Cash Withdrawal"
+
+    # POS / card purchase
+    pos_kw = ["pos ", "purchase", "payment to", "pay to", "online payment",
+              "web payment", "card transaction", "ussd purchase",
+              "merchant", "supermarket", "restaurant", "hotel", "petrol",
+              "fuel", "filling station"]
+    if any(k in text for k in pos_kw):
+        return "pos_purchase", "⚪ POS / Purchase"
+
+    # Default: outward transfer
+    return "transfer_out", "⚪ Transfer Out"
+
+
+def add_debit(ym: str, narration: str, amount: float, date: str = "") -> None:
+    """Log a debit transaction for UI display. Never affects credit decisioning."""
+    if not ym or not amount or amount <= 0:
+        return
+    cat, label = classify_debit(narration)
+    _debit_log.append({
+        "ym":        ym,
+        "date":      date,
+        "narration": narration,
+        "amount":    amount,
+        "category":  cat,
+        "label":     label,
+    })
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # PDF TEXT EXTRACTION
 # ════════════════════════════════════════════════════════════════════════════
@@ -3462,8 +3565,9 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     buckets: {ym: {gross, count, self_transfer, reversal, non_business, loan_disbursal, real_credit}}
     transactions: list of {ym, narration, amount, category} for keyword search
     """
-    global _txn_log, _last_full_text
-    _txn_log = []         # Reset for each new parse
+    global _txn_log, _debit_log, _last_full_text
+    _txn_log   = []       # Reset for each new parse
+    _debit_log = []       # Reset debit log
     _last_full_text = ""  # Clear cached text from any prior call
 
     # ── Excel detection ───────────────────────────────────────────────────
@@ -3473,7 +3577,7 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_excel(file_bytes)
         bank = "Mono Excel"
         summary: dict = {}
-        return buckets, summary, bank, account_name, list(_txn_log)
+        return buckets, summary, bank, account_name, list(_txn_log), list(_debit_log)
 
     # ── PDF ───────────────────────────────────────────────────────────────
     full_text = extract_pdf_text(pdf_bytes=file_bytes, password=password)
@@ -3542,7 +3646,7 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     _last_full_text = full_text
     del full_text
     gc.collect()
-    return buckets, summary, bank, account_name, list(_txn_log)
+    return buckets, summary, bank, account_name, list(_txn_log), list(_debit_log)
 
 
 def monthly_analysis(buckets: dict, summary: dict | None = None) -> list[dict]:

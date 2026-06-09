@@ -731,6 +731,7 @@ def required_income_for_loan(target_loan: float, tenor: int,
 for key in ["buckets_a","summary_a","bank_a","name_a","account_no_a",
             "buckets_b","summary_b","bank_b","name_b","account_no_b",
             "credit_data","rows_a","rows_b","txns_a","txns_b",
+            "debit_txns_a","debit_txns_b",
             "last_calc_params", "batch_results", "last_share"]:
     if key not in st.session_state:
         st.session_state[key] = None
@@ -1064,7 +1065,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                 _render_queue(_statuses)
                 _bp_bar.progress(_bfi / len(_bp_files[:10]), text=f"Processing {_bpf.name} ({_bfi+1}/{len(_bp_files[:10])})…")
                 try:
-                    _bk, _bsumm, _bbank, _bname, _btxns = parse_transactions(
+                    _bk, _bsumm, _bbank, _bname, _btxns, _bdebits = parse_transactions(
                         _bpf.getvalue(), _bp_pw, filename=_bpf.name
                     )
                     _brows = monthly_analysis(_bk, _bsumm)
@@ -1201,7 +1202,7 @@ with col2:
                     track("upload", session=_SID, officer=_OFFICER, filename=file_a.name,
                           size_kb=round(_size_mb_a * 1024, 1))
                     try:
-                        buckets, summary, bank, name, txns = parse_transactions(
+                        buckets, summary, bank, name, txns, debit_txns = parse_transactions(
                             _pdf_bytes_a, pw_a, filename=file_a.name
                         )
                         rows = monthly_analysis(buckets, summary)
@@ -1212,6 +1213,7 @@ with col2:
                         st.session_state.name_a          = name
                         st.session_state.rows_a          = rows
                         st.session_state.txns_a          = txns
+                        st.session_state.debit_txns_a    = debit_txns
 
                         # ── Reuse text already extracted by parse_transactions ──
                         # Eliminates the previous pdfplumber + PyPDF2 re-parses
@@ -2284,7 +2286,7 @@ with col4:
                     track("upload", session=_SID, officer=_OFFICER, filename=file_b.name,
                           size_kb=round(_size_mb_b * 1024, 1), slot="B")
                     try:
-                        buckets_b, summary_b, bank_b, name_b, txns_b = parse_transactions(
+                        buckets_b, summary_b, bank_b, name_b, txns_b, debit_txns_b = parse_transactions(
                             _pdf_bytes_b, pw_b, filename=file_b.name
                         )
                         rows_b = monthly_analysis(buckets_b, summary_b)
@@ -2295,6 +2297,7 @@ with col4:
                         st.session_state.name_b          = name_b
                         st.session_state.rows_b          = rows_b
                         st.session_state.txns_b          = txns_b
+                        st.session_state.debit_txns_b    = debit_txns_b
 
                         _reused_text_b = get_last_full_text()
 
@@ -2577,6 +2580,161 @@ if st.session_state.txns_a and st.session_state.txns_b:
                 unsafe_allow_html=True,
             )
 
+# ── Debit Transaction Visibility Panel ───────────────────────────────────────
+# For officer visibility only — NOT used in credit decisioning.
+def _render_debit_panel(debit_txns: list, label: str = "") -> None:
+    if not debit_txns:
+        return
+
+    _PRIORITY = {"loan_repayment", "credit_card", "rent"}
+
+    # Summary metrics
+    _total_debit  = sum(t["amount"] for t in debit_txns)
+    _flagged      = [t for t in debit_txns if t["category"] in _PRIORITY]
+    _loan_repays  = [t for t in debit_txns if t["category"] == "loan_repayment"]
+    _total_loan_r = sum(t["amount"] for t in _loan_repays)
+    _total_rent   = sum(t["amount"] for t in debit_txns if t["category"] == "rent")
+
+    # Monthly debit totals
+    from collections import defaultdict as _dd_deb
+    _monthly_deb: dict = _dd_deb(float)
+    for _t in debit_txns:
+        _monthly_deb[_t["ym"]] += _t["amount"]
+
+    _title = f"Debit Transactions — Visibility Panel{' (' + label + ')' if label else ''}"
+    with st.expander(f"💳  {_title}", expanded=False):
+        st.markdown(
+            f'<div style="background:rgba(248,113,113,.05);border:1px solid rgba(248,113,113,.2);'
+            f'border-left:4px solid #f87171;border-radius:4px;padding:10px 14px;margin-bottom:12px;'
+            f'font-size:10px;color:#94a3b8">'
+            f'ℹ️ &nbsp;Debit data is shown for <strong>officer visibility only</strong> — '
+            f'it is <strong>not used in credit decisioning</strong> or loan calculations.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Summary cards ──────────────────────────────────────────────────
+        _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+        with _dc1:
+            st.markdown(
+                f'<div style="background:rgba(0,0,0,.2);border:1px solid #1e293b;border-radius:4px;padding:10px 12px">'
+                f'<div style="font-size:8px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:4px">Total Debits</div>'
+                f'<div style="font-size:16px;font-weight:700;color:#f87171">{money(_total_debit)}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _dc2:
+            st.markdown(
+                f'<div style="background:rgba(0,0,0,.2);border:1px solid #1e293b;border-radius:4px;padding:10px 12px">'
+                f'<div style="font-size:8px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:4px">Loan Repayments</div>'
+                f'<div style="font-size:16px;font-weight:700;color:#f87171">{money(_total_loan_r)}</div>'
+                f'<div style="font-size:9px;color:#64748b;margin-top:2px">{len(_loan_repays)} transaction(s)</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _dc3:
+            st.markdown(
+                f'<div style="background:rgba(0,0,0,.2);border:1px solid #1e293b;border-radius:4px;padding:10px 12px">'
+                f'<div style="font-size:8px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:4px">Rent / Property</div>'
+                f'<div style="font-size:16px;font-weight:700;color:#f59e0b">{money(_total_rent)}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with _dc4:
+            st.markdown(
+                f'<div style="background:rgba(0,0,0,.2);border:1px solid #1e293b;border-radius:4px;padding:10px 12px">'
+                f'<div style="font-size:8px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:4px">Priority Flags</div>'
+                f'<div style="font-size:16px;font-weight:700;color:#f87171">{len(_flagged)}</div>'
+                f'<div style="font-size:9px;color:#64748b;margin-top:2px">loan repay · credit card · rent</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='margin-top:14px'></div>", unsafe_allow_html=True)
+
+        # ── Category breakdown table ───────────────────────────────────────
+        _cat_totals: dict = _dd_deb(float)
+        _cat_counts: dict = _dd_deb(int)
+        for _t in debit_txns:
+            _cat_totals[_t["label"]] += _t["amount"]
+            _cat_counts[_t["label"]] += 1
+
+        _cat_rows = sorted(_cat_totals.items(), key=lambda x: -x[1])
+        _cat_html = "".join(
+            f'<tr>'
+            f'<td style="padding:6px 8px;font-size:11px;color:#e2e8f0">{lbl}</td>'
+            f'<td style="padding:6px 8px;font-size:11px;color:#94a3b8;text-align:right">{_cat_counts[lbl]}</td>'
+            f'<td style="padding:6px 8px;font-size:11px;color:#f87171;text-align:right;font-weight:600">{money(_cat_totals[lbl])}</td>'
+            f'</tr>'
+            for lbl, _ in _cat_rows
+        )
+        st.markdown(
+            f'<div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-bottom:6px">Debit Category Breakdown</div>'
+            f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+            f'background:rgba(0,0,0,.15);border:1px solid #1e293b;border-radius:4px">'
+            f'<thead><tr style="border-bottom:1px solid #1e293b">'
+            f'<th style="padding:6px 8px;font-size:9px;color:#64748b;text-align:left;text-transform:uppercase;letter-spacing:1px">Category</th>'
+            f'<th style="padding:6px 8px;font-size:9px;color:#64748b;text-align:right;text-transform:uppercase;letter-spacing:1px">Count</th>'
+            f'<th style="padding:6px 8px;font-size:9px;color:#64748b;text-align:right;text-transform:uppercase;letter-spacing:1px">Total</th>'
+            f'</tr></thead><tbody>{_cat_html}</tbody></table></div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("<div style='margin-top:14px'></div>", unsafe_allow_html=True)
+
+        # ── Flagged transactions (loan repayment, credit card, rent) ──────
+        if _flagged:
+            st.markdown(
+                f'<div style="font-size:9px;letter-spacing:2px;color:#f87171;text-transform:uppercase;margin-bottom:6px">'
+                f'🔴 Flagged Transactions ({len(_flagged)})</div>',
+                unsafe_allow_html=True,
+            )
+            _flag_rows_html = "".join(
+                f'<tr style="border-bottom:1px solid #1e293b">'
+                f'<td style="padding:5px 8px;font-size:10px;color:#94a3b8">{t.get("ym","")}</td>'
+                f'<td style="padding:5px 8px;font-size:10px;color:#e2e8f0;max-width:260px;word-break:break-word">{t["narration"][:80]}</td>'
+                f'<td style="padding:5px 8px;font-size:10px;color:#f87171;text-align:right;font-weight:600">{money(t["amount"])}</td>'
+                f'<td style="padding:5px 8px;font-size:10px">{t["label"]}</td>'
+                f'</tr>'
+                for t in sorted(_flagged, key=lambda x: -x["amount"])[:50]
+            )
+            st.markdown(
+                f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                f'background:rgba(0,0,0,.15);border:1px solid #1e293b;border-radius:4px">'
+                f'<thead><tr style="border-bottom:1px solid #1e293b">'
+                f'<th style="padding:5px 8px;font-size:9px;color:#64748b;text-align:left">Month</th>'
+                f'<th style="padding:5px 8px;font-size:9px;color:#64748b;text-align:left">Narration</th>'
+                f'<th style="padding:5px 8px;font-size:9px;color:#64748b;text-align:right">Amount</th>'
+                f'<th style="padding:5px 8px;font-size:9px;color:#64748b;text-align:left">Flag</th>'
+                f'</tr></thead><tbody>{_flag_rows_html}</tbody></table></div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='margin-top:14px'></div>", unsafe_allow_html=True)
+
+        # ── All debit transactions (collapsible) ──────────────────────────
+        with st.expander("📋  All Debit Transactions (full list)", expanded=False):
+            _all_rows_html = "".join(
+                f'<tr style="border-bottom:1px solid #0f172a">'
+                f'<td style="padding:4px 8px;font-size:10px;color:#94a3b8">{t.get("ym","")}</td>'
+                f'<td style="padding:4px 8px;font-size:10px;color:#e2e8f0;max-width:300px;word-break:break-word">{t["narration"][:90]}</td>'
+                f'<td style="padding:4px 8px;font-size:10px;color:#f87171;text-align:right">{money(t["amount"])}</td>'
+                f'<td style="padding:4px 8px;font-size:10px;color:#94a3b8">{t["label"]}</td>'
+                f'</tr>'
+                for t in sorted(debit_txns, key=lambda x: (-x["amount"]))
+            )
+            st.markdown(
+                f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                f'background:rgba(0,0,0,.15)">'
+                f'<thead><tr style="border-bottom:1px solid #1e293b">'
+                f'<th style="padding:4px 8px;font-size:9px;color:#64748b;text-align:left">Month</th>'
+                f'<th style="padding:4px 8px;font-size:9px;color:#64748b;text-align:left">Narration</th>'
+                f'<th style="padding:4px 8px;font-size:9px;color:#64748b;text-align:right">Amount</th>'
+                f'<th style="padding:4px 8px;font-size:9px;color:#64748b;text-align:left">Category</th>'
+                f'</tr></thead><tbody>{_all_rows_html}</tbody></table></div>',
+                unsafe_allow_html=True,
+            )
+
+
+if st.session_state.get("debit_txns_a"):
+    _render_debit_panel(st.session_state.debit_txns_a, label="Statement 1")
+
 # ── Transaction Search — Statement B ─────────────────────────────────────────
 if st.session_state.txns_b:
     st.markdown(
@@ -2635,6 +2793,9 @@ if st.session_state.txns_b:
                 unsafe_allow_html=True,
             )
 
+
+if st.session_state.get("debit_txns_b"):
+    _render_debit_panel(st.session_state.debit_txns_b, label="Statement 2")
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 01 — FIRSTCENTRAL CREDIT REPORT
