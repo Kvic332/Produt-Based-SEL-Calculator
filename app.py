@@ -810,10 +810,10 @@ if not _is_signed_in:
                     border-radius:6px;padding:28px 32px 24px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
           <div style="font-size:22px;font-weight:900;color:#e2e8f0;margin-bottom:10px;
                       letter-spacing:0.5px">
-            Sign-in has moved to the PARSIO portal
+            PARSIO has a new home
           </div>
           <div style="font-size:15px;font-weight:600;color:#94a3b8;margin-bottom:18px;line-height:1.7">
-            Taking you to the new sign-in page&hellip; If you are not redirected
+            Taking you to the new PARSIO portal&hellip; If you are not redirected
             automatically, use the button below.
           </div>
         </div>
@@ -821,12 +821,13 @@ if not _is_signed_in:
         unsafe_allow_html=True,
     )
 
-    # Sign-in now lives on the PARSIO portal (GitHub Pages), which hands the
+    # Sign-in now lives on the PARSIO portal (GitHub Pages): visitors land on
+    # the landing page and click Sign in from there. The login page hands the
     # officer name back via ?officer=...&signed=... — override per deployment
     # with the PARSIO_LOGIN_URL env var / secret if needed.
     _LOGIN_URL = os.environ.get(
         "PARSIO_LOGIN_URL",
-        "https://kvic332.github.io/Produt-Based-SEL-Calculator/login.html",
+        "https://kvic332.github.io/Produt-Based-SEL-Calculator/",
     )
 
     # Auto-redirect (meta refresh) + visible fallback button
@@ -836,7 +837,7 @@ if not _is_signed_in:
         f'<a href="{_LOGIN_URL}" target="_self" style="display:inline-block;'
         f'background:#10b981;color:#000;font-weight:900;font-size:15px;'
         f'letter-spacing:1px;padding:14px 36px;border-radius:6px;'
-        f'text-decoration:none">GO TO SIGN-IN PAGE →</a></div>',
+        f'text-decoration:none">GO TO PARSIO PORTAL →</a></div>',
         unsafe_allow_html=True,
     )
 
