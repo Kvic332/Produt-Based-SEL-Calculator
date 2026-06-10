@@ -602,7 +602,10 @@ def detect_bank(text: str) -> str:
     # "Business Name" summary label plus Moniepoint's unique reference
     # suffixes (_CREDIT_0 / _DEBIT_0).  MUST fire before the OPay rules:
     # narrations mention "POS purchase at OPAY DIGITAL SERVICES".
-    if "business name" in t_hdr and ("_credit_0" in t or "_debit_0" in t):
+    # MUST NOT hijack the 19-column Settlement layout — that belongs to
+    # Moniepoint_Business_v2 below ("settlement" appears in its header).
+    if ("business name" in t_hdr and "settlement" not in t_hdr
+            and ("_credit_0" in t or "_debit_0" in t)):
         return "Moniepoint_EStatement"
 
     # ── Lotus Bank ────────────────────────────────────────────────────────
