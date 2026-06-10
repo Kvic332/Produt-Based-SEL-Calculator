@@ -1960,6 +1960,11 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
         else:
             i += 1
 
+    # Opening balance anchors the running-balance chain used to validate
+    # the debit/credit columns below.
+    _open_m = re.search(r'Opening Balance:?\s*([\d,]+\.\d{2})', full_text)
+    prev: float | None = float(_open_m.group(1).replace(',', '')) if _open_m else None
+
     for row in joined:
         dm = DATE_START.match(row)
         if not dm:
@@ -1971,9 +1976,29 @@ def parse_zenith_corporate(full_text: str) -> tuple[dict, str]:
         tm    = THREE_NUMS.search(rest)
         if not tm:
             continue
-        debit     = float(tm.group(1).replace(',', ''))
-        credit    = float(tm.group(2).replace(',', ''))
+        d_str, c_str, b_str = (tm.group(1).replace(',', ''),
+                               tm.group(2).replace(',', ''),
+                               tm.group(3).replace(',', ''))
+        debit     = float(d_str)
+        credit    = float(c_str)
+        balance   = float(b_str)
         narration = rest[:tm.start()].strip()
+
+        # ── Balance-delta validation ──────────────────────────────────────
+        # Narration reference numbers (e.g. "POS_1772521593252") can glue
+        # onto the debit column, producing quadrillion-scale junk amounts.
+        # The true amount is |balance − prev|; accept the column token only
+        # when its digits END WITH that delta (suffix match strips glued
+        # prefixes), and rewrite the amount from the delta.
+        if prev is not None:
+            delta = round(balance - prev, 2)
+            want  = f'{abs(delta):.2f}'
+            if delta > 0 and (c_str == want or c_str.endswith(want)):
+                credit, debit = abs(delta), 0.0
+            elif delta < 0 and (d_str == want or d_str.endswith(want)):
+                debit, credit = abs(delta), 0.0
+            # else: balance token itself unreadable — keep column values
+            prev = balance
 
         lower = narration.lower()
         if any(k in lower for k in [
