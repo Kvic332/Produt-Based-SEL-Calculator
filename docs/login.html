@@ -305,16 +305,18 @@
     .back-home:hover { color: var(--accent-dk); }
 
     .form-foot a.admin-link {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       margin-top: 14px;
       margin-left: 18px;
-      font-size: 12px;
-      font-weight: 400;
-      color: var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
       text-decoration: none;
     }
 
-    .form-foot a.admin-link:hover { color: var(--faint); }
+    .form-foot a.admin-link:hover { color: var(--accent-dk); }
 
     /* ── RESPONSIVE ── */
     @media (max-width: 880px) {
@@ -405,7 +407,7 @@
         Don't have an account? <a href="https://sel-calculator-buit.streamlit.app/">Launch the app directly</a>
         <br />
         <a href="index.html" class="back-home">← Back to home</a>
-        <a href="#" class="admin-link" id="admin-link">Admin</a>
+        <a href="#" class="admin-link" id="admin-link">⚙ Admin</a>
       </div>
     </div>
   </main>
