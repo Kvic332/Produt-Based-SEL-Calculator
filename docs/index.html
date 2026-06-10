@@ -572,6 +572,16 @@
       footer { padding: 32px 24px; flex-direction: column; align-items: flex-start; }
     }
   </style>
+  <base target="_top" />
+  <script>
+    // If loaded inside a frame (e.g. the Streamlit hosting iframe after a
+    // redirect), break out to the top-level window.
+    try {
+      if (window.top !== window.self) {
+        window.top.location.href = window.location.href;
+      }
+    } catch (err) { /* links still escape via <base target="_top"> */ }
+  </script>
 </head>
 <body>
 

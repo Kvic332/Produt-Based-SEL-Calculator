@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <base target="_top" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -413,6 +414,20 @@
   </main>
 
   <script>
+    // If this page was loaded inside a frame (e.g. the Streamlit app's
+    // hosting iframe after a redirect), break out to the top-level window.
+    try {
+      if (window.top !== window.self) {
+        window.top.location.href = window.location.href;
+      }
+    } catch (err) { /* top navigation blocked — links still escape via <base target="_top"> */ }
+
+    // Navigate the top-level window, never the frame we might be inside.
+    function goTo(url) {
+      try { window.top.location.href = url; }
+      catch (err) { window.location.href = url; }
+    }
+
     // Time-of-day greeting (mirrors the app's own greeting logic)
     (function () {
       var h = new Date().getHours();
@@ -433,8 +448,8 @@
       if (!name) return;
       // The app's gate compares against the server's UTC date.
       var signed = new Date().toISOString().slice(0, 10);
-      window.location.href = 'https://sel-calculator-buit.streamlit.app/?officer=' +
-        encodeURIComponent(name) + '&signed=' + signed;
+      goTo('https://sel-calculator-buit.streamlit.app/?officer=' +
+        encodeURIComponent(name) + '&signed=' + signed);
     });
 
     // Admin: ask for the key (never stored in this public page) and open
@@ -444,8 +459,8 @@
       var key = window.prompt('Admin key:');
       if (!key) return;
       var signed = new Date().toISOString().slice(0, 10);
-      window.location.href = 'https://sel-calculator-buit.streamlit.app/?officer=Admin&signed=' +
-        signed + '&admin=' + encodeURIComponent(key.trim());
+      goTo('https://sel-calculator-buit.streamlit.app/?officer=Admin&signed=' +
+        signed + '&admin=' + encodeURIComponent(key.trim()));
     });
   </script>
 
