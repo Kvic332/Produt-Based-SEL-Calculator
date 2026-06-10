@@ -3312,6 +3312,13 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
                         break
                 if not account_name and j + 1 < len(row):
                     account_name = str(rows[rows.index(row)][j+1] or "").strip()
+            # mybankStatement Excel: name lives in a title line, e.g.
+            # "Statement Transaction Details for LOTSGADGET"
+            if not account_name:
+                m_title = re.match(
+                    r"statement transaction details for\s+(.+)$", cv, re.I)
+                if m_title:
+                    account_name = m_title.group(1).strip().upper()
             if account_name:
                 break
         if account_name:
@@ -3324,6 +3331,25 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
     credit_col   = fmt["credit_col"]
     debit_col    = fmt.get("debit_col")
     fmt_type     = fmt["type"]
+
+    # ── Detect XX/YY/YYYY date order (DD/MM vs MM/DD) ─────────────────────
+    # mybankStatement Excel exports use MM/DD/YYYY while Mono exports use
+    # DD/MM/YYYY.  Scan every date cell: if any second token exceeds 12 the
+    # file must be MM/DD; if any first token exceeds 12 it must be DD/MM.
+    # Ambiguous files (all values ≤ 12) keep the historical DD/MM default.
+    _month_group = 2     # which regex group holds the month (default DD/MM)
+    for row in rows[hdr_idx + 1:]:
+        if not row or row[date_col] is None:
+            continue
+        dm = re.match(r"^(\d{2})/(\d{2})/(20\d{2})", str(row[date_col]).strip())
+        if not dm:
+            continue
+        if int(dm.group(2)) > 12:
+            _month_group = 1   # second token is a day → MM/DD/YYYY
+            break
+        if int(dm.group(1)) > 12:
+            _month_group = 2   # first token is a day → DD/MM/YYYY
+            break
 
     for row in rows[hdr_idx + 1:]:
         if not row or row[date_col] is None:
@@ -3338,7 +3364,7 @@ def parse_excel(file_bytes: bytes) -> tuple[dict, str]:
                 ym = f"{m.group(1)}-{m.group(2)}"
             else:
                 m = re.match(r"^(\d{2})/(\d{2})/(20\d{2})", date_str)
-                ym = f"{m.group(3)}-{m.group(2)}" if m else None
+                ym = f"{m.group(3)}-{m.group(_month_group)}" if m else None
 
         if not ym:
             continue
