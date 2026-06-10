@@ -3729,22 +3729,36 @@ def parse_renmoney(full_text: str) -> tuple[dict, str]:
         ym = f"{date_str[:4]}-{date_str[5:7]}"
         add_credit(buckets, ym, amount, "INTEREST_APPLIED", account_name)
 
-    # ── Pass 5: DEBIT entries ─────────────────────────────────────────────────
-    # Debit inline: YYYY-MM-DD|narration₦amount - ₦balance  (₦ BEFORE dash)
-    _DEBIT_RE = re.compile(
-        r'^(20\d{2})-(\d{2})-\d{2}\|'
-        r'(?!CREDIT\s*\||INTEREST_APPLIED)'
-        r'(.+?)'
-        r'[₦?]\s*([\d,]+\.\d{2})'
-        r'\s*-\s*[₦?]\s*[\d,]+\.\d{2}\s*$',
-        re.MULTILINE,
-    )
-    for m in _DEBIT_RE.finditer(text_n):
-        ym     = f"{m.group(1)}-{m.group(2)}"
-        narr   = m.group(3).strip()
-        amount = float(m.group(4).replace(',', ''))
-        if amount > 0:
-            add_debit(ym, narr, amount)
+    # ── Pass 5: DEBIT entries — block-based ───────────────────────────────────
+    # A "block" is everything from one date anchor to the next.  Narrations can
+    # wrap over 1..N lines, so line-anchored regexes miss any debit whose amount
+    # lands on a continuation line.  Within each block:
+    #   Debit signature:  ₦<amount> - ₦<balance>   (amount BEFORE the dash;
+    #                     newline may fall between ₦ and the amount)
+    #   Credit signature: - ₦<amount> ... ₦<balance> (dash BEFORE the amount)
+    # Whichever signature appears FIRST decides the row type.  Credit blocks are
+    # skipped here — Passes 1–4 already booked them.
+    _anchor_idx = [i for i, l in enumerate(lines)
+                   if _DATE_START.match(l.strip())]
+    _BLK_DR = re.compile(r'[₦?]\s*\n?([\d,]+\.\d{2})\s*-\s*[₦?]\s*[\d,]+\.\d{2}')
+    _BLK_CR = re.compile(r'-\s*[₦?]\s*\n?([\d,]+\.\d{2})\s*\n?\s*[₦?]')
+    for k, a in enumerate(_anchor_idx):
+        end   = _anchor_idx[k + 1] if k + 1 < len(_anchor_idx) else len(lines)
+        block = '\n'.join(lines[a:end])
+        dm    = _DATE_START.match(block.strip())
+        if not dm:
+            continue
+        rest = block.strip()[dm.end():]
+        if rest.startswith('CREDIT ') or rest.startswith('INTEREST_APPLIED'):
+            continue
+        md = _BLK_DR.search(block)
+        mc = _BLK_CR.search(block)
+        if md and (not mc or md.start() < mc.start()):
+            ym     = f"{dm.group(1)}-{dm.group(2)}"
+            amount = float(md.group(1).replace(',', ''))
+            narr   = ' '.join(rest[:max(md.start() - dm.end() - 1, 0)].split())
+            if amount > 0:
+                add_debit(ym, narr, amount)
 
     return buckets, account_name
 
