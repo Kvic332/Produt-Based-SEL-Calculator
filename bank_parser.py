@@ -3490,6 +3490,16 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
         r'\s+([\d,]+\.\d{2})\s*$'       # balance
     )
 
+    # Older Jaiz layout: NO balance column — row ends with just DEBIT CREDIT
+    # after the value date (which may be glued to the narration or spaced).
+    # e.g. "...Alh Alamu21-May-26 2,000.00 0.00"
+    #      "...BTI1936...:trf20-May-26 0.00 100,000.00"
+    ROW_END_2COL = re.compile(
+        r'\d{2}-[A-Za-z]{3}-\d{2,4}'   # value date
+        r'\s*([\d,]+\.\d{2})'           # debit
+        r'\s+([\d,]+\.\d{2})\s*$'       # credit
+    )
+
     # Page-header boilerplate lines to skip
     JAIZ_HDR = re.compile(
         r'^(?:CUSTOMER NAME:|SERVICES LTD|ADDRESS:|UNCLEARED|BALANCE:|'
@@ -3515,7 +3525,8 @@ def parse_jaiz(full_text: str) -> tuple[dict, str]:
         nonlocal pending_ym, pending_acc
         if pending_ym and pending_acc:
             combined = ' '.join(pending_acc)
-            m = ROW_END.search(combined)
+            # New (2025+) 3-amount layout first, then the older 2-amount one
+            m = ROW_END.search(combined) or ROW_END_2COL.search(combined)
             if m:
                 debit  = float(m.group(1).replace(',', ''))
                 credit = float(m.group(2).replace(',', ''))
