@@ -24,7 +24,7 @@ from tracker import (track, admin_stats, save_history, get_history, export_audit
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="SEL Loan Eligibility Calculator",
+    page_title="PARSIO",
     page_icon="▶",
     layout="wide",
 )
@@ -545,7 +545,7 @@ def generate_xlsx(rows: list[dict], result: dict | None = None,
     ws.sheet_properties.tabColor = ACCENT
 
     # Info rows
-    ws["A1"] = "SEL Loan Eligibility Calculator"
+    ws["A1"] = "PARSIO"
     ws["A1"].font = Font(name="Calibri", bold=True, color=ACCENT, size=13)
     _off_str = f"   |   Assessed by: {officer}" if officer else ""
     ws["A2"] = f"Account: {account_name}   |   Bank: {bank}   |   Generated: {datetime.date.today()}{_off_str}"
@@ -791,7 +791,7 @@ if not _is_signed_in:
         <div style="text-align:center;margin-bottom:8px">
           <div style="font-size:16px;letter-spacing:4px;color:#10b981;font-weight:900;
                       text-transform:uppercase;margin-bottom:16px">
-            ▶ SEL Financial Toolkit
+            ▶ PARSIO
           </div>
           <div style="font-size:52px;margin-bottom:4px">{_sicon}</div>
           <div style="font-size:38px;font-weight:900;color:{_sc};
@@ -862,9 +862,9 @@ else:                    _greet, _greet_col, _greet_sub = "Working late 🌙",  
 
 st.markdown(f"""
 <div style="border-bottom:1px solid #1a3d2b;padding-bottom:24px;margin-bottom:32px">
-  <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ SEL Financial Toolkit</div>
+  <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ PARSIO</div>
   <h1 style="font-family:DM Serif Display,serif;font-size:clamp(28px,4vw,44px);color:#fff;line-height:1.1">
-    Loan <em style="color:#10b981;font-style:italic">Eligibility</em><br>Calculator
+    PARSIO <em style="color:#10b981;font-style:italic">Credit</em><br>Intelligence
   </h1>
   <div style="font-size:13px;color:#cbd5e1;margin-top:6px;font-weight:700;letter-spacing:0.5px">
     All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection
@@ -919,24 +919,24 @@ import random as _random
 _QUOTES = [
     ("Risk comes from not knowing what you are doing.", "Warren Buffett"),
     ("An investment in knowledge pays the best interest.", "Benjamin Franklin"),
-    ("Every naira lent wisely builds a stronger Nigeria.", "SEL Proverb"),
-    ("Credit is not given. It is earned through trust and consistency.", "SEL Proverb"),
-    ("The goal of a good credit officer is not to say no — it is to find the right yes.", "SEL Proverb"),
-    ("Data tells the story. Your judgment writes the ending.", "SEL Proverb"),
+    ("Every naira lent wisely builds a stronger Nigeria.", "PARSIO"),
+    ("Credit is not given. It is earned through trust and consistency.", "PARSIO"),
+    ("The goal of a good credit officer is not to say no — it is to find the right yes.", "PARSIO"),
+    ("Data tells the story. Your judgment writes the ending.", "PARSIO"),
     ("Diligence is the mother of good fortune.", "Miguel de Cervantes"),
     ("Small daily improvements are the key to staggering long-term results.", "Robin Sharma"),
-    ("Every loan decision shapes a family's future. Make it count.", "SEL Proverb"),
+    ("Every loan decision shapes a family's future. Make it count.", "PARSIO"),
     ("Price is what you pay. Value is what you get.", "Warren Buffett"),
-    ("In credit, character is the first C for a reason.", "SEL Proverb"),
+    ("In credit, character is the first C for a reason.", "PARSIO"),
     ("The secret of getting ahead is getting started.", "Mark Twain"),
     ("Africa is not poor. It is poorly managed.", "Fela Durotoye"),
     ("The more you learn, the more you earn.", "Warren Buffett"),
     ("A good decision is based on knowledge, not on numbers.", "Plato"),
-    ("The best time to assess a loan was yesterday. The second best time is now.", "SEL Proverb"),
-    ("Opportunities do not go away. They pass to someone else.", "SEL Proverb"),
+    ("The best time to assess a loan was yesterday. The second best time is now.", "PARSIO"),
+    ("Opportunities do not go away. They pass to someone else.", "PARSIO"),
     ("Champions keep playing until they get it right.", "Billie Jean King"),
     ("Do not save what is left after spending — spend what is left after saving.", "Warren Buffett"),
-    ("Precision in underwriting protects both lender and borrower.", "SEL Proverb"),
+    ("Precision in underwriting protects both lender and borrower.", "PARSIO"),
 ]
 _q, _a = _QUOTES[hash(str(datetime.date.today())) % len(_QUOTES)]
 st.markdown(
@@ -1152,7 +1152,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
         st.download_button(
             "⬇  Download Batch Results (Excel)",
             _bxl.getvalue(),
-            file_name=f"SEL_Batch_{datetime.date.today():%Y%m%d}.xlsx",
+            file_name=f"PARSIO_Batch_{datetime.date.today():%Y%m%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="dl_batch",
             use_container_width=True,
@@ -1892,7 +1892,7 @@ if st.session_state.rows_a:
             st.download_button(
                 label     = "⬇  Download Statement Analysis (PDF)",
                 data      = _pdf_stmt,
-                file_name = f"SEL_Statement_{_safe_stmt}_{datetime.date.today():%Y%m%d}.pdf",
+                file_name = f"PARSIO_Statement_{_safe_stmt}_{datetime.date.today():%Y%m%d}.pdf",
                 mime      = "application/pdf",
                 key       = "dl_statement_pdf",
                 use_container_width=True,
@@ -1901,7 +1901,7 @@ if st.session_state.rows_a:
             st.download_button(
                 label     = "⬇  Download Monthly Breakdown (Excel)",
                 data      = _xlsx_stmt,
-                file_name = f"SEL_Breakdown_{_safe_stmt}_{datetime.date.today():%Y%m%d}.xlsx",
+                file_name = f"PARSIO_Breakdown_{_safe_stmt}_{datetime.date.today():%Y%m%d}.xlsx",
                 mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key       = "dl_statement_xlsx",
                 use_container_width=True,
@@ -3790,7 +3790,7 @@ if calc_btn:
                     if st.download_button(
                         "⬇  Download Full Report (Excel)",
                         _xlsx_full,
-                        file_name=f"SEL_Report_{_safe_xl}_{datetime.date.today():%Y%m%d}.xlsx",
+                        file_name=f"PARSIO_Report_{_safe_xl}_{datetime.date.today():%Y%m%d}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="dl_audit_xlsx",
                         use_container_width=True,
@@ -3869,7 +3869,7 @@ if calc_btn:
         if st.download_button(
             label               = "⬇  Download Full Eligibility Report (PDF)",
             data                = _pdf_full,
-            file_name           = f"SEL_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
+            file_name           = f"PARSIO_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
             mime                = "application/pdf",
             use_container_width = True,
             key                 = "dl_full_pdf",
@@ -3883,7 +3883,7 @@ if calc_btn:
         _share_bank  = _report_bank or "Bank"
         _share_dec   = "APPROVED" if result.get("approved") else "BELOW MINIMUM"
         _share_msg   = (
-            f"SEL Loan Assessment\n"
+            f"PARSIO Loan Assessment\n"
             f"Applicant: {_share_name} ({_share_bank})\n"
             f"Decision: {'✅' if result.get('approved') else '❌'} {_share_dec}\n"
             f"Max Loan: {money(result.get('max_loan', 0))}\n"
@@ -3893,7 +3893,7 @@ if calc_btn:
             f"Tenor: {result.get('tenor', '—')} months\n"
             f"Generated: {datetime.date.today().strftime('%d %b %Y')}"
         )
-        _share_filename = f"SEL_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf"
+        _share_filename = f"PARSIO_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf"
         # Save for persistent render outside calc_btn block
         st.session_state.last_share = {
             "pdf_b64":  _b64s.b64encode(_pdf_full).decode(),
@@ -3914,7 +3914,7 @@ if st.session_state.last_share:
     _js_filename = _s["filename"].replace("`", "\\`")
     _wa_fallback = "https://wa.me/?text=" + __import__("urllib.parse", fromlist=["quote"]).quote(_s["msg"])
     _ml_fallback = (
-        "mailto:?subject=" + __import__("urllib.parse", fromlist=["quote"]).quote(f"SEL Result — {_s['name']}")
+        "mailto:?subject=" + __import__("urllib.parse", fromlist=["quote"]).quote(f"PARSIO Result — {_s['name']}")
         + "&body=" + __import__("urllib.parse", fromlist=["quote"]).quote(_s["msg"])
     )
 
@@ -3973,7 +3973,7 @@ async function doShare(via){{
   // Attempt native Web Share API (works on iOS/Android, modern desktop Chrome)
   if(navigator.canShare && navigator.canShare({{files:[file]}})){{
     try{{
-      await navigator.share({{files:[file],title:"SEL Report — "+NAME,text:MSG}});
+      await navigator.share({{files:[file],title:"PARSIO Report — "+NAME,text:MSG}});
       return;
     }}catch(e){{ /* cancelled or blocked — fall through */ }}
   }}
@@ -4073,11 +4073,11 @@ if isinstance(_lp, dict) and isinstance(_lp.get("result"), dict):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# ADMIN DASHBOARD — accessible only via ?admin=<SEL_ADMIN_KEY>
-# Set the environment variable SEL_ADMIN_KEY to your chosen secret.
+# ADMIN DASHBOARD — accessible only via ?admin=<PARSIO_ADMIN_KEY>
+# Set the environment variable PARSIO_ADMIN_KEY to your chosen secret.
 # Example URL: https://your-app.streamlit.app/?admin=mySecret99
 # ════════════════════════════════════════════════════════════════════════════
-_ADMIN_KEY = os.environ.get("SEL_ADMIN_KEY", "kvic7admin")   # ← change via env var
+_ADMIN_KEY = os.environ.get("PARSIO_ADMIN_KEY", os.environ.get("SEL_ADMIN_KEY", "kvic7admin"))   # ← change via env var
 _qp = st.query_params
 if _qp.get("admin") == _ADMIN_KEY:
     st.markdown("---")
@@ -4510,7 +4510,7 @@ if _qp.get("admin") == _ADMIN_KEY:
                 st.download_button(
                     "⬇  Download Full Audit Log (CSV)",
                     _audit_csv.encode("utf-8-sig"),   # BOM → opens cleanly in Excel
-                    file_name=f"SEL_Audit_Log_{datetime.date.today():%Y%m%d}.csv",
+                    file_name=f"PARSIO_Audit_Log_{datetime.date.today():%Y%m%d}.csv",
                     mime="text/csv",
                     key="dl_audit_log",
                     use_container_width=True,

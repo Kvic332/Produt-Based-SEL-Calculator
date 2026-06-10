@@ -1,5 +1,5 @@
 """
-SEL Analytics Tracker — event + applicant-history logger.
+PARSIO Analytics Tracker — event + applicant-history logger.
 
 Storage backends
 ─────────────────
