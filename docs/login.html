@@ -359,7 +359,7 @@
         </svg>
       </div>
       <h1>Sign in to <em>PARSIO</em></h1>
-      <p class="form-note">Enter your credentials to access the credit intelligence engine.</p>
+      <p class="form-note">Enter your username to access the credit intelligence engine.</p>
 
       <form id="login-form" action="https://sel-calculator-buit.streamlit.app/" method="get">
         <label for="username">Username</label>
@@ -373,20 +373,8 @@
           </span>
         </div>
 
-        <label for="password">Password</label>
-        <div class="field">
-          <input type="password" id="password" name="password" placeholder="••••••••••••" autocomplete="current-password" required />
-          <button type="button" class="field-icon toggle" id="toggle-pw" aria-label="Show password">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="1.8"/>
-              <path d="M8 11V8a4 4 0 1 1 8 0v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </div>
-
         <div class="form-row">
           <label class="remember"><input type="checkbox" /> Remember me</label>
-          <a href="#" class="forgot">Forgot password?</a>
         </div>
 
         <button type="submit" class="btn-login">Log In</button>
@@ -401,12 +389,6 @@
   </main>
 
   <script>
-    // Show/hide password
-    document.getElementById('toggle-pw').addEventListener('click', function () {
-      var pw = document.getElementById('password');
-      pw.type = pw.type === 'password' ? 'text' : 'password';
-    });
-
     // No auth backend yet — sign-in hands off to the live app.
     document.getElementById('login-form').addEventListener('submit', function (e) {
       e.preventDefault();
