@@ -164,6 +164,13 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
     if any(k in text for k in renmoney_savings_kw):
         return "self_transfer", "Renmoney internal savings round-trip"
 
+    # ── 1c. Kuda internal pockets ─────────────────────────────────────────
+    # "Spend + Save" / "spending account" narrations are transfers between a
+    # customer's own Kuda sub-accounts — own-fund round-trips, NOT income.
+    kuda_pocket_kw = ["spend + save", "spend+save", "spending account"]
+    if any(k in text for k in kuda_pocket_kw):
+        return "self_transfer", "Kuda Spend+Save pocket round-trip"
+
     # ── 2. Savings platforms ──────────────────────────────────────────────
     savings_kw = [
         "piggyvest", "piggy vest", "piggy bank",
@@ -1281,53 +1288,109 @@ _KUDA_OUTWARD = re.compile(
 
 def parse_kuda(full_text: str) -> tuple[dict, str]:
     """
-    Parser for Kuda MF Bank PDF statements.
+    Parser for Kuda MF Bank PDF statements — balance-delta classification.
 
     PyPDF2 extracts Kuda columns as individual newline-separated tokens.
-    Each transaction block follows this sequence:
-      DD/MM/YY       ← date anchor
-      HH:MM:SS       ← time
+    Each transaction block:
+      DD/MM/YY       ← date anchor (pocket sections glue "DD/MM/YY\\tHH:MM:SS"
+      HH:MM:SS         onto ONE line — normalised below)
       ₦Amount        ← transaction amount (first ₦ token)
-      category_word  ← direction indicator (inward/outward/local/house etc.)
-      to/from info
-      description
-      ₦NewBalance    ← running balance (second ₦ token)
+      category/to-from/description tokens
+      ₦NewBalance    ← running balance (last ₦ token)
 
-    Direction: any category token matching _KUDA_OUTWARD → debit (skip).
-    All others (inward transfer, local funds transfer, house, etc.) → credit.
-
-    Page-boundary dedup: Kuda PDFs repeat the last transaction on a page at
-    the top of the next page. Dedup key = (date, time, first_amount).
+    Direction is decided by chaining the running balance:
+        balance == prev + amount → credit
+        balance == prev − amount → debit
+    This is layout-proof, unlike category-keyword guessing (e.g. "local funds
+    transfer" appears on BOTH credits and debits).  Statements contain
+    multiple sections (Spend Account, Spend + Save pockets), each prefixed by
+    a "Money in / Money out / Opening balance / Closing balance" header —
+    prev re-anchors at each section.  A section's stated opening can predate
+    its first listed row, so when the chain can't validate a row, direction
+    falls back to the category keywords and prev re-anchors on that row's
+    balance.  Page-boundary duplicate rows yield delta == 0 and are skipped
+    naturally.
     """
-    lines = [ln.strip() for ln in full_text.split("\n")]
+    raw_lines = full_text.split("\n")
 
-    # Account name: near top of statement as an ALL-CAPS multi-word line.
-    # PyPDF2 may render tab characters between name parts; normalise before matching.
+    # Normalise pocket-section "date<TAB>time" lines into two lines
+    lines: list[str] = []
+    for ln in raw_lines:
+        ln = ln.strip()
+        m = re.match(r"^(\d{2}/\d{2}/\d{2})\t(\d{2}:\d{2}:\d{2})$", ln)
+        if m:
+            lines.append(m.group(1))
+            lines.append(m.group(2))
+        else:
+            lines.append(ln)
+
+    # Account name: consecutive ALL-CAPS lines near the top (PyPDF2 may split
+    # "GBOLAHAN ODUOLA" across two single-word lines).
     account_name = ""
-    for line in lines[:25]:
+    _caps_run: list[str] = []
+    for line in lines[:30]:
         normalised = re.sub(r"\t", " ", line).strip()
-        if re.match(r"^[A-Z][A-Z ]{4,}$", normalised) and len(normalised.split()) >= 2:
-            account_name = normalised
-            break
+        if re.match(r"^[A-Z][A-Z ]{1,}$", normalised) and not re.match(
+                r"^(ALL|STATEMENTS?|PAGE|SUMMARY|TYPE)\b", normalised):
+            _caps_run.append(normalised)
+            if len(" ".join(_caps_run).split()) >= 2:
+                account_name = " ".join(_caps_run)
+                break
+        else:
+            _caps_run = []
 
     buckets: dict = {}
-    seen_keys: set = set()
-    i = 0
 
+    # ── Pass 1: collect deduplicated rows, grouped into sections ──────────
+    # Kuda PDFs re-render chunks of the previous page on each new page, so
+    # most rows appear 2-4x in extracted text.  Dedup key (date, time,
+    # first_amount) keeps the first occurrence.  This also removes "Spend +
+    # Save" pocket-section rows, which mirror the spend-account rows at the
+    # same timestamp/amount — pocket flows are internal round-trips already
+    # represented in the spend section.
+    sections: list[tuple[float | None, list]] = []   # (opening, rows)
+    cur_rows: list = []
+    cur_open: float | None = None
+    seen: set = set()
+    i = 0
     while i < len(lines):
-        dm = _KUDA_DATE.match(lines[i])
+        ln = lines[i]
+
+        # Section summary header: "Money in" label → 3 more labels → 4 ₦
+        # values (in, out, opening, closing); 3rd value re-anchors the chain.
+        # The per-page COLUMN header also starts "Money In" but is not
+        # followed by 4 ₦ values within 12 lines, so it never false-fires.
+        if re.match(r"^Money\s*in$", re.sub(r"\t", " ", ln).strip(), re.I):
+            _vals: list[float] = []
+            k = i + 1
+            while k < len(lines) and len(_vals) < 4 and k < i + 12:
+                mv = _KUDA_MONEY.match(lines[k].strip())
+                if mv:
+                    _vals.append(float(mv.group(1).replace(",", "")))
+                k += 1
+            if len(_vals) == 4:
+                if cur_rows:
+                    sections.append((cur_open, cur_rows))
+                cur_rows = []
+                cur_open = _vals[2]
+                i = k
+                continue
+
+        dm = _KUDA_DATE.match(ln)
         if not dm:
             i += 1
             continue
 
         date_str = dm.group(1)  # DD/MM/YY
 
-        # Collect lines until next date anchor or page-header keyword
+        # Collect lines until next date anchor / section header / page noise
         window: list[str] = []
         j = i + 1
         while j < len(lines):
             wl = lines[j].strip()
             if _KUDA_DATE.match(wl):
+                break
+            if re.match(r"^Money\s*in$", re.sub(r"\t", " ", wl), re.I):
                 break
             if re.match(r"^(?:Page \d+|All\s+Statements|Kuda\s+MF|Statement)", wl, re.I):
                 j += 1
@@ -1335,72 +1398,81 @@ def parse_kuda(full_text: str) -> tuple[dict, str]:
             window.append(wl)
             j += 1
 
-        # Partition window into ₦amounts, time, and text tokens
-        time_found: str | None = None
-        amounts: list[str] = []
+        amounts: list[float] = []
         text_tokens: list[str] = []
-
+        time_str = ""
         for wl in window:
             if not wl:
                 continue
             mm = _KUDA_MONEY.match(wl)
             if mm:
-                amounts.append(mm.group(1))
+                amounts.append(float(mm.group(1).replace(",", "")))
                 continue
-            if _KUDA_TIME.match(wl):
-                time_found = wl
+            tm = _KUDA_TIME.match(wl)
+            if tm:
+                time_str = wl
                 continue
             text_tokens.append(wl)
 
-        if not amounts:
-            i = j
-            continue
-
-        # Skip page-boundary duplicates
-        dedup_key = (date_str, time_found or "notime", amounts[0])
-        if dedup_key in seen_keys:
-            i = j
-            continue
-        seen_keys.add(dedup_key)
-
-        # Direction: check ONLY the first few tokens (the category cell).
-        # Stop collecting at account-name tokens (contain digits or "/NNNN" pattern)
-        # so that description text doesn't pollute the direction check.
-        cat_tokens: list[str] = []
-        for tok in text_tokens[:5]:
-            if re.search(r"\d{6,}|/\d{4,}", tok):
-                break
-            cat_tokens.append(re.sub(r"\t", " ", tok).strip())
-        cat_str = " ".join(cat_tokens).strip().lower()
-
-        is_outward = bool(_KUDA_OUTWARD.search(cat_str))
-        # Lone "spend" token = spend+save deduction → outward
-        if not is_outward and cat_tokens and re.match(r"^spend$", cat_tokens[0], re.I):
-            is_outward = True
-
-        # Parse date: DD/MM/YY → YYYY-MM
-        parts = date_str.split("/")
-        if len(parts) != 3:
-            i = j
-            continue
-        day, mon, yr = parts
-        ym = f"{int(yr) + 2000}-{mon}"
-
-        amount = float(amounts[0].replace(",", ""))
-        narration = re.sub(r"\s+", " ", re.sub(r"\t", " ", " ".join(text_tokens))).strip()
-
-        if is_outward:
-            add_debit(ym, narration, amount)
-            i = j
-            continue
-
-        # Skip stamp duty and government levies (these are bank charges, not income)
-        if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b", narration, re.I):
-            i = j
-            continue
-
-        add_credit(buckets, ym, amount, narration, account_name)
+        if len(amounts) >= 2:
+            dedup_key = (date_str, time_str, amounts[0])
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+                parts = date_str.split("/")
+                if len(parts) == 3:
+                    ym = f"{int(parts[2]) + 2000}-{parts[1]}"
+                    narration = re.sub(
+                        r"\s+", " ", re.sub(r"\t", " ", " ".join(text_tokens))
+                    ).strip()
+                    cur_rows.append((ym, narration, amounts[0], amounts[-1]))
         i = j
+    if cur_rows:
+        sections.append((cur_open, cur_rows))
+
+    # ── Pass 2: reorder-buffer balance chain per section ──────────────────
+    # PyPDF2 scrambles row order around page boundaries (~2 rows/page), so a
+    # strict sequential chain breaks.  Instead, scan up to LOOKAHEAD pending
+    # rows for the one that fits prev ± amount == balance.  delta == 0 rows
+    # are page re-renders that slipped past dedup — dropped.  Rows that fit
+    # nothing fall back to category-keyword direction and re-anchor.
+    _LOOKAHEAD = 10
+    for opening, rows in sections:
+        prev = opening
+        pending = list(rows)
+        while pending:
+            hit: tuple[int, bool | None] | None = None
+            if prev is not None:
+                for k in range(min(_LOOKAHEAD, len(pending))):
+                    ym, narration, amount, balance = pending[k]
+                    delta = round(balance - prev, 2)
+                    if delta == 0:
+                        hit = (k, None)          # duplicate render — drop
+                        break
+                    if abs(round(abs(delta) - amount, 2)) < 0.005:
+                        hit = (k, delta > 0)
+                        break
+
+            if hit is None:
+                # Chain can't validate — keyword fallback + re-anchor
+                ym, narration, amount, balance = pending.pop(0)
+                prev = balance
+                is_outward = bool(_KUDA_OUTWARD.search(narration.lower()))
+                is_credit = not is_outward
+            else:
+                k, is_credit = hit
+                ym, narration, amount, balance = pending.pop(k)
+                if is_credit is None:
+                    continue                     # dropped duplicate
+                prev = balance
+
+            if not is_credit:
+                add_debit(ym, narration, amount)
+                continue
+            # Skip stamp duty and government levies (bank charges, not income)
+            if re.search(r"\bstamp\s+duty\b|\belectronic.*levy\b|\bfgn.*levy\b",
+                         narration, re.I):
+                continue
+            add_credit(buckets, ym, amount, narration, account_name)
 
     return buckets, account_name
 
