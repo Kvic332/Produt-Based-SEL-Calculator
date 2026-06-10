@@ -810,38 +810,35 @@ if not _is_signed_in:
                     border-radius:6px;padding:28px 32px 24px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
           <div style="font-size:22px;font-weight:900;color:#e2e8f0;margin-bottom:10px;
                       letter-spacing:0.5px">
-            Please sign in to begin your session
+            Sign-in has moved to the PARSIO portal
           </div>
           <div style="font-size:15px;font-weight:600;color:#94a3b8;margin-bottom:18px;line-height:1.7">
-            Your name will be recorded with every assessment, download and decision
-            made today. You only need to sign in once per day.
+            Taking you to the new sign-in page&hellip; If you are not redirected
+            automatically, use the button below.
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    _si_col1, _si_col2 = st.columns([3, 1])
-    with _si_col1:
-        _si_name = st.text_input(
-            "Officer Name / Staff ID",
-            placeholder="e.g. Adaobi Nwosu  or  SEL-042",
-            key="signin_name_input",
-            label_visibility="collapsed",
-        )
-    with _si_col2:
-        _si_btn = st.button("Sign In →", key="signin_btn", use_container_width=True)
+    # Sign-in now lives on the PARSIO portal (GitHub Pages), which hands the
+    # officer name back via ?officer=...&signed=... — override per deployment
+    # with the PARSIO_LOGIN_URL env var / secret if needed.
+    _LOGIN_URL = os.environ.get(
+        "PARSIO_LOGIN_URL",
+        "https://kvic332.github.io/Produt-Based-SEL-Calculator/login.html",
+    )
 
-    if _si_btn:
-        if not _si_name.strip():
-            st.error("Please enter your name or staff ID before signing in.")
-        else:
-            _clean = _si_name.strip()
-            st.session_state.officer_name = _clean
-            st.query_params["officer"] = _clean
-            st.query_params["signed"]  = _today_iso
-            track("signin", session=_SID, officer=_clean, bank="", filename="")
-            st.rerun()
+    # Auto-redirect (meta refresh) + visible fallback button
+    st.markdown(
+        f'<meta http-equiv="refresh" content="2; url={_LOGIN_URL}">'
+        f'<div style="text-align:center;margin-top:22px">'
+        f'<a href="{_LOGIN_URL}" target="_self" style="display:inline-block;'
+        f'background:#10b981;color:#000;font-weight:900;font-size:15px;'
+        f'letter-spacing:1px;padding:14px 36px;border-radius:6px;'
+        f'text-decoration:none">GO TO SIGN-IN PAGE →</a></div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         f'<div style="margin-top:14px;font-size:16px;font-weight:700;color:#64748b;text-align:center">'
