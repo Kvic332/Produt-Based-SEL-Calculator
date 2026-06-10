@@ -304,6 +304,18 @@
 
     .back-home:hover { color: var(--accent-dk); }
 
+    .form-foot a.admin-link {
+      display: inline-block;
+      margin-top: 14px;
+      margin-left: 18px;
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--border);
+      text-decoration: none;
+    }
+
+    .form-foot a.admin-link:hover { color: var(--faint); }
+
     /* ── RESPONSIVE ── */
     @media (max-width: 880px) {
       body { grid-template-columns: 1fr; }
@@ -393,6 +405,7 @@
         Don't have an account? <a href="https://sel-calculator-buit.streamlit.app/">Launch the app directly</a>
         <br />
         <a href="index.html" class="back-home">← Back to home</a>
+        <a href="#" class="admin-link" id="admin-link">Admin</a>
       </div>
     </div>
   </main>
@@ -420,6 +433,17 @@
       var signed = new Date().toISOString().slice(0, 10);
       window.location.href = 'https://sel-calculator-buit.streamlit.app/?officer=' +
         encodeURIComponent(name) + '&signed=' + signed;
+    });
+
+    // Admin: ask for the key (never stored in this public page) and open
+    // the dashboard pre-signed-in so the gate doesn't block the admin view.
+    document.getElementById('admin-link').addEventListener('click', function (e) {
+      e.preventDefault();
+      var key = window.prompt('Admin key:');
+      if (!key) return;
+      var signed = new Date().toISOString().slice(0, 10);
+      window.location.href = 'https://sel-calculator-buit.streamlit.app/?officer=Admin&signed=' +
+        signed + '&admin=' + encodeURIComponent(key.trim());
     });
   </script>
 
