@@ -596,6 +596,15 @@ def detect_bank(text: str) -> str:
     if "parallex savings" in t_hdr or "parallexbank" in t or "parallex bank" in t_hdr:
         return "Parallex"
 
+    # ── Moniepoint e-Statement (personal/guarantor format) ────────────────
+    # Layout: Date | Narration | Reference | Debit | Credit | Balance with
+    # ISO-split timestamps ("2025 -06-08T19:\n48:58").  Identified by the
+    # "Business Name" summary label plus Moniepoint's unique reference
+    # suffixes (_CREDIT_0 / _DEBIT_0).  MUST fire before the OPay rules:
+    # narrations mention "POS purchase at OPAY DIGITAL SERVICES".
+    if "business name" in t_hdr and ("_credit_0" in t or "_debit_0" in t):
+        return "Moniepoint_EStatement"
+
     # ── Lotus Bank ────────────────────────────────────────────────────────
     # Identified by the bank's own contact details in the per-page disclaimer
     # footer ("support@lotusbank.com", "0700LOTUSBANK") — these never appear
@@ -3698,6 +3707,75 @@ def parse_parallex(full_text: str) -> tuple[dict, str]:
 # ════════════════════════════════════════════════════════════════════════════
 # RENMONEY MFB PARSER
 # ════════════════════════════════════════════════════════════════════════════
+def parse_moniepoint_estatement(full_text: str) -> tuple[dict, str]:
+    """
+    Moniepoint e-statement parser (personal/guarantor format, 2026+).
+
+    Column layout: Date | Narration | Reference | Debit | Credit | Balance
+    Timestamps are ISO-style and split by PyPDF2: "2025 -06-08T19:\\n48:58".
+
+    Columns are explicit — the last three numeric tokens of each row block
+    are (debit, credit, balance).  The only extraction hazard is PyPDF2
+    inserting single spaces INSIDE large numbers ("40,000 ,000.00",
+    "100,0 12,000.00"), which a naive token regex splits into junk like
+    "000.00".  The number regex therefore allows single spaces between
+    digit/comma characters; newlines still separate distinct tokens.
+
+    Summary contamination: the "Total Debits / Total Credits / Closing
+    Balance" block can land inside a row's text at page boundaries — each
+    block is truncated at the first summary/page-header marker before
+    extracting numbers.
+
+    Verified: reproduces the statement's own Total Credits and Total Debits
+    exactly (₦2.01B each side, 1,348 rows).
+    """
+    buckets: dict = {}
+
+    account_name = "Unknown"
+    m_name = re.search(r'Business\s+Name\s+([A-Z][A-Z .,&\'-]+?)(?:\n|Account\s+Number)', full_text)
+    if m_name:
+        account_name = ' '.join(m_name.group(1).split()).title()
+
+    _ANCHOR = re.compile(r'(20\d{2})\s*-(\d{2})-(\d{2})T')
+    # Single spaces allowed inside numbers (PyPDF2 kerning splits); a space
+    # is consumed only when followed by another digit/comma, so distinct
+    # tokens separated by newlines or double spaces stay separate.
+    _NUM = re.compile(r'\d(?:[\d,]|[ ](?=[\d,]))*\.\d{2}')
+    _CUT = re.compile(r'Account\s+Statement|Total\s+Debits|Business\s+Name')
+
+    anchors = list(_ANCHOR.finditer(full_text))
+    for k, a in enumerate(anchors):
+        end   = anchors[k + 1].start() if k + 1 < len(anchors) else len(full_text)
+        block = full_text[a.end():end]
+        cut = _CUT.search(block)
+        if cut:
+            block = block[:cut.start()]
+        nums = [float(m.group().replace(',', '').replace(' ', ''))
+                for m in _NUM.finditer(block)]
+        if len(nums) < 3:
+            continue
+        debit, credit = nums[-3], nums[-2]
+
+        ym = f"{a.group(1)}-{a.group(2)}"
+        # Narration: text lines that are not numeric and not reference-like
+        narr_parts = []
+        for _ln in block.splitlines():
+            _ln = _ln.strip()
+            if not _ln or _NUM.fullmatch(_ln.rstrip()):
+                continue
+            if '|' in _ln or '_CREDIT_' in _ln or '_DEBIT_' in _ln or re.match(r'^[\d:]+$', _ln):
+                continue
+            narr_parts.append(_ln)
+        narration = ' '.join(' '.join(narr_parts).split())[:180]
+
+        if credit > 0:
+            add_credit(buckets, ym, credit, narration, account_name)
+        if debit > 0:
+            add_debit(ym, narration, debit)
+
+    return buckets, account_name
+
+
 def parse_lotus(full_text: str) -> tuple[dict, str]:
     """
     Lotus Bank statement parser — balance-delta classification.
@@ -4270,6 +4348,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_renmoney(full_text)
     elif bank == "Lotus":
         buckets, account_name = parse_lotus(full_text)
+    elif bank == "Moniepoint_EStatement":
+        buckets, account_name = parse_moniepoint_estatement(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         # Sterling Bank: PyPDF2 silently drops pages with certain encodings.
         # pdfplumber captures all pages and matches the stated total exactly.
