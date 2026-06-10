@@ -616,6 +616,21 @@ def detect_bank(text: str) -> str:
     if "lotusbank.com" in t or "0700lotusbank" in t or "lotus bank" in t_hdr:
         return "Lotus"
 
+    # ── Fidelity Bank (early check) ───────────────────────────────────────
+    # Identified by the bank's own domain (fidelitybank.ng) in the page
+    # header/footer.  MUST fire before the OPay rules: Fidelity narrations
+    # contain "Pos Purchase @...Opay Digital Services", which would trip the
+    # OPay legacy rule and parse 0 rows.  Three sub-layouts:
+    #   Fidelity_EStatement — glued "ChannelDetails Pay In..." header
+    #   Fidelity_Savings    — "Balance Tran Date Description..." header
+    #   Fidelity_Direct     — classic Pay In / Pay Out layout
+    if "fidelitybank.ng" in t and "mybankstatement" not in t_hdr:
+        if "channeldetails" in t:
+            return "Fidelity_EStatement"
+        if "balance tran date" in t:
+            return "Fidelity_Savings"
+        return "Fidelity_Direct"
+
     # ── OPay v2: "Account Statement" with Trans. Time column ─────────────
     # Checked FIRST: OPay narrations often mention "FairMoney MFB".
     if ("trans. time" in t and
@@ -4068,6 +4083,48 @@ def parse_renmoney(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# FIDELITY SAVINGS / RETAIL PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_fidelity_savings(full_text: str) -> tuple[dict, str]:
+    """
+    Fidelity Bank savings/retail statement parser.
+
+    Column header: "Balance Tran Date Description Value Date Debit Credit"
+    Each row renders on ONE line:
+        DD/MM/YYYY <description> DD/MM/YYYY  <debit|->  <credit|->  <balance>
+    Empty Debit/Credit cells render as a literal "-".
+    Date format: DD/MM/YYYY.
+
+    Account name: the line containing "<Name>May 01,2026 through to ..." —
+    the statement-period text glues onto the customer name.
+    """
+    buckets: dict = {}
+
+    account_name = "Unknown"
+    m_name = re.search(
+        r'^(.+?)\s*[A-Z][a-z]{2}\s+\d{2},\s*\d{4}\s+through', full_text, re.M)
+    if m_name:
+        account_name = m_name.group(1).strip()
+
+    ROW = re.compile(
+        r'^(\d{2})/(\d{2})/(20\d{2})\s+(.+?)\s+\d{2}/\d{2}/20\d{2}\s+'
+        r'(-|[\d,]+\.\d{2})\s+(-|[\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$',
+        re.M,
+    )
+    for m in ROW.finditer(full_text):
+        ym        = f"{m.group(3)}-{m.group(2)}"
+        narration = m.group(4).strip()
+        debit  = 0.0 if m.group(5) == '-' else float(m.group(5).replace(',', ''))
+        credit = 0.0 if m.group(6) == '-' else float(m.group(6).replace(',', ''))
+        if credit > 0:
+            add_credit(buckets, ym, credit, narration, account_name)
+        elif debit > 0:
+            add_debit(ym, narration, debit)
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FIDELITY E-STATEMENT PARSER
 # ════════════════════════════════════════════════════════════════════════════
 def parse_fidelity_estatement(full_text: str) -> tuple[dict, str]:
@@ -4405,6 +4462,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_fidelity_direct(full_text)
     elif bank == "Fidelity_EStatement":
         buckets, account_name = parse_fidelity_estatement(full_text)
+    elif bank == "Fidelity_Savings":
+        buckets, account_name = parse_fidelity_savings(full_text)
     elif bank == "Jaiz":
         buckets, account_name = parse_jaiz(full_text)
     elif bank == "Parallex":
