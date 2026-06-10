@@ -166,6 +166,14 @@
 
     .form-icon svg { width: 28px; height: 28px; }
 
+    .greeting {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--accent-dk);
+      margin-bottom: 6px;
+    }
+
     .form-box h1 {
       font-family: 'Plus Jakarta Sans', sans-serif;
       font-size: 28px;
@@ -358,13 +366,14 @@
           <circle cx="20" cy="5" r="2" fill="#0e9f6e"/>
         </svg>
       </div>
+      <div class="greeting" id="greeting">Good evening! <span id="greet-icon">🌆</span></div>
       <h1>Sign in to <em>PARSIO</em></h1>
-      <p class="form-note">Enter your username to access the credit intelligence engine.</p>
+      <p class="form-note">Enter your username to access the credit intelligence engine. You only need to sign in once per day.</p>
 
       <form id="login-form" action="https://sel-calculator-buit.streamlit.app/" method="get">
-        <label for="username">Username</label>
+        <label for="username">Username / Staff ID</label>
         <div class="field">
-          <input type="email" id="username" name="username" placeholder="you@company.com" autocomplete="username" required />
+          <input type="text" id="username" name="username" placeholder="e.g. Adaobi Nwosu or SEL-042" autocomplete="username" required />
           <span class="field-icon">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/>
@@ -389,10 +398,28 @@
   </main>
 
   <script>
-    // No auth backend yet — sign-in hands off to the live app.
+    // Time-of-day greeting (mirrors the app's own greeting logic)
+    (function () {
+      var h = new Date().getHours();
+      var word, icon;
+      if      (h >= 5  && h < 12) { word = 'Good morning';   icon = '☀️'; }
+      else if (h >= 12 && h < 17) { word = 'Good afternoon'; icon = '🌤'; }
+      else if (h >= 17 && h < 21) { word = 'Good evening';   icon = '🌆'; }
+      else                        { word = 'Welcome';        icon = '🌙'; }
+      document.getElementById('greeting').innerHTML = word + '! <span>' + icon + '</span>';
+    })();
+
+    // Single sign-on: hand the officer name straight to the app via the
+    // ?officer=...&signed=YYYY-MM-DD params its sign-in gate already reads,
+    // so the app skips its own sign-in screen entirely.
     document.getElementById('login-form').addEventListener('submit', function (e) {
       e.preventDefault();
-      window.location.href = 'https://sel-calculator-buit.streamlit.app/';
+      var name = document.getElementById('username').value.trim();
+      if (!name) return;
+      // The app's gate compares against the server's UTC date.
+      var signed = new Date().toISOString().slice(0, 10);
+      window.location.href = 'https://sel-calculator-buit.streamlit.app/?officer=' +
+        encodeURIComponent(name) + '&signed=' + signed;
     });
   </script>
 
