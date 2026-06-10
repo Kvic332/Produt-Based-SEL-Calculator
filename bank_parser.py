@@ -701,7 +701,13 @@ def detect_bank(text: str) -> str:
 
     # Fidelity Direct: native Fidelity statement (fidelitybank.ng URL in the
     # page header, DD-Mon-YY dates — NOT a mybankStatement PDF).
-    if _fidelity_url in t_hdr and "mybankstatement" not in t:
+    # The mybankstatement guard checks t_hdr only: customers can be charged a
+    # "MYBANKSTATEMENT STMNT CHRG" whose narration would otherwise defeat a
+    # full-text guard and misroute the statement to the generic Fidelity rule.
+    if _fidelity_url in t_hdr and "mybankstatement" not in t_hdr:
+        # e-Statement layout: glued column header "...ChannelDetails Pay In..."
+        if "channeldetails" in t:
+            return "Fidelity_EStatement"
         return "Fidelity_Direct"
 
     if "guaranty trust" in t_hdr or "gtco" in t_hdr or \
@@ -3847,6 +3853,135 @@ def parse_renmoney(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# FIDELITY E-STATEMENT PARSER
+# ════════════════════════════════════════════════════════════════════════════
+def parse_fidelity_estatement(full_text: str) -> tuple[dict, str]:
+    """
+    Fidelity Bank e-statement parser — balance-delta classification.
+
+    Column layout (PyPDF2 glues the headers):
+        Transaction Date | Value Date | Channel | Details | Pay In | Pay Out | Balance
+    Date format: DD-Mon-YY.
+
+    PyPDF2 quirks that defeat column parsing:
+    - Pay Out glues straight onto Balance:        "1,500.0045,723,016.13"
+    - Narration digits glue onto the amount:      "01-31JAN 25" + "110.00" → "25110.00"
+    - Balances wrap mid-number across lines:      "45,724,516.\\n13"
+    - Page breaks cut a balance's final digit(s) off entirely — the remainder
+      lands after the repeated page header ("...8,697,484.1<header>...PM8").
+
+    Approach (same family as parse_lotus):
+    1. Re-join 1-2 digit fragments wrapped onto their own line.
+    2. Walk every numeric token (0–2 decimals, to keep truncated balances)
+       and chain the running balance from the stated Opening Balance:
+           delta = balance − prev  →  credit if > 0, debit if < 0
+       Accept a pair only when the amount token ENDS WITH the formatted
+       |delta| (suffix match defeats glued narration digits).
+    3. Truncated-balance tolerance: when the suffix check fails, compute the
+       expected balance prev ± amount and accept if the balance token is a
+       strict PREFIX of it (handles page-break-cut balances).
+    Verified: final chained balance reproduces the stated Closing Balance
+    to the kobo over 2,700+ rows.
+    """
+    buckets: dict = {}
+
+    # Account name: the line following the bank's phone-number line.
+    account_name = "Unknown"
+    _hdr_lines = full_text[:600].splitlines()
+    for _i, _ln in enumerate(_hdr_lines):
+        if re.match(r'\+?\d[\d \-()]{8,}$', _ln.strip()):
+            for _nx in _hdr_lines[_i + 1:]:
+                if _nx.strip():
+                    account_name = _nx.strip().title()
+                    break
+            break
+
+    # 1. Re-join wrapped number fragments ("45,724,516.\n13" / "44,428,036\n.13")
+    text = re.sub(r'([\d.])[ ]*\n(\.?\d{1,2})(?=\n|$)', r'\1\2', full_text)
+
+    m_open = re.search(r'Opening\s*\n?Balance([\d,]+\.\d{2})', text)
+    if not m_open:
+        return buckets, account_name
+    prev = float(m_open.group(1).replace(',', ''))
+
+    body  = text[m_open.end():]
+    _TOK  = re.compile(r'[\d,]+\.\d{0,2}')
+    _DATE = re.compile(r'(\d{2})-([A-Za-z]{3})-(\d{2})')
+    toks  = [(m.group().replace(',', ''), m.start(), m.end())
+             for m in _TOK.finditer(body)]
+
+    def _book(ym: str, narr: str, amount: float, is_credit: bool) -> None:
+        if is_credit:
+            add_credit(buckets, ym, amount, narr, account_name)
+        else:
+            add_debit(ym, narr, amount)
+
+    last_end = 0
+    last_ym  = None
+    i = 0
+    while i < len(toks) - 1:
+        a_str = toks[i][0]
+        b_str = toks[i + 1][0]
+        try:
+            a = float(a_str)
+            b = float(b_str)
+        except ValueError:
+            i += 1
+            continue
+
+        # Row context: dates + narration since the previous accepted row
+        def _row_meta(pair_start: int):
+            seg = body[last_end:pair_start]
+            dm  = _DATE.search(seg)
+            if dm:
+                mm = MONTH_NUM.get(dm.group(2).lower(), "00")
+                ym = f"20{dm.group(3)}-{mm}"
+                narr = ' '.join(seg[dm.end():].split())[:180]
+            else:
+                ym, narr = last_ym, ' '.join(seg.split())[:180]
+            return ym, narr
+
+        delta = round(b - prev, 2)
+        want  = f'{abs(delta):.2f}'
+        if delta != 0 and (a_str == want or a_str.endswith(want)):
+            ym, narr = _row_meta(toks[i][1])
+            if ym:
+                _book(ym, narr, abs(delta), delta > 0)
+                last_ym = ym
+            prev     = b
+            last_end = toks[i + 1][2]
+            i += 2
+            continue
+
+        # Truncated-balance tolerance (page break cut the final digits)
+        if len(b_str) >= 4 and a > 0:
+            cand_dr = f'{prev - a:.2f}'
+            cand_cr = f'{prev + a:.2f}'
+            if prev - a >= 0 and cand_dr.startswith(b_str):
+                ym, narr = _row_meta(toks[i][1])
+                if ym:
+                    _book(ym, narr, a, False)
+                    last_ym = ym
+                prev     = round(prev - a, 2)
+                last_end = toks[i + 1][2]
+                i += 2
+                continue
+            if cand_cr.startswith(b_str):
+                ym, narr = _row_meta(toks[i][1])
+                if ym:
+                    _book(ym, narr, a, True)
+                    last_ym = ym
+                prev     = round(prev + a, 2)
+                last_end = toks[i + 1][2]
+                i += 2
+                continue
+
+        i += 1
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FIDELITY DIRECT PARSER
 # ════════════════════════════════════════════════════════════════════════════
 def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
@@ -4053,6 +4188,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_access_oracle(full_text)
     elif bank == "Fidelity_Direct":
         buckets, account_name = parse_fidelity_direct(full_text)
+    elif bank == "Fidelity_EStatement":
+        buckets, account_name = parse_fidelity_estatement(full_text)
     elif bank == "Jaiz":
         buckets, account_name = parse_jaiz(full_text)
     elif bank == "Parallex":
