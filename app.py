@@ -862,7 +862,19 @@ else:                    _greet, _greet_col, _greet_sub = "Working late 🌙",  
 
 st.markdown(f"""
 <div style="border-bottom:1px solid #1a3d2b;padding-bottom:24px;margin-bottom:32px">
-  <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase;margin-bottom:8px">▶ PARSIO</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div style="font-size:10px;letter-spacing:4px;color:#10b981;text-transform:uppercase">▶ PARSIO</div>
+    <a href="https://kvic332.github.io/Produt-Based-SEL-Calculator" target="_blank"
+       style="font-size:10px;letter-spacing:2px;color:#10b981;text-transform:uppercase;
+              text-decoration:none;border:1px solid rgba(16,185,129,.35);
+              padding:5px 14px;border-radius:3px;
+              background:rgba(16,185,129,.06);
+              transition:background .2s"
+       onmouseover="this.style.background='rgba(16,185,129,.14)'"
+       onmouseout="this.style.background='rgba(16,185,129,.06)'">
+      About PARSIO ↗
+    </a>
+  </div>
   <h1 style="font-family:DM Serif Display,serif;font-size:clamp(28px,4vw,44px);color:#fff;line-height:1.1">
     PARSIO <em style="color:#10b981;font-style:italic">Credit</em><br>Intelligence
   </h1>
