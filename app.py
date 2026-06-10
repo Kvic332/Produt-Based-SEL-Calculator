@@ -813,8 +813,8 @@ if not _is_signed_in:
             PARSIO has a new home
           </div>
           <div style="font-size:15px;font-weight:600;color:#94a3b8;margin-bottom:18px;line-height:1.7">
-            Taking you to the new PARSIO portal&hellip; If you are not redirected
-            automatically, use the button below.
+            Sign-in now happens on the PARSIO portal. Click the button below
+            to continue &mdash; you only sign in once per day.
           </div>
         </div>
         """,
@@ -830,13 +830,13 @@ if not _is_signed_in:
         "https://kvic332.github.io/Produt-Based-SEL-Calculator/",
     )
 
-    # Auto-redirect (meta refresh) + visible fallback button.
-    # target="_top" matters: Streamlit Cloud hosts the app in an iframe, and
-    # the portal must load in the real browser tab, not inside the frame.
+    # Streamlit Cloud hosts the app in a sandboxed iframe that blocks both
+    # auto-redirects (meta refresh) and same-tab/_top navigation out of the
+    # frame — but it does allow opening a new tab, so use target="_blank".
     st.markdown(
-        f'<meta http-equiv="refresh" content="2; url={_LOGIN_URL}">'
         f'<div style="text-align:center;margin-top:22px">'
-        f'<a href="{_LOGIN_URL}" target="_top" style="display:inline-block;'
+        f'<a href="{_LOGIN_URL}" target="_blank" rel="noopener" '
+        f'style="display:inline-block;'
         f'background:#10b981;color:#000;font-weight:900;font-size:15px;'
         f'letter-spacing:1px;padding:14px 36px;border-radius:6px;'
         f'text-decoration:none">GO TO PARSIO PORTAL →</a></div>',
