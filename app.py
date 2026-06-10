@@ -1342,7 +1342,7 @@ _BANK_OVERRIDE_OPTIONS = [
     "GTBank", "Access", "UBA", "Zenith", "Ecobank", "First Bank", "Fidelity",
     "Union", "Stanbic", "FCMB", "Wema", "Sterling", "OPay", "PalmPay", "Kuda",
     "Moniepoint", "Carbon", "FairMoney", "Providus", "Jaiz", "Parallex",
-    "mybankStatement", "Other",
+    "Lotus", "Renmoney", "mybankStatement", "Other",
 ]
 
 def _bank_override_selector(slot: str) -> None:

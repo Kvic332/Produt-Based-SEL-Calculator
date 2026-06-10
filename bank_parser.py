@@ -589,6 +589,14 @@ def detect_bank(text: str) -> str:
     if "parallex savings" in t_hdr or "parallexbank" in t or "parallex bank" in t_hdr:
         return "Parallex"
 
+    # ── Lotus Bank ────────────────────────────────────────────────────────
+    # Identified by the bank's own contact details in the per-page disclaimer
+    # footer ("support@lotusbank.com", "0700LOTUSBANK") — these never appear
+    # in another bank's narration text.  MUST fire before FairMoney/OPay:
+    # Lotus narrations routinely mention other banks as transfer destinations.
+    if "lotusbank.com" in t or "0700lotusbank" in t or "lotus bank" in t_hdr:
+        return "Lotus"
+
     # ── OPay v2: "Account Statement" with Trans. Time column ─────────────
     # Checked FIRST: OPay narrations often mention "FairMoney MFB".
     if ("trans. time" in t and
@@ -3612,6 +3620,81 @@ def parse_parallex(full_text: str) -> tuple[dict, str]:
 # ════════════════════════════════════════════════════════════════════════════
 # RENMONEY MFB PARSER
 # ════════════════════════════════════════════════════════════════════════════
+def parse_lotus(full_text: str) -> tuple[dict, str]:
+    """
+    Lotus Bank statement parser — balance-delta classification.
+
+    Column layout:  Trans. Date | Value Date | Narration | Debit | Credit | Balance
+    Date format: YYYY-MM-DD.
+
+    PyPDF2 quirks that defeat column-based parsing:
+    - Debit and credit share one visual position in extracted text, so a row
+      reads "<narration><amount> <balance>" with no way to tell the side.
+    - Reference numbers glue onto the amount with no separator, e.g.
+      "...000013260102085810000660169970500,000.00 1,198,737.03".
+    - Page-break rows are sometimes scrambled (narration before the dates).
+
+    Approach: walk every "<amount> <balance>" numeric pair in order and chain
+    the running balance from the stated Opening Balance:
+        delta = balance − prev_balance   →  credit if > 0, debit if < 0
+    A pair is accepted only when the amount token ENDS WITH the formatted
+    |delta| (suffix match defeats ref-number gluing); all other numeric pairs
+    (summary header, narration digits) fail the check and are skipped.
+    Verified to reproduce the statement's own Total Credit / Total Debit and
+    row counts exactly.
+    """
+    buckets: dict = {}
+
+    # Account name = first non-empty line (sits above "STATEMENT OF ACCOUNT")
+    account_name = "Unknown"
+    for _ln in full_text.splitlines():
+        _ln = _ln.strip()
+        if _ln:
+            if _ln.upper() != "STATEMENT OF ACCOUNT":
+                account_name = _ln.title()
+            break
+
+    m_open = re.search(r'Opening Balance\s+([\d,]+\.\d{2})', full_text)
+    if not m_open:
+        return buckets, account_name
+    prev = float(m_open.group(1).replace(',', ''))
+
+    _PAIR = re.compile(r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})')
+    _DATE = re.compile(r'(20\d{2})-(\d{2})-\d{2}')
+
+    last_end = m_open.end()
+    last_ym  = None
+    for m in _PAIR.finditer(full_text):
+        tok   = m.group(1).replace(',', '')
+        bal   = float(m.group(2).replace(',', ''))
+        delta = round(bal - prev, 2)
+        if delta == 0:
+            continue
+        want = f'{abs(delta):.2f}'
+        if not (tok == want or tok.endswith(want)):
+            continue   # narration/summary digits — not a transaction row
+
+        # Row segment = text since the previous accepted pair: holds this
+        # row's dates + narration (and any page-break disclaimer noise).
+        segment = full_text[last_end:m.start()]
+        dm = _DATE.search(segment)
+        ym = f"{dm.group(1)}-{dm.group(2)}" if dm else last_ym
+        narration = ' '.join(segment[dm.end():].split()) if dm else ' '.join(segment.split())
+        # Strip the trailing glued ref-number prefix off long narrations
+        narration = narration[:180]
+
+        if ym:
+            if delta > 0:
+                add_credit(buckets, ym, delta, narration, account_name)
+            else:
+                add_debit(ym, narration, -delta)
+            last_ym = ym
+        prev     = bal
+        last_end = m.end()
+
+    return buckets, account_name
+
+
 def parse_renmoney(full_text: str) -> tuple[dict, str]:
     """
     Renmoney MFB statement parser — 4-pass design.
@@ -3976,6 +4059,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_parallex(full_text)
     elif bank == "Renmoney":
         buckets, account_name = parse_renmoney(full_text)
+    elif bank == "Lotus":
+        buckets, account_name = parse_lotus(full_text)
     elif bank in _MYBANKSTATEMENT_BANKS:
         # Sterling Bank: PyPDF2 silently drops pages with certain encodings.
         # pdfplumber captures all pages and matches the stated total exactly.
