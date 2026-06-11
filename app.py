@@ -105,6 +105,42 @@ st.markdown("""
                      color: var(--green); padding: 13px 17px; border-radius: var(--radius-sm);
                      font-size: 13px; line-height: 1.6; }
 
+  /* ── Hero verdict card ──────────────────────────────────────────── */
+  .verdict-hero { border-radius: 16px; padding: 28px 30px; margin: 4px 0 18px;
+                  display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px;
+                  align-items: center; box-shadow: var(--shadow-md); }
+  .vh-approved { background: linear-gradient(135deg, rgba(16,185,129,.16) 0%, rgba(6,78,54,.28) 100%);
+                 border: 1px solid rgba(52,211,153,.4); }
+  .vh-declined { background: linear-gradient(135deg, rgba(248,113,113,.12) 0%, rgba(127,29,29,.22) 100%);
+                 border: 1px solid rgba(248,113,113,.38); }
+  .vh-badge { display: inline-block; font-family: var(--font-head); font-weight: 800;
+              font-size: 12px; letter-spacing: 2.5px; text-transform: uppercase;
+              padding: 7px 18px; border-radius: 999px; margin-bottom: 16px; }
+  .vh-approved .vh-badge { background: rgba(52,211,153,.18); color: var(--green);
+                           border: 1px solid rgba(52,211,153,.45); }
+  .vh-declined .vh-badge { background: rgba(248,113,113,.15); color: var(--red);
+                           border: 1px solid rgba(248,113,113,.4); }
+  .vh-label { font-family: var(--font-head); font-size: 11px; letter-spacing: 2.5px;
+              color: var(--muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+  .vh-amount { font-family: var(--font-head); font-size: 46px; font-weight: 800;
+               letter-spacing: -1.5px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .vh-approved .vh-amount { color: #fff; text-shadow: 0 0 30px rgba(52,211,153,.3); }
+  .vh-declined .vh-amount { color: #fecaca; }
+  .vh-sub { font-size: 13px; color: var(--muted); margin-top: 8px; font-weight: 500; }
+  .vh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .vh-cell { background: rgba(0,0,0,.22); border: 1px solid rgba(255,255,255,.06);
+             border-radius: 10px; padding: 12px 14px; }
+  .vh-cell-label { font-family: var(--font-head); font-size: 9.5px; letter-spacing: 1.6px;
+                   color: var(--dim); text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
+  .vh-cell-value { font-family: var(--font-head); font-size: 17px; font-weight: 800;
+                   color: var(--text); font-variant-numeric: tabular-nums; }
+  .vh-approved .vh-cell-value.em { color: var(--green); }
+  .vh-declined .vh-cell-value.em { color: var(--red); }
+  @media (max-width: 768px) {
+    .verdict-hero { grid-template-columns: 1fr; padding: 22px; gap: 18px; }
+    .vh-amount { font-size: 36px; }
+  }
+
   /* Tags / badges */
   .badge { display: inline-block; padding: 3px 10px; border-radius: 999px;
            font-family: var(--font-head); font-weight: 700;
@@ -3635,10 +3671,34 @@ if calc_btn:
 
         approved = result.get("approved", False)
         loan     = result["max_loan"]
-        decision = "✅ Max loan amount" if approved else "❌ Below product minimum"
 
-        banner_cls = "banner-approved" if approved else "banner-rejected"
-        st.markdown(f'<div class="{banner_cls}">{decision}</div>', unsafe_allow_html=True)
+        # ── Hero verdict card ─────────────────────────────────────────────
+        _vh_cls   = "vh-approved" if approved else "vh-declined"
+        _vh_badge = "✓ &nbsp;Approved" if approved else "✕ &nbsp;Below Product Minimum"
+        _vh_rate  = (f"{pct(result['interest_rate'])} ★" if manual_rate > 0
+                     else pct(result["interest_rate"]))
+        _vh_freq  = result.get("repayment_frequency", "—")
+        st.markdown(
+            f'<div class="verdict-hero {_vh_cls}">'
+            f'  <div class="vh-main">'
+            f'    <div class="vh-badge">{_vh_badge}</div>'
+            f'    <div class="vh-label">Maximum Loan</div>'
+            f'    <div class="vh-amount">{money(loan)}</div>'
+            f'    <div class="vh-sub">{prod_type} &nbsp;·&nbsp; {tenor} months &nbsp;·&nbsp; {location}</div>'
+            f'  </div>'
+            f'  <div class="vh-grid">'
+            f'    <div class="vh-cell"><div class="vh-cell-label">DTI</div>'
+            f'      <div class="vh-cell-value em">{pct(result["dti"])}</div></div>'
+            f'    <div class="vh-cell"><div class="vh-cell-label">Interest Rate</div>'
+            f'      <div class="vh-cell-value">{_vh_rate}</div></div>'
+            f'    <div class="vh-cell"><div class="vh-cell-label">Repayment / Period</div>'
+            f'      <div class="vh-cell-value">{money(result["max_repayment_display"])}</div></div>'
+            f'    <div class="vh-cell"><div class="vh-cell-label">Frequency</div>'
+            f'      <div class="vh-cell-value">{_vh_freq}</div></div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
         # ── Turnover ceiling policy note ──────────────────────────────────
         if result.get("turnover_capped"):
@@ -3689,20 +3749,11 @@ if calc_btn:
 
         st.markdown("")
 
-        # Result cards
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("New Loan Amount",        money(loan),                   delta=None)
-        m2.metric("Applicable Turnover",    money(result["applicable_turnover"]))
-        m3.metric("Total Eligible Net",     money(result["total_net"]))
-        m4.metric("DTI",                    pct(result["dti"]))
-
-        m5, m6, m7, m8 = st.columns(4)
-        rate_label = (f"{pct(result['interest_rate'])} ★" if manual_rate > 0
-                      else pct(result["interest_rate"]))
-        m5.metric("Interest Rate",          rate_label)
-        m6.metric("Repayment Frequency",    result["repayment_frequency"])
-        m7.metric("Max Repayment / Period", money(result["max_repayment_display"]))
-        m8.metric("Max Total Repayment",    money(result["max_total_repayment"]))
+        # Supporting result cards (hero covers loan, DTI, rate, repayment/period, frequency)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Applicable Turnover",    money(result["applicable_turnover"]))
+        m2.metric("Total Eligible Net",     money(result["total_net"]))
+        m3.metric("Max Total Repayment",    money(result["max_total_repayment"]))
 
         # ── Customer Risk Score ───────────────────────────────────────────
         try:
