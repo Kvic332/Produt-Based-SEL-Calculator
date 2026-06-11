@@ -827,5 +827,20 @@
     <div class="footer-copy">© 2026 PARSIO — The intelligence behind every loan.</div>
   </footer>
 
+  <script>
+    // Forward the ?app= return-deployment param (e.g. from the dev branch
+    // app's gate) to every login link, so sign-in returns to the deployment
+    // the visitor came from. login.html validates the value.
+    (function () {
+      try {
+        var app = new URLSearchParams(window.location.search).get('app');
+        if (!app) return;
+        document.querySelectorAll('a[href^="login.html"]').forEach(function (a) {
+          a.href = 'login.html?app=' + encodeURIComponent(app);
+        });
+      } catch (err) { /* ignore — production default applies */ }
+    })();
+  </script>
+
 </body>
 </html>

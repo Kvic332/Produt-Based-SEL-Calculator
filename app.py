@@ -830,6 +830,18 @@ if not _is_signed_in:
         "https://kvic332.github.io/Produt-Based-SEL-Calculator/",
     )
 
+    # Tell the portal which deployment to return to after sign-in, so a
+    # non-production deployment (e.g. the dev branch app) round-trips back to
+    # ITSELF instead of production. login.html validates the host.
+    try:
+        from urllib.parse import urlsplit, quote as _q
+        _self = urlsplit(st.context.url)
+        if _self.hostname and _self.hostname.endswith(".streamlit.app"):
+            _sep = "&" if "?" in _LOGIN_URL else "?"
+            _LOGIN_URL = f"{_LOGIN_URL}{_sep}app={_q(f'{_self.scheme}://{_self.hostname}/', safe='')}"
+    except Exception:
+        pass  # older Streamlit without st.context.url — portal default applies
+
     # Streamlit Cloud hosts the app in a sandboxed iframe that blocks both
     # auto-redirects (meta refresh) and same-tab/_top navigation out of the
     # frame — but it does allow opening a new tab, so use target="_blank".

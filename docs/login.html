@@ -405,7 +405,7 @@
       </form>
 
       <div class="form-foot">
-        Don't have an account? <a href="https://sel-calculator-buit.streamlit.app/">Launch the app directly</a>
+        Don't have an account? <a id="direct-link" href="https://sel-calculator-buit.streamlit.app/">Launch the app directly</a>
         <br />
         <a href="index.html" class="back-home">← Back to home</a>
         <a href="#" class="admin-link" id="admin-link">⚙ Admin</a>
@@ -428,6 +428,27 @@
       catch (err) { window.location.href = url; }
     }
 
+    // Which app deployment to return to after sign-in. Defaults to
+    // production; a deployment can send users here with ?app=<its own URL>
+    // (e.g. the dev branch app) so sign-in returns to THAT deployment
+    // instead of production. Restricted to *.streamlit.app hosts so this
+    // public page can never be used as an open redirect.
+    var APP_URL = 'https://sel-calculator-buit.streamlit.app/';
+    (function () {
+      try {
+        var requested = new URLSearchParams(window.location.search).get('app');
+        if (!requested) return;
+        var u = new URL(requested);
+        if (u.protocol === 'https:' && u.hostname.endsWith('.streamlit.app')) {
+          APP_URL = u.origin + '/';
+        }
+      } catch (err) { /* malformed ?app= — keep production default */ }
+      // Point the static fallbacks at the resolved app too
+      document.getElementById('login-form').setAttribute('action', APP_URL);
+      var direct = document.getElementById('direct-link');
+      if (direct) direct.setAttribute('href', APP_URL);
+    })();
+
     // Time-of-day greeting (mirrors the app's own greeting logic)
     (function () {
       var h = new Date().getHours();
@@ -448,7 +469,7 @@
       if (!name) return;
       // The app's gate compares against the server's UTC date.
       var signed = new Date().toISOString().slice(0, 10);
-      goTo('https://sel-calculator-buit.streamlit.app/?officer=' +
+      goTo(APP_URL + '?officer=' +
         encodeURIComponent(name) + '&signed=' + signed);
     });
 
@@ -459,7 +480,7 @@
       var key = window.prompt('Admin key:');
       if (!key) return;
       var signed = new Date().toISOString().slice(0, 10);
-      goTo('https://sel-calculator-buit.streamlit.app/?officer=Admin&signed=' +
+      goTo(APP_URL + '?officer=Admin&signed=' +
         signed + '&admin=' + encodeURIComponent(key.trim()));
     });
   </script>
