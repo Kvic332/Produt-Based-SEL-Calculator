@@ -1412,9 +1412,20 @@ with col2:
                     track("upload", session=_SID, officer=_OFFICER, filename=file_a.name,
                           size_kb=round(_size_mb_a * 1024, 1))
                     try:
+                        _pt0 = datetime.datetime.now()
                         buckets, summary, bank, name, txns, debit_txns = parse_transactions(
                             _pdf_bytes_a, pw_a, filename=file_a.name
                         )
+                        _parse_secs = (datetime.datetime.now() - _pt0).total_seconds()
+                        # Heavy-statement telemetry: lets the admin dashboard
+                        # identify statements that strain memory/CPU (the ones
+                        # that can OOM the shared Streamlit Cloud worker).
+                        track("parsed", session=_SID, officer=_OFFICER, bank=bank,
+                              filename=file_a.name,
+                              size_kb=round(_size_mb_a * 1024, 1),
+                              duration_s=round(_parse_secs, 1),
+                              txns=len(txns), debits=len(debit_txns),
+                              heavy=bool(_parse_secs > 60 or len(txns) > 5000))
                         rows = monthly_analysis(buckets, summary)
                         st.session_state.buckets_a       = buckets
                         st.session_state.summary_a       = summary
@@ -1440,6 +1451,12 @@ with col2:
                             st.session_state.account_no_a = ""
 
                         st.success(f"Extracted from {bank} statement — {name or 'account holder'}")
+                        if _parse_secs > 60 or len(txns) > 5000:
+                            st.warning(
+                                f"⚠ Heavy statement: {len(txns):,} transactions, parsed in "
+                                f"{_parse_secs:.0f}s. Logged for tracking — avoid re-extracting "
+                                f"it repeatedly in one session."
+                            )
 
                         # ── Blacklist / Watchlist Check ───────────────────────
                         try:
@@ -4429,6 +4446,39 @@ if _qp.get("admin") == _ADMIN_KEY:
                     )
         else:
             st.success("✅ No parse errors recorded.")
+
+        # ── Heavy Statements (memory/CPU risk) ─────────────────────────────
+        _heavy_all = _stats.get("heavy", [])
+        _heavy_rows = []
+        for _h in _heavy_all:
+            try:
+                _hd = json.loads(_h["data"]) if isinstance(_h["data"], str) else (_h["data"] or {})
+            except Exception:
+                _hd = {}
+            _heavy_rows.append({
+                "Time":       _h["ts"],
+                "Officer":    _hd.get("officer", "—"),
+                "Bank":       _h.get("bank") or "—",
+                "File":       _h.get("filename", ""),
+                "Size (KB)":  _hd.get("size_kb", 0),
+                "Parse (s)":  _hd.get("duration_s", 0),
+                "Txns":       _hd.get("txns", 0),
+                "Heavy":      "🔴" if str(_hd.get("heavy")) == "True" else "",
+            })
+        if _heavy_rows:
+            _n_heavy = sum(1 for r in _heavy_rows if r["Heavy"])
+            st.markdown(
+                f'<div style="color:#fbbf24;font-size:13px;font-weight:700;margin-top:18px">'
+                f'🏋 Statement Load Tracker — {len(_heavy_rows)} parses logged, '
+                f'<span style="color:#f87171">{_n_heavy} heavy</span> '
+                f'(&gt;60s or &gt;5,000 txns — these can exhaust the server\'s memory)</div>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                pd.DataFrame(_heavy_rows),
+                hide_index=True,
+                use_container_width=True,
+            )
 
         # ── Officer Performance Dashboard ─────────────────────────────────
         _off_act = _stats.get("officer_activity", [])

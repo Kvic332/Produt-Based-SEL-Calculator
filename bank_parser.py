@@ -509,9 +509,21 @@ def extract_pdf_text_pdfplumber(pdf_bytes: bytes, password: str = "") -> str:
     try:
         import pdfplumber
         buf = BytesIO(pdf_bytes)
+        chunks: list[str] = []
         with pdfplumber.open(buf, password=password or "") as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-        del buf
+            for page in pdf.pages:
+                chunks.append(page.extract_text() or "")
+                # pdfplumber caches every page's char/line objects for the
+                # lifetime of the document — a dense 69-page statement peaked
+                # at 3.3 GB and OOM-killed Streamlit Cloud. Flushing per page
+                # keeps only one page's objects in memory at a time.
+                try:
+                    page.flush_cache()
+                    page.get_textmap.cache_clear()
+                except Exception:
+                    pass  # older pdfplumber without these APIs
+        text = "\n".join(chunks)
+        del buf, chunks
         gc.collect()
         return text
     except Exception:

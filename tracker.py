@@ -385,6 +385,14 @@ def admin_stats() -> dict:
                 "ORDER BY ts DESC LIMIT 50"
             )
 
+            # Statements that strained the worker (slow parse or huge txn
+            # count) — the kind that can OOM the shared Streamlit Cloud host.
+            heavy = q(
+                "SELECT ts, session, bank, filename, data "
+                "FROM events WHERE event='parsed' "
+                "ORDER BY ts DESC LIMIT 200"
+            )
+
             loans = q(
                 "SELECT ts, session, bank, data "
                 "FROM events WHERE event='eligibility_result' "
@@ -504,6 +512,7 @@ def admin_stats() -> dict:
                 "daily":             daily,
                 "banks":             banks,
                 "errors":            errors,
+                "heavy":             heavy,
                 "loans":             loans,
                 "sessions":          sessions_row[0]    if sessions_row    else {},
                 "rate":              rate_row[0]        if rate_row        else {},
