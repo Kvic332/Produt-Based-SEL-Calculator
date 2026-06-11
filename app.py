@@ -192,9 +192,19 @@ st.markdown("""
   .credit-table tr:hover td { background: rgba(16,185,129,.03); }
   .credit-table tfoot td { border-top: 1px solid var(--border); font-weight: 700; }
 
+  /* Expanders */
+  [data-testid="stExpander"] { background: var(--surface) !important;
+      border: 1px solid var(--border-soft) !important;
+      border-radius: var(--radius-sm) !important; box-shadow: var(--shadow-sm); }
+  [data-testid="stExpander"] summary { font-family: var(--font-head) !important;
+      font-weight: 600 !important; font-size: 14px !important; }
+  [data-testid="stExpander"] summary:hover { color: var(--accent) !important; }
+
   /* Sidebar */
   [data-testid="stSidebar"] { background: var(--surface) !important;
                                border-right: 1px solid var(--border-soft) !important; }
+  [data-testid="stSidebar"] [data-testid="stMetric"] { background: var(--surface2) !important; }
+  [data-testid="stSidebar"] hr { margin: 16px 0 !important; }
   [data-testid="stSidebar"] label { color: var(--muted) !important; font-size: 11px !important;
                                     letter-spacing: 1px !important; text-transform: uppercase !important; font-weight: 600 !important; }
 
@@ -1402,7 +1412,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                     with _bic1:
                         st.markdown(
                             f'<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);'
-                            f'border-radius:6px;padding:12px 14px">'
+                            f'border-radius:10px;padding:14px 16px">'
                             f'<div style="font-size:9px;letter-spacing:2px;color:#6ee7b7;text-transform:uppercase;'
                             f'font-weight:600;margin-bottom:6px">Total Credits</div>'
                             f'<div style="font-size:16px;font-weight:800;color:#34d399">{money(_bd["total_credits"])}</div></div>',
@@ -1411,7 +1421,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                     with _bic2:
                         st.markdown(
                             f'<div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);'
-                            f'border-radius:6px;padding:12px 14px">'
+                            f'border-radius:10px;padding:14px 16px">'
                             f'<div style="font-size:9px;letter-spacing:2px;color:#6ee7b7;text-transform:uppercase;'
                             f'font-weight:600;margin-bottom:6px">Eligible Income</div>'
                             f'<div style="font-size:16px;font-weight:800;color:#10b981">{money(_bd["total_eligible"])}</div></div>',
@@ -1420,8 +1430,8 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                     with _bic3:
                         st.markdown(
                             f'<div style="background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.35);'
-                            f'border-radius:6px;padding:12px 14px">'
-                            f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                            f'border-radius:10px;padding:14px 16px">'
+                            f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:10px;letter-spacing:1.8px;color:#fca5a5;text-transform:uppercase;'
                             f'font-weight:600;margin-bottom:6px">Total Debits</div>'
                             f'<div style="font-size:16px;font-weight:800;color:#f87171">{money(_bd["total_debits"])}</div>'
                             f'<div style="font-size:9px;color:#94a3b8;margin-top:2px">{_bd["debit_count"]} transaction(s)</div></div>',
@@ -1431,8 +1441,8 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                         _bd_lr_col = "#f87171" if _bd["loan_repay_ct"] else "#94a3b8"
                         st.markdown(
                             f'<div style="background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.35);'
-                            f'border-radius:6px;padding:12px 14px">'
-                            f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                            f'border-radius:10px;padding:14px 16px">'
+                            f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:10px;letter-spacing:1.8px;color:#fca5a5;text-transform:uppercase;'
                             f'font-weight:600;margin-bottom:6px">Loan Repayments</div>'
                             f'<div style="font-size:16px;font-weight:800;color:{_bd_lr_col}">{money(_bd["loan_repay_sum"])}</div>'
                             f'<div style="font-size:9px;color:#94a3b8;margin-top:2px">{_bd["loan_repay_ct"]} flagged</div></div>',
@@ -2360,38 +2370,38 @@ def _render_debit_panel(debit_txns: list, label: str = "") -> None:
         with _dc1:
             st.markdown(
                 f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                f'border-radius:10px;padding:14px 16px">'
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:10px;letter-spacing:1.8px;color:#fca5a5;text-transform:uppercase;'
                 f'font-weight:600;margin-bottom:6px">Total Debits</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f87171">{money(_total_debit)}</div></div>',
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-variant-numeric:tabular-nums;font-size:22px;font-weight:800;color:#f87171">{money(_total_debit)}</div></div>',
                 unsafe_allow_html=True,
             )
         with _dc2:
             st.markdown(
                 f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                f'border-radius:10px;padding:14px 16px">'
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:10px;letter-spacing:1.8px;color:#fca5a5;text-transform:uppercase;'
                 f'font-weight:600;margin-bottom:6px">Loan Repayments</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f87171">{money(_total_loan_r)}</div>'
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-variant-numeric:tabular-nums;font-size:22px;font-weight:800;color:#f87171">{money(_total_loan_r)}</div>'
                 f'<div style="font-size:10px;color:#fca5a5;margin-top:3px">{len(_loan_repays)} transaction(s)</div></div>',
                 unsafe_allow_html=True,
             )
         with _dc3:
             st.markdown(
                 f'<div style="background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.4);'
-                f'border-radius:6px;padding:12px 14px">'
+                f'border-radius:10px;padding:14px 16px">'
                 f'<div style="font-size:9px;letter-spacing:2px;color:#fcd34d;text-transform:uppercase;'
                 f'font-weight:600;margin-bottom:6px">Rent / Property</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f59e0b">{money(_total_rent)}</div></div>',
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-variant-numeric:tabular-nums;font-size:22px;font-weight:800;color:#f59e0b">{money(_total_rent)}</div></div>',
                 unsafe_allow_html=True,
             )
         with _dc4:
             st.markdown(
                 f'<div style="background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);'
-                f'border-radius:6px;padding:12px 14px">'
-                f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                f'border-radius:10px;padding:14px 16px">'
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:10px;letter-spacing:1.8px;color:#fca5a5;text-transform:uppercase;'
                 f'font-weight:600;margin-bottom:6px">Priority Flags</div>'
-                f'<div style="font-size:18px;font-weight:800;color:#f87171">{len(_flagged)}</div>'
+                f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-variant-numeric:tabular-nums;font-size:22px;font-weight:800;color:#f87171">{len(_flagged)}</div>'
                 f'<div style="font-size:10px;color:#fca5a5;margin-top:3px">loan repay · credit card · rent</div></div>',
                 unsafe_allow_html=True,
             )
