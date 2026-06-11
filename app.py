@@ -855,6 +855,40 @@ if not _is_signed_in:
         unsafe_allow_html=True,
     )
 
+    # ── Direct sign-in (no portal round-trip) ─────────────────────────────
+    # Keeps non-production deployments self-contained: the dev branch app
+    # signs in here and never leaves its own URL. Also serves as the fallback
+    # if GitHub Pages is unreachable. Production officers normally use the
+    # portal button above.
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:12px;margin:24px 0 10px">'
+        '<div style="flex:1;border-top:1px solid #1a3d2b"></div>'
+        '<div style="font-size:10px;letter-spacing:2px;color:#64748b;text-transform:uppercase">'
+        'or sign in directly</div>'
+        '<div style="flex:1;border-top:1px solid #1a3d2b"></div></div>',
+        unsafe_allow_html=True,
+    )
+    _si_col1, _si_col2 = st.columns([3, 1])
+    with _si_col1:
+        _si_name = st.text_input(
+            "Officer Name / Staff ID",
+            placeholder="e.g. Adaobi Nwosu  or  SEL-042",
+            key="signin_name_input",
+            label_visibility="collapsed",
+        )
+    with _si_col2:
+        _si_btn = st.button("Sign In →", key="signin_btn", use_container_width=True)
+    if _si_btn:
+        if not _si_name.strip():
+            st.error("Please enter your name or staff ID before signing in.")
+        else:
+            _clean = _si_name.strip()
+            st.session_state.officer_name = _clean
+            st.query_params["officer"] = _clean
+            st.query_params["signed"]  = _today_iso
+            track("signin", session=_SID, officer=_clean, bank="", filename="")
+            st.rerun()
+
     st.markdown(
         f'<div style="margin-top:14px;font-size:16px;font-weight:700;color:#64748b;text-align:center">'
         f'{datetime.date.today().strftime("%A, %d %B %Y")}</div>',
