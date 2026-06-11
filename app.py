@@ -141,6 +141,19 @@ st.markdown("""
     .vh-amount { font-size: 36px; }
   }
 
+  /* ── Tabs — segmented control style ─────────────────────────────── */
+  .stTabs [data-baseweb="tab-list"] { gap: 6px; background: var(--surface);
+      border: 1px solid var(--border-soft); border-radius: 10px; padding: 5px;
+      margin-bottom: 4px; }
+  .stTabs [data-baseweb="tab"] { font-family: var(--font-head) !important;
+      font-weight: 700 !important; font-size: 13px !important; letter-spacing: .4px;
+      color: var(--muted) !important; background: transparent !important;
+      border-radius: 7px !important; padding: 8px 16px !important; }
+  .stTabs [data-baseweb="tab"]:hover { color: var(--text) !important; }
+  .stTabs [aria-selected="true"] { background: rgba(16,185,129,.13) !important;
+      color: var(--accent) !important; }
+  .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display: none !important; }
+
   /* Tags / badges */
   .badge { display: inline-block; padding: 3px 10px; border-radius: 999px;
            font-family: var(--font-head); font-weight: 700;
@@ -1751,6 +1764,14 @@ if st.session_state.rows_a:
                     unsafe_allow_html=True,
                 )
 
+        # ── Statement analysis tabs ───────────────────────────────────────
+        # Manual __enter__/__exit__ keeps the existing blocks at their
+        # original indentation — zero logic changes, pure layout regrouping.
+        _t_break, _t_trend, _t_insight = st.tabs([
+            "📊  Monthly Breakdown", "📈  Trend & Forecast", "🔍  Income Insights",
+        ])
+        _t_break.__enter__()
+
         hdr = ('<tr>'
                '<th class="col-gross" style="text-align:left">Month</th>'
                '<th class="col-gross">Total Inflow</th>')
@@ -1798,6 +1819,9 @@ if st.session_state.rows_a:
                 '⚑ Self Deposits (OWealth, Renflex, Renvault, savings round-trips) are <strong>deducted</strong> from eligible income as they are not business income.</div>',
                 unsafe_allow_html=True,
             )
+
+        _t_break.__exit__(None, None, None)
+        _t_trend.__enter__()
 
         # ── Income Trend Chart ────────────────────────────────────────────
         _scale = max(
@@ -1952,6 +1976,9 @@ if st.session_state.rows_a:
             unsafe_allow_html=True,
         )
 
+        _t_trend.__exit__(None, None, None)
+        _t_insight.__enter__()
+
         # ── Recurring Income Detection ────────────────────────────────────
         if st.session_state.txns_a:
             _real_txns = [t for t in st.session_state.txns_a if t.get("category") == "real_credit"]
@@ -2067,6 +2094,9 @@ if st.session_state.rows_a:
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
+
+        _t_insight.__exit__(None, None, None)
+        _t_trend.__enter__()
 
         # ── Cash Flow Forecast (Feature 10) ──────────────────────────────
         _fcast_vals = [r["eligible_income"] for r in rows_a if r["eligible_income"] > 0]
@@ -2210,7 +2240,9 @@ if st.session_state.rows_a:
                     unsafe_allow_html=True,
                 )
 
-        # ── Download buttons ──────────────────────────────────────────────
+        _t_trend.__exit__(None, None, None)
+
+        # ── Download buttons (always visible, below the tabs) ─────────────
         _pdf_stmt = generate_pdf_report(
             account_name = st.session_state.name_a or "Account Holder",
             bank         = st.session_state.bank_a or "Bank",
@@ -2242,7 +2274,8 @@ if st.session_state.rows_a:
                 use_container_width=True,
             )
 
-        # ── Income Consistency Score ──────────────────────────────────────
+        # ── Income Consistency Score (Income Insights tab) ────────────────
+        _t_insight.__enter__()
         import statistics as _stat_mod
         _ei_vals = [r["eligible_income"] for r in rows_a if r["eligible_income"] > 0]
         if len(_ei_vals) >= 2:
@@ -2277,6 +2310,7 @@ if st.session_state.rows_a:
                 f'</div>',
                 unsafe_allow_html=True,
             )
+        _t_insight.__exit__(None, None, None)
 
 # ── Debit Transaction Visibility Panel ───────────────────────────────────────
 # For officer visibility only — NOT used in credit decisioning.
