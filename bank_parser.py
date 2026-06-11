@@ -9,6 +9,7 @@
 import gc
 import re
 import subprocess
+import threading
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
@@ -4453,6 +4454,16 @@ def parse_fidelity_direct(full_text: str) -> tuple[dict, str]:
 # ════════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ════════════════════════════════════════════════════════════════════════════
+# Streamlit runs each browser session in its own THREAD of one shared process,
+# and add_credit/add_debit append to the module-level _txn_log/_debit_log.
+# Two parses overlapping in time (double-click on Extract, or two officers
+# uploading simultaneously) interleave their appends into the same lists, so
+# the parse that finishes last returns its own rows PLUS the other parse's —
+# observed in production as a Wema statement reporting exactly 3× its true
+# debit total. Serialize the whole parse to keep the shared logs consistent.
+_parse_lock = threading.Lock()
+
+
 def parse_transactions(file_bytes: bytes, password: str = "",
                        filename: str = "") -> tuple[dict, dict, str, str, list]:
     """
@@ -4461,6 +4472,12 @@ def parse_transactions(file_bytes: bytes, password: str = "",
     buckets: {ym: {gross, count, self_transfer, reversal, non_business, loan_disbursal, real_credit}}
     transactions: list of {ym, narration, amount, category} for keyword search
     """
+    with _parse_lock:
+        return _parse_transactions_locked(file_bytes, password, filename)
+
+
+def _parse_transactions_locked(file_bytes: bytes, password: str = "",
+                               filename: str = "") -> tuple[dict, dict, str, str, list]:
     global _txn_log, _debit_log, _last_full_text
     _txn_log   = []       # Reset for each new parse
     _debit_log = []       # Reset debit log
