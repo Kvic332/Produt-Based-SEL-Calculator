@@ -29,85 +29,103 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── Dark theme CSS matching HTML calculator ───────────────────────────────────
+# ── Dark theme CSS — PARSIO design system (portal-aligned, Phase 1) ──────────
 st.markdown("""
 <style>
-  /* Import fonts */
-  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Serif+Display:ital@0;1&display=swap');
+  /* Import fonts — match the PARSIO portal */
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
-  /* Root variables — Emerald + Gold palette */
+  /* Root variables — Emerald + Gold palette (refined surfaces + elevation) */
   :root {
-    --bg: #090e0c; --surface: #0f1a15; --surface2: #162019;
-    --border: #1a3d2b; --accent: #10b981; --accent2: #f59e0b;
-    --green: #34d399; --red: #f87171; --text: #e2e8f0;
-    --muted: #94a3b8; --gold: #fbbf24; --orange: #fb923c;
+    --bg: #0a0f0d; --surface: #101814; --surface2: #17211c;
+    --border: #20392c; --border-soft: #1a2e24;
+    --accent: #10b981; --accent2: #f59e0b;
+    --green: #34d399; --red: #f87171; --text: #e6ebe8;
+    --muted: #9fb0a7; --dim: #6b7c73; --gold: #fbbf24; --orange: #fb923c;
+    --font-head: 'Plus Jakarta Sans', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --font-mono: 'Space Mono', monospace;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.35);
+    --shadow-md: 0 8px 24px -8px rgba(0,0,0,.45);
+    --glow-accent: 0 0 24px rgba(16,185,129,.12);
+    --radius: 12px; --radius-sm: 8px;
   }
 
   /* Global */
-  .stApp { background: var(--bg) !important; color: var(--text) !important; font-family: 'Space Mono', monospace !important; }
-  .block-container { padding: 2rem 2rem 4rem !important; max-width: 1000px !important; }
+  .stApp { background: var(--bg) !important; color: var(--text) !important; font-family: var(--font-body) !important; }
+  .block-container { padding: 2rem 2rem 4rem !important; max-width: 1040px !important; }
+  .stApp p, .stApp li { font-family: var(--font-body); }
 
   /* Headers */
-  h1 { font-family: 'DM Serif Display', serif !important; color: #fff !important; }
-  h1 em { color: var(--accent) !important; }
-  h2, h3 { font-family: 'Space Mono', monospace !important; color: var(--accent) !important;
-           font-size: 12px !important; letter-spacing: 3px !important; text-transform: uppercase !important; font-weight: 700 !important; }
+  h1 { font-family: var(--font-head) !important; font-weight: 800 !important;
+       letter-spacing: -1px !important; color: #fff !important; }
+  h1 em { color: var(--accent) !important; font-style: normal !important; }
+  h2, h3 { font-family: var(--font-head) !important; color: var(--accent) !important;
+           font-size: 13px !important; letter-spacing: 2.5px !important; text-transform: uppercase !important; font-weight: 700 !important; }
 
   /* Sections */
-  .sel-section { background: var(--surface); border: 1px solid var(--border);
-                 border-radius: 4px; padding: 24px; margin-bottom: 20px; }
-  .sel-section-title { font-size: 15px; letter-spacing: 2px; color: #e2e8f0;
+  .sel-section { background: var(--surface); border: 1px solid var(--border-soft);
+                 border-radius: var(--radius); padding: 26px; margin-bottom: 22px;
+                 box-shadow: var(--shadow-sm); }
+  .sel-section-title { font-family: var(--font-head); font-size: 16px; letter-spacing: 1.2px; color: #fff;
                        text-transform: uppercase; border-bottom: 2px solid var(--accent);
-                       padding-bottom: 10px; margin-bottom: 16px; font-weight: 800; }
-  .sel-caption { font-size: 13px; color: #cbd5e1; font-weight: 600;
-                 margin: -8px 0 14px 0; line-height: 1.6; }
+                       padding-bottom: 12px; margin-bottom: 18px; font-weight: 800; }
+  .sel-caption { font-size: 13.5px; color: #c4cfc9; font-weight: 500;
+                 margin: -8px 0 14px 0; line-height: 1.65; font-family: var(--font-body); }
 
   /* Metric cards */
-  .sel-card { background: var(--surface2); border: 1px solid var(--border);
-              border-radius: 3px; padding: 14px; }
-  .sel-card.highlight { border-color: var(--accent); box-shadow: 0 0 20px rgba(16,185,129,.1); }
-  .sel-label { font-size: 11px; letter-spacing: 2px; color: var(--muted);
-               text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }
-  .sel-value { font-size: 20px; font-weight: 700; color: var(--accent); }
+  .sel-card { background: var(--surface2); border: 1px solid var(--border-soft);
+              border-radius: var(--radius-sm); padding: 16px 18px;
+              transition: border-color .2s, box-shadow .2s; }
+  .sel-card:hover { border-color: var(--border); }
+  .sel-card.highlight { border-color: var(--accent); box-shadow: var(--glow-accent); }
+  .sel-label { font-family: var(--font-head); font-size: 10.5px; letter-spacing: 1.8px; color: var(--muted);
+               text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
+  .sel-value { font-family: var(--font-head); font-size: 23px; font-weight: 800; color: var(--accent);
+               font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
   .sel-value.green  { color: var(--green) !important; }
   .sel-value.gold   { color: var(--gold) !important; }
   .sel-value.red    { color: var(--red) !important; }
   .sel-value.orange { color: var(--orange) !important; }
 
   /* Banners */
-  .banner-approved { background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.3);
-                     color: var(--green); padding: 14px 18px; border-radius: 3px;
-                     font-size: 14px; letter-spacing: 1px; }
-  .banner-rejected { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.3);
-                     color: var(--red); padding: 14px 18px; border-radius: 3px;
-                     font-size: 14px; letter-spacing: 1px; }
-  .banner-info     { background: rgba(16,185,129,.05); border: 1px solid rgba(16,185,129,.2);
-                     color: var(--accent); padding: 12px 16px; border-radius: 3px;
-                     font-size: 12px; }
-  .banner-bad      { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.25);
-                     color: var(--red); padding: 12px 16px; border-radius: 3px;
-                     font-size: 12px; }
-  .banner-good     { background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.25);
-                     color: var(--green); padding: 12px 16px; border-radius: 3px;
-                     font-size: 12px; }
+  .banner-approved { background: rgba(52,211,153,.09); border: 1px solid rgba(52,211,153,.35);
+                     color: var(--green); padding: 16px 20px; border-radius: var(--radius-sm);
+                     font-family: var(--font-head); font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+  .banner-rejected { background: rgba(248,113,113,.09); border: 1px solid rgba(248,113,113,.35);
+                     color: var(--red); padding: 16px 20px; border-radius: var(--radius-sm);
+                     font-family: var(--font-head); font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+  .banner-info     { background: rgba(16,185,129,.06); border: 1px solid rgba(16,185,129,.22);
+                     color: var(--accent); padding: 13px 17px; border-radius: var(--radius-sm);
+                     font-size: 13px; line-height: 1.6; }
+  .banner-bad      { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.28);
+                     color: var(--red); padding: 13px 17px; border-radius: var(--radius-sm);
+                     font-size: 13px; line-height: 1.6; }
+  .banner-good     { background: rgba(52,211,153,.08); border: 1px solid rgba(52,211,153,.28);
+                     color: var(--green); padding: 13px 17px; border-radius: var(--radius-sm);
+                     font-size: 13px; line-height: 1.6; }
 
   /* Tags / badges */
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
-           font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px;
+           font-family: var(--font-head); font-weight: 700;
+           font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
   .badge-blue   { background: rgba(16,185,129,.1); color: var(--accent); border: 1px solid rgba(16,185,129,.2); }
   .badge-red    { background: rgba(248,113,113,.1);  color: var(--red);    border: 1px solid rgba(248,113,113,.25); }
   .badge-orange { background: rgba(251,146,60,.1);  color: var(--orange); border: 1px solid rgba(251,146,60,.25); }
   .badge-green  { background: rgba(52,211,153,.1);  color: var(--green);  border: 1px solid rgba(52,211,153,.25); }
 
   /* Tables */
-  .preview-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
-  .preview-table th { font-size: 12px; letter-spacing: 1px; color: #e2e8f0;
-                      text-transform: uppercase; padding: 7px 10px; font-weight: 800;
+  .preview-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px;
+                   font-variant-numeric: tabular-nums; }
+  .preview-table th { font-family: var(--font-head); font-size: 11px; letter-spacing: 1.2px; color: var(--muted);
+                      text-transform: uppercase; padding: 9px 12px; font-weight: 700;
                       border-bottom: 2px solid var(--accent); text-align: right; }
   .preview-table th:first-child { text-align: left; }
-  .preview-table td { padding: 6px 10px; border-bottom: 1px solid rgba(30,58,95,.3);
-                      text-align: right; }
-  .preview-table td:first-child { text-align: left; color: var(--accent); font-weight: 700; }
+  .preview-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+                      text-align: right; font-weight: 500; }
+  .preview-table tr:hover td { background: rgba(16,185,129,.03); }
+  .preview-table td:first-child { text-align: left; color: var(--accent); font-weight: 700;
+                                  font-family: var(--font-head); }
   .col-gross  { color: var(--green); }
   .col-self   { color: var(--orange); }
   .col-rev    { color: #a78bfa; }
@@ -116,16 +134,18 @@ st.markdown("""
   .col-net    { color: var(--accent); font-weight: 700; }
 
   /* Credit table */
-  .credit-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
-  .credit-table th { font-size: 10px; letter-spacing: 1px; color: var(--muted);
-                     text-transform: uppercase; padding: 8px; font-weight: 700;
+  .credit-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px;
+                  font-variant-numeric: tabular-nums; }
+  .credit-table th { font-family: var(--font-head); font-size: 10.5px; letter-spacing: 1.2px; color: var(--muted);
+                     text-transform: uppercase; padding: 9px 8px; font-weight: 700;
                      border-bottom: 1px solid var(--border); text-align: left; }
-  .credit-table td { padding: 8px; border-bottom: 1px solid rgba(26,61,43,.4); vertical-align: top; }
+  .credit-table td { padding: 9px 8px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  .credit-table tr:hover td { background: rgba(16,185,129,.03); }
   .credit-table tfoot td { border-top: 1px solid var(--border); font-weight: 700; }
 
   /* Sidebar */
   [data-testid="stSidebar"] { background: var(--surface) !important;
-                               border-right: 1px solid var(--border) !important; }
+                               border-right: 1px solid var(--border-soft) !important; }
   [data-testid="stSidebar"] label { color: var(--muted) !important; font-size: 11px !important;
                                     letter-spacing: 1px !important; text-transform: uppercase !important; font-weight: 600 !important; }
 
@@ -133,33 +153,82 @@ st.markdown("""
   input, select, textarea, [data-testid="stTextInput"] input,
   [data-testid="stNumberInput"] input, [data-testid="stSelectbox"] select {
     background: var(--surface2) !important; border: 1px solid var(--border) !important;
-    color: var(--text) !important; font-family: 'Space Mono', monospace !important;
+    color: var(--text) !important; font-family: var(--font-body) !important;
+    border-radius: var(--radius-sm) !important;
   }
 
-  /* Buttons */
+  /* Buttons — default (secondary) = outline, primary = filled emerald */
   .stButton button { background: transparent !important; border: 1px solid var(--accent) !important;
-                     color: var(--accent) !important; font-family: 'Space Mono', monospace !important;
-                     letter-spacing: 2px !important; text-transform: uppercase !important; }
+                     color: var(--accent) !important; font-family: var(--font-head) !important;
+                     font-weight: 700 !important; letter-spacing: 1.2px !important;
+                     text-transform: uppercase !important; border-radius: var(--radius-sm) !important;
+                     transition: background .2s, transform .15s, box-shadow .2s !important; }
   .stButton button:hover { background: rgba(16,185,129,.08) !important; }
+  .stButton button[kind="primary"] { background: var(--accent) !important;
+                     color: #04130c !important;
+                     box-shadow: 0 4px 14px rgba(16,185,129,.25) !important; }
+  .stButton button[kind="primary"]:hover { background: #0ea271 !important; transform: translateY(-1px);
+                     box-shadow: 0 8px 20px rgba(16,185,129,.3) !important; }
+
+  /* Selectbox (BaseWeb) — dark control + readable value */
+  [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+    background: var(--surface2) !important; border-color: var(--border) !important;
+    color: var(--text) !important; border-radius: var(--radius-sm) !important;
+  }
+  [data-testid="stSelectbox"] [data-baseweb="select"] * { color: var(--text) !important; }
+  [data-baseweb="popover"] [data-baseweb="menu"], [data-baseweb="popover"] ul {
+    background: var(--surface2) !important; border: 1px solid var(--border) !important;
+  }
+  [data-baseweb="popover"] li { color: var(--text) !important; }
+  [data-baseweb="popover"] li:hover { background: rgba(16,185,129,.1) !important; }
+
+  /* Number input steppers */
+  [data-testid="stNumberInput"] button {
+    background: var(--surface2) !important; color: var(--muted) !important;
+    border: 1px solid var(--border) !important;
+  }
 
   /* File uploader */
   [data-testid="stFileUploader"] { background: var(--surface2) !important;
                                     border: 2px dashed var(--border) !important;
-                                    border-radius: 4px !important; }
+                                    border-radius: var(--radius) !important;
+                                    transition: border-color .2s !important; }
+  [data-testid="stFileUploader"]:hover { border-color: var(--accent) !important; }
+  [data-testid="stFileUploaderDropzone"] { background: var(--surface2) !important;
+                                           color: var(--muted) !important; }
+  [data-testid="stFileUploaderDropzone"] small,
+  [data-testid="stFileUploaderDropzone"] span { color: var(--muted) !important; }
+  [data-testid="stFileUploaderDropzone"] button {
+    background: var(--surface) !important; color: var(--accent) !important;
+    border: 1px solid var(--border) !important; border-radius: var(--radius-sm) !important;
+    font-family: var(--font-head) !important; font-weight: 700 !important;
+  }
+
+  /* BaseWeb input wrapper — covers the adornment segment (password eye etc.) */
+  [data-baseweb="input"], [data-baseweb="base-input"] {
+    background: var(--surface2) !important; border-color: var(--border) !important;
+    border-radius: var(--radius-sm) !important;
+  }
+  [data-testid="stTextInput"] button, [data-testid="stNumberInput"] svg {
+    background: transparent !important; color: var(--muted) !important;
+  }
 
   /* Dataframe */
   .stDataFrame { background: var(--surface2) !important; }
 
   /* Metric */
   [data-testid="stMetric"] { background: var(--surface2) !important;
-                              border: 1px solid var(--border) !important;
-                              border-radius: 3px !important; padding: 12px !important; }
-  [data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 11px !important;
-                                   letter-spacing: 2px !important; text-transform: uppercase !important; font-weight: 600 !important; }
-  [data-testid="stMetricValue"] { color: var(--accent) !important; font-size: 20px !important; }
+                              border: 1px solid var(--border-soft) !important;
+                              border-radius: var(--radius-sm) !important; padding: 14px 16px !important; }
+  [data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 10.5px !important;
+                                   letter-spacing: 1.8px !important; text-transform: uppercase !important; font-weight: 700 !important;
+                                   font-family: var(--font-head) !important; }
+  [data-testid="stMetricValue"] { color: var(--accent) !important; font-size: 23px !important;
+                                   font-family: var(--font-head) !important; font-weight: 800 !important;
+                                   font-variant-numeric: tabular-nums !important; }
 
   /* Divider */
-  hr { border: none !important; border-top: 1px solid var(--border) !important; margin: 28px 0 !important; }
+  hr { border: none !important; border-top: 1px solid var(--border-soft) !important; margin: 28px 0 !important; }
 
   /* Caption */
   [data-testid="stCaptionContainer"] { color: var(--muted) !important; font-size: 12px !important; }
@@ -180,7 +249,8 @@ st.markdown("""
   .stSpinner > div { border-top-color: var(--accent) !important; }
 
   /* Success / error messages */
-  [data-testid="stAlert"] { font-family: 'Space Mono', monospace !important; font-size: 12px !important; }
+  [data-testid="stAlert"] { font-family: var(--font-body) !important; font-size: 13px !important;
+                            border-radius: var(--radius-sm) !important; }
 
   /* Widget labels — Location, Product Type, Tenor, Loan Amount, etc. */
   [data-testid="stWidgetLabel"] p,
@@ -214,9 +284,11 @@ st.markdown("""
     background: rgba(16,185,129,.06) !important;
     border: 1px solid rgba(16,185,129,.35) !important;
     color: var(--green) !important;
-    font-size: 11px !important;
+    font-family: var(--font-head) !important;
+    font-size: 12px !important;
     letter-spacing: 1px !important;
-    font-weight: 600 !important;
+    font-weight: 700 !important;
+    border-radius: var(--radius-sm) !important;
   }
   [data-testid="stDownloadButton"] button:hover {
     background: rgba(16,185,129,.12) !important;
@@ -3364,7 +3436,7 @@ with st.expander("🔁  What-if: How much income is needed to qualify for ₦X?"
             unsafe_allow_html=True,
         )
 
-calc_btn = st.button("▶   Calculate Eligibility", key="calc", use_container_width=True)
+calc_btn = st.button("▶   Calculate Eligibility", key="calc", use_container_width=True, type="primary")
 
 
 # ════════════════════════════════════════════════════════════════════════════
