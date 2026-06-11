@@ -732,7 +732,7 @@ for key in ["buckets_a","summary_a","bank_a","name_a","account_no_a",
             "buckets_b","summary_b","bank_b","name_b","account_no_b",
             "credit_data","rows_a","rows_b","txns_a","txns_b",
             "debit_txns_a","debit_txns_b",
-            "last_calc_params", "batch_results", "last_share"]:
+            "last_calc_params", "batch_results", "batch_details", "last_share"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -1070,6 +1070,7 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
             st.error("Please upload at least one statement.")
         else:
             _bp_rows = []
+            _bp_details = []
             _bp_bar  = st.progress(0, text="Processing…")
             _statuses = ["queued"] * len(_bp_files[:10])
             for _bfi, _bpf in enumerate(_bp_files[:10]):
@@ -1081,6 +1082,33 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                         _bpf.getvalue(), _bp_pw, filename=_bpf.name
                     )
                     _brows = monthly_analysis(_bk, _bsumm)
+
+                    # ── Per-applicant insight detail (credit/debit/verification) ──
+                    _bd_total   = sum(t["amount"] for t in _bdebits)
+                    _bd_pri     = {"loan_repayment", "credit_card", "rent"}
+                    _bd_flagged = [t for t in _bdebits if t["category"] in _bd_pri]
+                    _bd_loans   = [t for t in _bdebits if t["category"] == "loan_repayment"]
+                    try:
+                        _b_stated  = extract_stated_totals(get_last_full_text())
+                        _b_verif   = verify_extraction_accuracy(_bk, _b_stated)
+                    except Exception:
+                        _b_verif   = {"matched": None, "message": ""}
+                    _bp_details.append({
+                        "file":        _bpf.name,
+                        "name":        _bname or _bpf.name,
+                        "bank":        _bbank or "—",
+                        "months":      _brows,
+                        "total_credits":  sum(r["parsed_gross"] for r in _brows),
+                        "total_eligible": sum(r["eligible_income"] for r in _brows),
+                        "total_debits":   _bd_total,
+                        "debit_count":    len(_bdebits),
+                        "loan_repay_sum": sum(t["amount"] for t in _bd_loans),
+                        "loan_repay_ct":  len(_bd_loans),
+                        "rent_sum":       sum(t["amount"] for t in _bdebits if t["category"] == "rent"),
+                        "flagged":        sorted(_bd_flagged, key=lambda t: -t["amount"])[:15],
+                        "verified":       _b_verif.get("matched"),
+                        "verify_msg":     _b_verif.get("message", ""),
+                    })
                     _today_ym_b = datetime.date.today().strftime("%Y-%m")
                     _b_valid = [r for r in _brows if r["ym"] < _today_ym_b and r["gross"] > 0][-N_MONTHS:]
                     if _b_valid:
@@ -1110,6 +1138,11 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                             "Frequency":     _b_res.get("repayment_frequency", "—"),
                             "Decision":      "Approved" if _b_appr else "Below Min",
                             "Watchlist":     _b_flag,
+                            "Total Credits": round(_bp_details[-1]["total_credits"]),
+                            "Total Debits":  round(_bp_details[-1]["total_debits"]),
+                            "Loan Repayments": round(_bp_details[-1]["loan_repay_sum"]),
+                            "Verified":      ("✓" if _bp_details[-1]["verified"]
+                                              else "✗" if _bp_details[-1]["verified"] is False else "—"),
                             "File":          _bpf.name,
                         })
                     else:
@@ -1119,7 +1152,13 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                             "Months": 0, "Avg Income": 0, "Max Loan": 0,
                             "Rate": "—", "Tenor": f"{_bp_ten} mo", "Repayment": 0,
                             "Frequency": "—", "Decision": "No data",
-                            "Watchlist": "", "File": _bpf.name,
+                            "Watchlist": "",
+                            "Total Credits": round(_bp_details[-1]["total_credits"]),
+                            "Total Debits":  round(_bp_details[-1]["total_debits"]),
+                            "Loan Repayments": round(_bp_details[-1]["loan_repay_sum"]),
+                            "Verified": ("✓" if _bp_details[-1]["verified"]
+                                         else "✗" if _bp_details[-1]["verified"] is False else "—"),
+                            "File": _bpf.name,
                         })
                 except Exception as _be:
                     _statuses[_bfi] = "error"
@@ -1128,11 +1167,15 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
                         "Max Loan": 0, "Rate": "—", "Tenor": f"{_bp_ten} mo",
                         "Repayment": 0, "Frequency": "—",
                         "Decision": f"Error: {str(_be)[:40]}",
-                        "Watchlist": "", "File": _bpf.name,
+                        "Watchlist": "",
+                        "Total Credits": 0, "Total Debits": 0,
+                        "Loan Repayments": 0, "Verified": "—",
+                        "File": _bpf.name,
                     })
                 _render_queue(_statuses)
             _bp_bar.progress(1.0, text=f"Done — {len(_bp_files[:10])} files processed.")
             st.session_state.batch_results = _bp_rows
+            st.session_state.batch_details = _bp_details
 
     if st.session_state.batch_results:
         _bdf = pd.DataFrame(st.session_state.batch_results)
@@ -1169,6 +1212,115 @@ with st.expander("⚡  Batch Processing — Assess multiple applicants at once",
             key="dl_batch",
             use_container_width=True,
         )
+
+        # ── Per-applicant credit/debit insight (officer visibility) ──────────
+        if st.session_state.get("batch_details"):
+            st.markdown(
+                '<div style="margin-top:18px;margin-bottom:4px;font-size:12px;font-weight:700;'
+                'letter-spacing:2px;color:#10b981;text-transform:uppercase">'
+                '🔍 Applicant Insight — Credits &amp; Debits'
+                '<span style="font-size:10px;font-weight:400;color:#94a3b8;margin-left:10px;'
+                'text-transform:none;letter-spacing:0">Officer view only · '
+                'Upload individually for full transaction detail</span></div>',
+                unsafe_allow_html=True,
+            )
+            for _bdi, _bd in enumerate(st.session_state.batch_details):
+                _bd_ver_icon = ("✅ Verified" if _bd["verified"]
+                                else "⚠ Mismatch" if _bd["verified"] is False
+                                else "— No stated total")
+                with st.expander(f"💳  {_bd['name']}  ·  {_bd['bank']}  ·  {_bd_ver_icon}",
+                                 expanded=False):
+                    # Summary cards: credits | eligible | debits | loan repayments
+                    _bic1, _bic2, _bic3, _bic4 = st.columns(4)
+                    with _bic1:
+                        st.markdown(
+                            f'<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);'
+                            f'border-radius:6px;padding:12px 14px">'
+                            f'<div style="font-size:9px;letter-spacing:2px;color:#6ee7b7;text-transform:uppercase;'
+                            f'font-weight:600;margin-bottom:6px">Total Credits</div>'
+                            f'<div style="font-size:16px;font-weight:800;color:#34d399">{money(_bd["total_credits"])}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with _bic2:
+                        st.markdown(
+                            f'<div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);'
+                            f'border-radius:6px;padding:12px 14px">'
+                            f'<div style="font-size:9px;letter-spacing:2px;color:#6ee7b7;text-transform:uppercase;'
+                            f'font-weight:600;margin-bottom:6px">Eligible Income</div>'
+                            f'<div style="font-size:16px;font-weight:800;color:#10b981">{money(_bd["total_eligible"])}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with _bic3:
+                        st.markdown(
+                            f'<div style="background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.35);'
+                            f'border-radius:6px;padding:12px 14px">'
+                            f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                            f'font-weight:600;margin-bottom:6px">Total Debits</div>'
+                            f'<div style="font-size:16px;font-weight:800;color:#f87171">{money(_bd["total_debits"])}</div>'
+                            f'<div style="font-size:9px;color:#94a3b8;margin-top:2px">{_bd["debit_count"]} transaction(s)</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with _bic4:
+                        _bd_lr_col = "#f87171" if _bd["loan_repay_ct"] else "#94a3b8"
+                        st.markdown(
+                            f'<div style="background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.35);'
+                            f'border-radius:6px;padding:12px 14px">'
+                            f'<div style="font-size:9px;letter-spacing:2px;color:#fca5a5;text-transform:uppercase;'
+                            f'font-weight:600;margin-bottom:6px">Loan Repayments</div>'
+                            f'<div style="font-size:16px;font-weight:800;color:{_bd_lr_col}">{money(_bd["loan_repay_sum"])}</div>'
+                            f'<div style="font-size:9px;color:#94a3b8;margin-top:2px">{_bd["loan_repay_ct"]} flagged</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    # Monthly credit table: gross / deductions / eligible
+                    if _bd["months"]:
+                        _bd_rows_html = "".join(
+                            f'<tr><td>{r["label"]}</td>'
+                            f'<td class="col-gross">{money(r["gross"])}</td>'
+                            f'<td class="col-self">{money(r["deductions"])}</td>'
+                            f'<td class="col-net">{money(r["eligible_income"])}</td>'
+                            f'<td style="color:#94a3b8">{r["count"]}</td></tr>'
+                            for r in _bd["months"]
+                        )
+                        st.markdown(
+                            f'<table class="preview-table" style="margin-top:12px">'
+                            f'<thead><tr><th>Month</th><th>Gross Credits</th>'
+                            f'<th>Deductions</th><th>Eligible Income</th><th>Txns</th></tr></thead>'
+                            f'<tbody>{_bd_rows_html}</tbody></table>',
+                            unsafe_allow_html=True,
+                        )
+
+                    # Flagged debits: loan repayments / credit cards / rent
+                    if _bd["flagged"]:
+                        _bd_fl_html = "".join(
+                            f'<tr><td>{t["ym"]}</td>'
+                            f'<td style="color:#e2e8f0;text-align:left">{t["narration"][:60]}</td>'
+                            f'<td style="color:#fbbf24">{t["label"]}</td>'
+                            f'<td style="color:#f87171;font-weight:700">{money(t["amount"])}</td></tr>'
+                            for t in _bd["flagged"]
+                        )
+                        st.markdown(
+                            f'<div style="margin-top:14px;font-size:10px;letter-spacing:2px;color:#f87171;'
+                            f'text-transform:uppercase;font-weight:700">🔴 Flagged Debits '
+                            f'(loan repay · credit card · rent) — top {len(_bd["flagged"])}</div>'
+                            f'<table class="preview-table" style="margin-top:6px">'
+                            f'<thead><tr><th>Month</th><th style="text-align:left">Narration</th>'
+                            f'<th>Type</th><th>Amount</th></tr></thead>'
+                            f'<tbody>{_bd_fl_html}</tbody></table>',
+                            unsafe_allow_html=True,
+                        )
+                    elif _bd["debit_count"]:
+                        st.markdown(
+                            '<div style="margin-top:12px;font-size:11px;color:#34d399">'
+                            '✓ No loan repayments, credit cards or rent detected in debits.</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    if _bd["verified"] is False and _bd["verify_msg"]:
+                        st.markdown(
+                            f'<div style="margin-top:10px;font-size:11px;color:#fbbf24">⚠ {_bd["verify_msg"]}</div>',
+                            unsafe_allow_html=True,
+                        )
 
 st.markdown("---")
 
