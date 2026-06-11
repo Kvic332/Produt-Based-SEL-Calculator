@@ -616,6 +616,14 @@ def detect_bank(text: str) -> str:
     if "lotusbank.com" in t or "0700lotusbank" in t or "lotus bank" in t_hdr:
         return "Lotus"
 
+    # ── TAJ Bank ──────────────────────────────────────────────────────────
+    # Identified by the bank's own contact email in the per-page disclaimer
+    # footer ("tajconnect@tajbank.com") — never appears in another bank's
+    # narration text.  MUST fire before generic checks: TAJ narrations are
+    # glued NIP strings that can mention any other bank's name.
+    if "tajconnect@tajbank.com" in t or "tajbank" in t_hdr:
+        return "Taj"
+
     # ── Fidelity Bank (early check) ───────────────────────────────────────
     # Identified by the bank's own domain (fidelitybank.ng) in the page
     # header/footer.  MUST fire before the OPay rules: Fidelity narrations
@@ -4125,6 +4133,53 @@ def parse_fidelity_savings(full_text: str) -> tuple[dict, str]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+def parse_taj(full_text: str) -> tuple[dict, str]:
+    """
+    TAJ Bank statement parser.
+
+    Column header: "Trans Date Value date Branch Transaction Details
+                    [Reference] Deposit Withdrawal Balance"
+    Each row renders on ONE line:
+        DD-MON-YY DD-MON-YY <branch> <narration> <deposit> <withdrawal> <balance>
+    Exactly one of deposit/withdrawal is 0.00. Dates are DD-MON-YY
+    (e.g. 25-FEB-26). Narration is glued without spaces by PyPDF2.
+
+    Account name: first line of the statement header, before
+    "Account Number" (e.g. "SYTREP KULTURE NIG. LIMITED Account Number ...").
+    """
+    buckets: dict = {}
+
+    account_name = "Unknown"
+    m_name = re.search(r'^(.+?)\s+Account Number\b', full_text, re.M)
+    if m_name:
+        account_name = m_name.group(1).strip()
+
+    MON = {"JAN": "01", "FEB": "02", "MAR": "03", "APR": "04",
+           "MAY": "05", "JUN": "06", "JUL": "07", "AUG": "08",
+           "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"}
+
+    ROW = re.compile(
+        r'^(\d{2})-([A-Z]{3})-(\d{2})\s+\d{2}-[A-Z]{3}-\d{2}\s+\d+\s+(.+?)\s+'
+        r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+[\d,]+\.\d{2}\s*$',
+        re.M,
+    )
+    for m in ROW.finditer(full_text):
+        mon = MON.get(m.group(2))
+        if not mon:
+            continue
+        ym        = f"20{m.group(3)}-{mon}"
+        narration = m.group(4).strip()
+        deposit    = float(m.group(5).replace(',', ''))
+        withdrawal = float(m.group(6).replace(',', ''))
+        if deposit > 0:
+            add_credit(buckets, ym, deposit, narration, account_name)
+        elif withdrawal > 0:
+            add_debit(ym, narration, withdrawal, date=f"{m.group(1)}-{m.group(2)}-{m.group(3)}")
+
+    return buckets, account_name
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FIDELITY E-STATEMENT PARSER
 # ════════════════════════════════════════════════════════════════════════════
 def parse_fidelity_estatement(full_text: str) -> tuple[dict, str]:
@@ -4464,6 +4519,8 @@ def parse_transactions(file_bytes: bytes, password: str = "",
         buckets, account_name = parse_fidelity_estatement(full_text)
     elif bank == "Fidelity_Savings":
         buckets, account_name = parse_fidelity_savings(full_text)
+    elif bank == "Taj":
+        buckets, account_name = parse_taj(full_text)
     elif bank == "Jaiz":
         buckets, account_name = parse_jaiz(full_text)
     elif bank == "Parallex":
