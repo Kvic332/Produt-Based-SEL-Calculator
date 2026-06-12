@@ -1,0 +1,29 @@
+name: Parser regression suite
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "bank_parser.py"
+      - "tests/**"
+      - ".github/workflows/parser-tests.yml"
+  pull_request:
+    branches: [main]
+
+jobs:
+  parser-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run parser regression suite
+        run: python tests/test_parser_regression.py
