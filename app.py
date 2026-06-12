@@ -17,7 +17,7 @@ from bank_parser import (
     get_last_full_text,
 )
 from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_limits
-from report_generator import generate_pdf_report
+from report_generator import generate_pdf_report, generate_credit_memo
 from tracker import (track, admin_stats, save_history, get_history, export_audit_csv,
                      check_blacklist, check_duplicate_application,
                      save_blacklist_entries, get_blacklist, delete_blacklist_entry, clear_blacklist)
@@ -4384,16 +4384,50 @@ if calc_btn:
             officer      = _OFFICER,
         )
         _safe_full = (_report_name or "report").replace(" ", "_").lower()
-        if st.download_button(
-            label               = "⬇  Download Full Eligibility Report (PDF)",
-            data                = _pdf_full,
-            file_name           = f"PARSIO_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
-            mime                = "application/pdf",
-            use_container_width = True,
-            key                 = "dl_full_pdf",
-        ):
-            track("download", session=_SID, officer=_OFFICER,
-                  bank=st.session_state.bank_a or "", fmt="pdf")
+
+        # ── Credit Memo — one-page committee-ready decision document ──────
+        try:
+            _memo_risk = f"{_rs_label} ({_rs_score}/5)"
+        except NameError:
+            _memo_risk = ""
+        try:
+            _memo_flags = [f"{_ft} — {_fm}" for _ft, _fm, _fc in _spf_flags]
+        except NameError:
+            _memo_flags = []
+        _pdf_memo = generate_credit_memo(
+            account_name = _report_name,
+            bank         = _report_bank,
+            rows         = _report_rows if _report_rows else [],
+            result       = result,
+            params       = _loan_params,
+            officer      = _OFFICER,
+            account_no   = _acct_no,
+            risk_label   = _memo_risk,
+            flags        = _memo_flags,
+        )
+        _dlm1, _dlm2 = st.columns(2)
+        with _dlm1:
+            if st.download_button(
+                label               = "📄  Credit Memo — one-page (PDF)",
+                data                = _pdf_memo,
+                file_name           = f"PARSIO_CreditMemo_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
+                mime                = "application/pdf",
+                use_container_width = True,
+                key                 = "dl_memo_pdf",
+            ):
+                track("download", session=_SID, officer=_OFFICER,
+                      bank=st.session_state.bank_a or "", fmt="memo_pdf")
+        with _dlm2:
+            if st.download_button(
+                label               = "⬇  Download Full Eligibility Report (PDF)",
+                data                = _pdf_full,
+                file_name           = f"PARSIO_Report_{_safe_full}_{datetime.date.today():%Y%m%d}.pdf",
+                mime                = "application/pdf",
+                use_container_width = True,
+                key                 = "dl_full_pdf",
+            ):
+                track("download", session=_SID, officer=_OFFICER,
+                      bank=st.session_state.bank_a or "", fmt="pdf")
 
         # ── Feature 8: WhatsApp / Email Share — PDF via Web Share API ───────
         import base64 as _b64s, urllib.parse as _uparse

@@ -506,3 +506,229 @@ def generate_pdf_report(
 
     doc.build(story)
     return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CREDIT MEMO — one-page committee-ready decision document
+# ══════════════════════════════════════════════════════════════════════════════
+def generate_credit_memo(
+    account_name: str,
+    bank: str,
+    rows: list[dict],            # monthly_analysis() output
+    result: dict,                # calculate_eligibility() output (required)
+    params: dict | None = None,  # tenor / location / product_type
+    officer: str = "",
+    account_no: str = "",
+    risk_label: str = "",        # e.g. "Low Risk (4.0/5)" — optional
+    flags: list[str] | None = None,  # short risk-flag strings — optional
+) -> bytes:
+    """One-page Credit Memo: verdict, terms, income basis, sign-off lines.
+
+    Designed so a credit committee can approve or decline on this page
+    alone without opening the app.
+    """
+    params = params or {}
+    flags  = flags or []
+    buf = BytesIO()
+    W   = A4[0] - 36 * mm
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=14 * mm,  bottomMargin=14 * mm,
+    )
+    story: list = []
+    today_str = datetime.date.today().strftime("%d %B %Y")
+    now_str   = datetime.datetime.now().strftime("%d %B %Y, %H:%M")
+
+    approved  = bool(result.get("approved"))
+    C_VERD    = C_EMERALD if approved else C_RED
+    C_VERD_BG = colors.HexColor("#ecfdf5") if approved else colors.HexColor("#fef2f2")
+
+    ST_TITLE = _ps("m_title", fontName="Helvetica-Bold", fontSize=19, textColor=C_TEXT, leading=23)
+    ST_SUB   = _ps("m_sub",   fontName="Helvetica",      fontSize=9,  textColor=C_MUTED, leading=12)
+    ST_SEC   = _ps("m_sec",   fontName="Helvetica-Bold", fontSize=8,  textColor=C_EMERALD,
+                   leading=10, spaceBefore=8, spaceAfter=4)
+    ST_FOOT  = _ps("m_foot",  fontName="Helvetica",      fontSize=8,  textColor=C_MUTED,
+                   leading=11, alignment=TA_CENTER)
+    ST_CELL_L = _ps("m_cl", fontName="Helvetica-Bold", fontSize=7,  textColor=C_MUTED, leading=9)
+    ST_CELL_V = _ps("m_cv", fontName="Helvetica-Bold", fontSize=10, textColor=C_TEXT,  leading=13)
+
+    # ── Accent bar + header ──────────────────────────────────────────────────
+    story.append(Table([[""]], colWidths=[W], rowHeights=[3],
+                       style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), C_VERD)])))
+    story.append(Spacer(1, 5 * mm))
+    story.append(Paragraph("CREDIT MEMO", ST_TITLE))
+    story.append(Paragraph(f"PARSIO Credit Intelligence  |  Generated {now_str}", ST_SUB))
+    story.append(Spacer(1, 4 * mm))
+
+    # ── Applicant grid ───────────────────────────────────────────────────────
+    today_ym = datetime.date.today().strftime("%Y-%m")
+    disp = [r for r in rows if r["ym"] < today_ym and r["gross"] > 0][-6:]
+    period = f'{disp[0]["label"]} - {disp[-1]["label"]}' if disp else "-"
+
+    def _kv(label, value):
+        return [Paragraph(label.upper(), ST_CELL_L), Paragraph(str(value or "-"), ST_CELL_V)]
+
+    grid = Table(
+        [
+            _kv("Applicant", account_name) + _kv("Bank", (bank or "-").replace("_", " ")),
+            _kv("Account No", account_no) + _kv("Statement Period", period),
+            _kv("Product", params.get("product_type", "-")) + _kv("Location", params.get("location", "-")),
+        ],
+        colWidths=[W * 0.16, W * 0.34, W * 0.16, W * 0.34],
+        style=TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_SURFACE),
+            ("BOX",           (0, 0), (-1, -1), 0.75, C_BORDER),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.5, C_BORDER),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ]),
+    )
+    story.append(grid)
+    story.append(Spacer(1, 5 * mm))
+
+    # ── Verdict banner ───────────────────────────────────────────────────────
+    verdict_word = "APPROVED" if approved else "DECLINED"
+    verdict_note = "Maximum Loan" if approved else "Below product minimum"
+    v_hex = "059669" if approved else "dc2626"
+    v_tbl = Table(
+        [[
+            Paragraph(f'<font color="#{v_hex}"><b>{verdict_word}</b></font>',
+                      _ps("m_verd", fontName="Helvetica-Bold", fontSize=16, leading=20)),
+            Paragraph(
+                f'<font size="7" color="#64748b">{verdict_note.upper()}</font><br/>'
+                f'<font size="17"><b>{_money(result.get("max_loan", 0))}</b></font>',
+                _ps("m_loan", fontName="Helvetica-Bold", fontSize=14, textColor=C_TEXT,
+                    leading=20, alignment=TA_RIGHT),
+            ),
+        ]],
+        colWidths=[W * 0.45, W * 0.55],
+        style=TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_VERD_BG),
+            ("BOX",           (0, 0), (-1, -1), 1.2, C_VERD),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 12),
+        ]),
+    )
+    story.append(v_tbl)
+    story.append(Spacer(1, 5 * mm))
+
+    # ── Key terms (2 rows x 3 columns of label/value pairs) ──────────────────
+    story.append(Paragraph("LOAN TERMS", ST_SEC))
+    terms = [
+        ("DTI",                _pct(result.get("dti"))),
+        ("Interest Rate",      _pct(result.get("interest_rate"))),
+        ("Tenor",              f'{params.get("tenor", "-")} months'),
+        ("Frequency",          str(result.get("repayment_frequency", "-"))),
+        ("Repayment / Period", _money(result.get("max_repayment_display", 0))),
+        ("Total Repayment",    _money(result.get("max_total_repayment", 0))),
+    ]
+    t_tbl = Table(
+        [
+            [Paragraph(t[0].upper(), ST_CELL_L) for t in terms[:3]],
+            [Paragraph(t[1], ST_CELL_V) for t in terms[:3]],
+            [Paragraph(t[0].upper(), ST_CELL_L) for t in terms[3:]],
+            [Paragraph(t[1], ST_CELL_V) for t in terms[3:]],
+        ],
+        colWidths=[W / 3] * 3,
+        style=TableStyle([
+            ("BOX",           (0, 0), (-1, -1), 0.75, C_BORDER),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.5, C_BORDER),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ]),
+    )
+    story.append(t_tbl)
+    story.append(Spacer(1, 5 * mm))
+
+    # ── Income basis ─────────────────────────────────────────────────────────
+    story.append(Paragraph("INCOME BASIS (LAST 6 COMPLETED MONTHS)", ST_SEC))
+    t_gross = sum(r["gross"] for r in disp)
+    t_self  = sum(r.get("self_transfer", 0) for r in disp)
+    t_rev   = sum(r.get("reversal", 0) for r in disp)
+    t_nb    = sum(r.get("non_business", 0) for r in disp)
+    t_loan  = sum(r.get("loan_disbursal", 0) for r in disp)
+    t_net   = sum(r.get("eligible_income", 0) for r in disp)
+    basis_rows = [["Total inflow", _money(t_gross)]]
+    if t_self: basis_rows.append(["Less: self-transfers / savings round-trips", f"- {_money(t_self)}"])
+    if t_rev:  basis_rows.append(["Less: reversals", f"- {_money(t_rev)}"])
+    if t_nb:   basis_rows.append(["Less: non-business income", f"- {_money(t_nb)}"])
+    if t_loan: basis_rows.append(["Less: loan disbursals", f"- {_money(t_loan)}"])
+    basis_rows.append(["Eligible income", _money(t_net)])
+    basis_rows.append(["Applicable turnover (decision basis)", _money(result.get("applicable_turnover", 0))])
+    b_tbl = Table(
+        [[Paragraph(r[0], _ps("m_bl", fontName="Helvetica", fontSize=9, textColor=C_TEXT, leading=12)),
+          Paragraph(f"<b>{r[1]}</b>", _ps("m_bv", fontName="Helvetica-Bold", fontSize=9,
+                    textColor=(C_RED if r[1].startswith("-") else C_TEXT), leading=12,
+                    alignment=TA_RIGHT))]
+         for r in basis_rows],
+        colWidths=[W * 0.68, W * 0.32],
+        style=TableStyle([
+            ("LINEBELOW",     (0, 0), (-1, -3), 0.4, C_BORDER),
+            ("LINEABOVE",     (0, -2), (-1, -2), 0.9, C_EMERALD),
+            ("BACKGROUND",    (0, -2), (-1, -1), C_ROW_ALT),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]),
+    )
+    story.append(b_tbl)
+    story.append(Spacer(1, 4 * mm))
+
+    # ── Risk section (optional) ──────────────────────────────────────────────
+    if risk_label or flags:
+        story.append(Paragraph("RISK SUMMARY", ST_SEC))
+        if risk_label:
+            story.append(Paragraph(
+                f"Customer risk score: <b>{risk_label}</b>",
+                _ps("m_rs", fontName="Helvetica", fontSize=9, textColor=C_TEXT, leading=12),
+            ))
+        for f in flags[:6]:
+            story.append(Paragraph(
+                f"&bull;&nbsp;{f}",
+                _ps("m_fl", fontName="Helvetica", fontSize=8.5, textColor=C_RED, leading=12),
+            ))
+        story.append(Spacer(1, 4 * mm))
+
+    # ── Sign-off ─────────────────────────────────────────────────────────────
+    story.append(Paragraph("SIGN-OFF", ST_SEC))
+    s_tbl = Table(
+        [
+            [Paragraph(f"Assessed by: <b>{officer or '-'}</b>",
+                       _ps("m_s1", fontName="Helvetica", fontSize=9, textColor=C_TEXT, leading=12)),
+             Paragraph(f"Date: {today_str}",
+                       _ps("m_s2", fontName="Helvetica", fontSize=9, textColor=C_TEXT, leading=12))],
+            ["", ""],
+            [Paragraph("Approved by: ______________________________",
+                       _ps("m_s3", fontName="Helvetica", fontSize=9, textColor=C_TEXT, leading=12)),
+             Paragraph("Date: ____________________",
+                       _ps("m_s4", fontName="Helvetica", fontSize=9, textColor=C_TEXT, leading=12))],
+        ],
+        colWidths=[W * 0.62, W * 0.38],
+        style=TableStyle([
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("ROWBACKGROUNDS", (0, 1), (-1, 1), [C_WHITE]),
+        ]),
+    )
+    story.append(s_tbl)
+
+    # ── Footer ───────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 5 * mm))
+    story.append(HRFlowable(width=W, thickness=1, color=C_BORDER))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(
+        f"PARSIO Credit Intelligence  |  Memo generated {now_str}  |  "
+        f"Figures verified against the uploaded bank statement",
+        ST_FOOT,
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
