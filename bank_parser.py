@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Kenechukwu (Kvic7). All rights reserved.
+# Proprietary and confidential — see LICENSE. No license granted.
 # NOTE: Do NOT add `from __future__ import annotations` here.
 # This module is named `parser`, which collides with the removed CPython
 # stdlib module of the same name. A dependency importing the old stdlib

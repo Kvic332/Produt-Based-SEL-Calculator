@@ -3,6 +3,9 @@ PDF Report Generator — PARSIO Credit Intelligence
 Uses ReportLab Platypus engine.
 White-background professional layout with Emerald + Gold brand colours.
 """
+# Copyright (c) 2026 Kenechukwu (Kvic7). All rights reserved.
+# Proprietary and confidential — see LICENSE. No license granted.
+
 from __future__ import annotations
 
 import datetime

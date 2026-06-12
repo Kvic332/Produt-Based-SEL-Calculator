@@ -27,6 +27,9 @@ Usage
   track("parse_success", session=sid, bank="GTBank", filename="stmt.pdf",
         txn_count=48, total=1_200_000.0)
 """
+# Copyright (c) 2026 Kenechukwu (Kvic7). All rights reserved.
+# Proprietary and confidential — see LICENSE. No license granted.
+
 from __future__ import annotations
 
 import datetime
