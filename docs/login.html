@@ -467,8 +467,8 @@
       e.preventDefault();
       var name = document.getElementById('username').value.trim();
       if (!name) return;
-      // The app's gate compares against the server's UTC date.
-      var signed = new Date().toISOString().slice(0, 10);
+      // Nigeria time (WAT = UTC+1, no DST) — must match the app's gate date.
+      var signed = new Date(Date.now() + 3600000).toISOString().slice(0, 10);
       goTo(APP_URL + '?officer=' +
         encodeURIComponent(name) + '&signed=' + signed);
     });
@@ -479,7 +479,8 @@
       e.preventDefault();
       var key = window.prompt('Admin key:');
       if (!key) return;
-      var signed = new Date().toISOString().slice(0, 10);
+      // Nigeria time (WAT = UTC+1, no DST) — must match the app's gate date.
+      var signed = new Date(Date.now() + 3600000).toISOString().slice(0, 10);
       goTo(APP_URL + '?officer=Admin&signed=' +
         signed + '&admin=' + encodeURIComponent(key.trim()));
     });

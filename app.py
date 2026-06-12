@@ -30,6 +30,13 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Nigeria time (WAT, UTC+1 — no DST, so a fixed offset is exact) ────────────
+# Streamlit Cloud servers run UTC; every user-facing clock/date must use this.
+_TZ_LAGOS = datetime.timezone(datetime.timedelta(hours=1), name="WAT")
+
+def now_lagos() -> datetime.datetime:
+    return datetime.datetime.now(_TZ_LAGOS)
+
 # ── Dark theme CSS — PARSIO design system (portal-aligned, Phase 1) ──────────
 st.markdown("""
 <style>
@@ -985,7 +992,7 @@ if "officer_name" not in st.session_state:
 # tool is revealed.  The signed-in state survives browser refreshes
 # (stored in URL query params: ?officer=Name&signed=YYYY-MM-DD).
 # ════════════════════════════════════════════════════════════════════════════
-_today_iso   = datetime.date.today().isoformat()
+_today_iso   = now_lagos().date().isoformat()
 _signed_date = st.query_params.get("signed", "")
 _signed_name = st.query_params.get("officer", "").strip()
 _is_signed_in = (_signed_date == _today_iso and bool(_signed_name))
@@ -996,7 +1003,7 @@ if _is_signed_in:
 
 if not _is_signed_in:
     # ── Build time-of-day greeting ─────────────────────────────────────────
-    _sh = datetime.datetime.now().hour
+    _sh = now_lagos().hour
     if   5  <= _sh < 12: _sw, _sc, _sicon = "Good morning",   "#34d399", "☀️"
     elif 12 <= _sh < 17: _sw, _sc, _sicon = "Good afternoon", "#fbbf24", "🌤"
     elif 17 <= _sh < 21: _sw, _sc, _sicon = "Good evening",   "#f59e0b", "🌆"
@@ -1121,7 +1128,7 @@ if not _is_signed_in:
 
     st.markdown(
         f'<div style="margin-top:14px;font-size:16px;font-weight:700;color:#64748b;text-align:center">'
-        f'{datetime.date.today().strftime("%A, %d %B %Y")}</div>',
+        f'{now_lagos().strftime("%A, %d %B %Y")}</div>',
         unsafe_allow_html=True,
     )
     st.stop()   # ← nothing else renders until the officer has signed in
@@ -1130,7 +1137,7 @@ if not _is_signed_in:
 # ════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ════════════════════════════════════════════════════════════════════════════
-_now_h = datetime.datetime.now().hour
+_now_h = now_lagos().hour
 if   5  <= _now_h < 12: _greet, _greet_col, _greet_sub = "Good morning ☀️",  "#34d399", "Ready for a productive day of assessments."
 elif 12 <= _now_h < 17: _greet, _greet_col, _greet_sub = "Good afternoon 🌤", "#fbbf24", "Keep the momentum going."
 elif 17 <= _now_h < 21: _greet, _greet_col, _greet_sub = "Good evening 🌆",   "#f59e0b", "Wrapping up for the day?"
@@ -1172,7 +1179,7 @@ st.markdown(f"""
     <div style="border-left:1px solid #1a3d2b;padding-left:14px;text-align:center">
       <div style="font-family:'Space Mono',monospace;font-size:28px;font-weight:700;
                   color:{_greet_col};letter-spacing:3px;line-height:1">
-        {datetime.datetime.now().strftime("%H:%M:%S")}
+        {now_lagos().strftime("%H:%M:%S")}
       </div>
       <div style="font-size:9px;letter-spacing:2px;color:#64748b;text-transform:uppercase;margin-top:4px">
         Session Time
@@ -1250,7 +1257,7 @@ with _off_sb1:
         f'<div style="font-size:13px;font-weight:800;color:#10b981;letter-spacing:0.5px">'
         f'👤 {_OFFICER}</div>'
         f'<div style="font-size:10px;color:#374151">'
-        f'· {datetime.date.today().strftime("%A, %d %b %Y")}</div>'
+        f'· {now_lagos().strftime("%A, %d %b %Y")}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )

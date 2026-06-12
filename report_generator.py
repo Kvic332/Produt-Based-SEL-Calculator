@@ -17,6 +17,13 @@ from reportlab.platypus import (
     HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
+# ── Nigeria time (WAT, UTC+1 — no DST). Servers run UTC. ─────────────────────
+_TZ_LAGOS = datetime.timezone(datetime.timedelta(hours=1), name="WAT")
+
+def _now_lagos() -> datetime.datetime:
+    return datetime.datetime.now(_TZ_LAGOS)
+
+
 # ── Brand palette (print-friendly: white background, emerald + gold accents) ──
 C_EMERALD  = colors.HexColor("#10b981")
 C_GREEN    = colors.HexColor("#34d399")
@@ -84,7 +91,7 @@ def generate_pdf_report(
         topMargin=14 * mm,  bottomMargin=14 * mm,
     )
     story: list = []
-    today_str = datetime.date.today().strftime("%d %B %Y")
+    today_str = _now_lagos().strftime("%d %B %Y")
 
     # ── Styles ────────────────────────────────────────────────────────────────
     ST_TITLE  = _ps("title",  fontName="Helvetica-Bold", fontSize=20, textColor=C_TEXT,    leading=24)
@@ -538,8 +545,8 @@ def generate_credit_memo(
         topMargin=14 * mm,  bottomMargin=14 * mm,
     )
     story: list = []
-    today_str = datetime.date.today().strftime("%d %B %Y")
-    now_str   = datetime.datetime.now().strftime("%d %B %Y, %H:%M")
+    today_str = _now_lagos().strftime("%d %B %Y")
+    now_str   = _now_lagos().strftime("%d %B %Y, %H:%M")
 
     approved  = bool(result.get("approved"))
     C_VERD    = C_EMERALD if approved else C_RED
