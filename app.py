@@ -931,7 +931,7 @@ if not _is_signed_in:
           </div>
           <div style="font-size:26px;font-weight:900;color:#fff;
                       font-family:'DM Serif Display',serif;margin-bottom:4px">
-            Loan <em style="color:#10b981;font-style:italic">Eligibility</em> Calculator
+            Credit <em style="color:#10b981;font-style:italic">Intelligence</em> Engine
           </div>
           <div style="font-size:14px;font-weight:600;color:#94a3b8;margin-bottom:28px;letter-spacing:0.5px">
             Powered by Kenechukwu Kvic7™ &nbsp;·&nbsp; All Products &nbsp;·&nbsp; Auto-decisioning
