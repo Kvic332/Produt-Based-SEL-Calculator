@@ -3879,14 +3879,20 @@ if calc_btn:
             except Exception:
                 _prior_notes = []
             if _prior_notes:
-                _notes_html = '<div style="margin-top:10px;border-top:1px solid rgba(245,158,11,.2);padding-top:8px">'
-                _notes_html += ('<div style="font-size:10px;letter-spacing:1.5px;color:#f59e0b;'
-                                'text-transform:uppercase;font-weight:700;margin-bottom:4px">Officer Notes on File</div>')
+                _notes_html = '<div style="margin-top:12px;border-top:1px solid rgba(245,158,11,.25);padding-top:10px">'
+                _notes_html += ('<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:12px;'
+                                'letter-spacing:1.8px;color:#fbbf24;text-transform:uppercase;'
+                                'font-weight:800;margin-bottom:8px">📝 Officer Notes on File</div>')
                 for _n in _prior_notes[:3]:
                     _notes_html += (
-                        f'<div style="font-size:12px;color:#cbd5e1;margin-bottom:4px">'
-                        f'<span style="color:#64748b;font-size:10px">{(_n.get("ts") or "")[:10]} · '
-                        f'{_n.get("officer") or "—"}:</span> {_n.get("note") or ""}</div>'
+                        f'<div style="background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);'
+                        f'border-left:4px solid #f59e0b;border-radius:8px;'
+                        f'padding:10px 14px;margin-bottom:8px">'
+                        f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:11px;'
+                        f'font-weight:700;color:#fbbf24;margin-bottom:4px">'
+                        f'{(_n.get("ts") or "")[:10]} &nbsp;·&nbsp; {_n.get("officer") or "—"}</div>'
+                        f'<div style="font-size:14px;font-weight:700;color:#ffffff;line-height:1.6">'
+                        f'{_n.get("note") or ""}</div></div>'
                     )
                 _notes_html += '</div>'
 
@@ -4665,13 +4671,18 @@ if isinstance(_lp_notes, dict) and isinstance(_lp_notes.get("result"), dict):
             _exist_notes = []
         if _exist_notes:
             st.markdown(
-                '<div style="font-size:10px;letter-spacing:1.5px;color:#9fb0a7;'
-                'text-transform:uppercase;font-weight:700;margin:10px 0 4px">Notes on file</div>'
+                '<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:12px;'
+                'letter-spacing:1.8px;color:#fbbf24;text-transform:uppercase;'
+                'font-weight:800;margin:12px 0 8px">📝 Notes on file</div>'
                 + "".join(
-                    f'<div style="font-size:12px;color:#cbd5e1;margin-bottom:5px;'
-                    f'padding:7px 10px;background:rgba(255,255,255,.03);border-radius:6px">'
-                    f'<span style="color:#6b7c73;font-size:10px">{(n.get("ts") or "")[:10]} · '
-                    f'{n.get("officer") or "—"}:</span> {n.get("note") or ""}</div>'
+                    f'<div style="background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);'
+                    f'border-left:4px solid #f59e0b;border-radius:8px;'
+                    f'padding:10px 14px;margin-bottom:8px">'
+                    f'<div style="font-family:Plus Jakarta Sans,sans-serif;font-size:11px;'
+                    f'font-weight:700;color:#fbbf24;margin-bottom:4px">'
+                    f'{(n.get("ts") or "")[:10]} &nbsp;·&nbsp; {n.get("officer") or "—"}</div>'
+                    f'<div style="font-size:14px;font-weight:700;color:#ffffff;line-height:1.6">'
+                    f'{n.get("note") or ""}</div></div>'
                     for n in _exist_notes[:5]
                 ),
                 unsafe_allow_html=True,
