@@ -424,6 +424,104 @@ def pct(v) -> str:
     except (TypeError, ValueError):
         return "--"
 
+def render_parse_confidence(buckets: dict, pct_match, bank: str,
+                            filename: str = "", session: str = "",
+                            officer: str = "") -> None:
+    """Parser self-audit — shown after every extraction.
+
+    Components
+    ----------
+    accuracy   kobo-match vs the statement's own stated totals (when available)
+    coverage   months with data vs the full span of months in the statement
+               (a gap month usually means pages the parser silently skipped)
+    density    average transactions per active month (a 6-month statement
+               yielding 3 txns/month suggests dropped lines)
+
+    Composite score drives a High / Medium / Low badge; Low statements are
+    flagged for manual review and every report is tracked for the admin
+    dashboard so weak parsers surface systematically instead of one
+    complaint at a time.
+    """
+    import re as _re_pc
+    months = sorted(k for k in buckets if _re_pc.match(r"^20\d{2}-\d{2}$", k))
+    if not months:
+        return
+    active = [m for m in months if buckets[m].get("gross", 0) > 0]
+    if not active:
+        return
+
+    # Month coverage across the statement's own span
+    _y0, _m0 = int(months[0][:4]),  int(months[0][5:])
+    _y1, _m1 = int(months[-1][:4]), int(months[-1][5:])
+    span = (_y1 - _y0) * 12 + (_m1 - _m0) + 1
+    coverage = len(active) / span if span else 1.0
+    gap_months = span - len(active)
+
+    # Transaction density
+    txn_total = sum(buckets[m].get("count", 0) for m in active)
+    avg_txn   = txn_total / len(active)
+    density   = min(avg_txn / 10.0, 1.0)   # 10+ txns/month = fully dense
+
+    # Accuracy (neutral when the statement states no totals to check against)
+    has_acc = pct_match is not None
+    acc     = min(float(pct_match) / 100.0, 1.0) if has_acc else 0.70
+
+    score = acc * 0.55 + coverage * 0.30 + density * 0.15
+    if score >= 0.90 and (not has_acc or pct_match >= 95) and gap_months == 0:
+        level, col, icon = "High", "#34d399", "●"
+    elif score >= 0.72:
+        level, col, icon = "Medium", "#fbbf24", "●"
+    else:
+        level, col, icon = "Low", "#f87171", "●"
+
+    _parts = []
+    _parts.append(
+        f'<span style="color:#9fb0a7">Accuracy '
+        f'<strong style="color:{"#34d399" if has_acc and pct_match >= 95 else "#fbbf24" if has_acc else "#6b7c73"}">'
+        f'{f"{pct_match:.0f}%" if has_acc else "n/a"}</strong></span>'
+    )
+    _parts.append(
+        f'<span style="color:#9fb0a7">Coverage '
+        f'<strong style="color:{"#34d399" if gap_months == 0 else "#f87171"}">'
+        f'{len(active)}/{span} months</strong></span>'
+    )
+    _parts.append(
+        f'<span style="color:#9fb0a7">Density '
+        f'<strong style="color:{"#34d399" if avg_txn >= 10 else "#fbbf24"}">'
+        f'{avg_txn:.0f} txn/mo</strong></span>'
+    )
+    _warn = ""
+    if level == "Low":
+        _warn = ('<div style="margin-top:6px;font-size:11.5px;color:#f87171;font-weight:600">'
+                 '⚠ Low parser confidence — verify the monthly figures against the '
+                 'original statement before relying on this assessment.</div>')
+    elif gap_months > 0:
+        _warn = (f'<div style="margin-top:6px;font-size:11.5px;color:#fbbf24">'
+                 f'⚑ {gap_months} month(s) in the statement period have no extracted '
+                 f'transactions — check for skipped pages.</div>')
+
+    st.markdown(
+        f'<div style="background:rgba(0,0,0,.2);border:1px solid {col}44;'
+        f'border-left:4px solid {col};border-radius:8px;padding:10px 14px;'
+        f'margin-top:8px;font-size:12px">'
+        f'<span style="font-family:Plus Jakarta Sans,sans-serif;font-weight:800;'
+        f'color:{col};letter-spacing:1px">{icon} PARSER CONFIDENCE: {level.upper()}'
+        f'</span>&nbsp;&nbsp;<span style="color:#6b7c73">score {score:.0%}</span>'
+        f'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:5px">'
+        + "".join(_parts) + '</div>' + _warn + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        track("parse_confidence", session=session, officer=officer, bank=bank,
+              filename=filename, score=round(score, 3), level=level,
+              accuracy_pct=(round(pct_match, 1) if has_acc else None),
+              months_active=len(active), months_span=span,
+              avg_txn_per_month=round(avg_txn, 1))
+    except Exception:
+        pass
+
+
 def extract_account_no(raw_text: str) -> str:
     """Extract 10-digit Nigerian NUBAN account number from raw statement text.
 
@@ -1619,6 +1717,7 @@ with col2:
                               months=len([r for r in rows if r["gross"] > 0]))
 
                         # ── Accuracy Verification — reuses cached text, no re-parse ──
+                        _conf_pct_a = None   # feeds the parser-confidence report below
                         is_pdf = not file_a.name.lower().endswith((".xlsx", ".xls"))
                         if is_pdf and buckets and _reused_text_a:
                             try:
@@ -1626,6 +1725,7 @@ with col2:
                                 verdict = verify_extraction_accuracy(buckets, stated)
                                 if verdict["pct_match"] is not None:
                                     _pct_match = verdict["pct_match"]
+                                    _conf_pct_a = _pct_match
                                     ext = verdict["extracted"]
                                     stl = verdict["stated_total"]
                                     colour = ("#34d399" if _pct_match >= 95
@@ -1643,6 +1743,17 @@ with col2:
                                     )
                             except Exception:
                                 pass  # Accuracy check is best-effort; never block the main flow
+
+                        # ── Parser Confidence Report ──────────────────────────
+                        if buckets:
+                            try:
+                                render_parse_confidence(
+                                    buckets, _conf_pct_a, bank,
+                                    filename=file_a.name, session=_SID,
+                                    officer=_OFFICER,
+                                )
+                            except Exception:
+                                pass  # never block the main flow
 
                         # ── Statement Freshness Warning ───────────────────────
                         if buckets:
@@ -2876,6 +2987,7 @@ with col4:
                               months=len([r for r in rows_b if r["gross"] > 0]), slot="B")
 
                         # ── Accuracy Verification — reuses cached text, no re-parse ──
+                        _conf_pct_b = None
                         is_pdf_b = not file_b.name.lower().endswith((".xlsx", ".xls"))
                         if is_pdf_b and buckets_b and _reused_text_b:
                             try:
@@ -2883,6 +2995,7 @@ with col4:
                                 verdict_b = verify_extraction_accuracy(buckets_b, stated_b)
                                 if verdict_b["pct_match"] is not None:
                                     _pct_match = verdict_b["pct_match"]
+                                    _conf_pct_b = _pct_match
                                     ext = verdict_b["extracted"]
                                     stl = verdict_b["stated_total"]
                                     colour = ("#34d399" if _pct_match >= 95
@@ -2898,6 +3011,17 @@ with col4:
                                         f'</div>',
                                         unsafe_allow_html=True,
                                     )
+                            except Exception:
+                                pass
+
+                        # ── Parser Confidence Report (Statement B) ────────────
+                        if buckets_b:
+                            try:
+                                render_parse_confidence(
+                                    buckets_b, _conf_pct_b, bank_b,
+                                    filename=file_b.name, session=_SID,
+                                    officer=_OFFICER,
+                                )
                             except Exception:
                                 pass
 
