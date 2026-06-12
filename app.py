@@ -20,7 +20,8 @@ from sel_rules import calculate_eligibility, get_interest_rate, get_dti, loan_li
 from report_generator import generate_pdf_report, generate_credit_memo
 from tracker import (track, admin_stats, save_history, get_history, export_audit_csv,
                      check_blacklist, check_duplicate_application,
-                     save_blacklist_entries, get_blacklist, delete_blacklist_entry, clear_blacklist)
+                     save_blacklist_entries, get_blacklist, delete_blacklist_entry, clear_blacklist,
+                     get_applicant_assessments, save_officer_note, get_officer_notes)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -3718,6 +3719,23 @@ if calc_btn:
         )
         # Build combined applicant name + account number for tracking
         _acct_no = (st.session_state.account_no_a or "") or (st.session_state.account_no_b or "")
+
+        # ── Cross-statement applicant memory ──────────────────────────────
+        # Snapshot the borrower's PRIOR assessments before logging this one,
+        # so the diff below compares against history, not against itself.
+        try:
+            _prior_assess = get_applicant_assessments(_acct_no, _report_name or "")
+        except Exception:
+            _prior_assess = []
+
+        # Debit-side obligations for this assessment (visibility + history diff)
+        _deb_all_mem = (st.session_state.get("debit_txns_a") or []) + \
+                       (st.session_state.get("debit_txns_b") or [])
+        _lr_mem      = [t for t in _deb_all_mem if t.get("category") == "loan_repayment"]
+        _lr_months   = {t["ym"] for t in _lr_mem}
+        _monthly_repay_mem = (sum(t["amount"] for t in _lr_mem) / len(_lr_months)) if _lr_months else 0.0
+        _debit_total_mem   = sum(t["amount"] for t in _deb_all_mem)
+
         track("eligibility_result",
               session=_SID, officer=_OFFICER,
               bank=st.session_state.bank_a or "",
@@ -3729,7 +3747,9 @@ if calc_btn:
               product=prod_type,
               total_net=round(result.get("total_net", 0), 2),
               applicant=_report_name or "",
-              account_no=_acct_no)
+              account_no=_acct_no,
+              monthly_repay_obligation=round(_monthly_repay_mem, 2),
+              debit_total=round(_debit_total_mem, 2))
 
         # ── Duplicate Application Detection ──────────────────────────────
         if _acct_no:
@@ -3774,12 +3794,13 @@ if calc_btn:
             "manual_rate":  manual_rate,
         }
 
-        # ── Save params for persistent What-If panel ──────────────────────
+        # ── Save params for persistent What-If panel + Officer Notes ──────
         st.session_state.last_calc_params = {
             "nets": nets, "counts": counts, "location": location,
             "prod_type": prod_type, "other_loans": other_loans,
             "manual_rate": manual_rate, "result": result,
             "sel_mode": (_product == "SEL"),
+            "report_name": _report_name, "acct_no": _acct_no,
         }
         st.session_state["_wi_tenor"] = tenor
         st.session_state["_wi_other"] = float(other_loans)
@@ -3800,39 +3821,96 @@ if calc_btn:
             approved     = result.get("approved", False),
             session      = _SID,
         )
-        if _hist_name:
-            _past = get_history(_hist_name)
-            # Skip the very first entry — that's the one we just saved
-            _past_prev = [p for p in _past if p["ts"] != _past[0]["ts"]] if _past else []
-            if _past_prev:
-                _pp = _past_prev[0]  # most recent PREVIOUS assessment
-                _prev_avg = _pp["avg_income"]
-                _prev_loan = _pp["max_loan"]
-                _chg_inc  = ((_avg_ei - _prev_avg) / _prev_avg * 100) if _prev_avg else 0
-                _chg_loan = ((_result_loan := result.get("max_loan", 0)) - _prev_loan)
-                _hist_col = "#34d399" if _chg_inc >= 0 else "#f87171"
-                _hist_dt  = _pp["ts"][:10]
-                st.markdown(
-                    f'<div style="margin:6px 0 14px;padding:10px 14px;'
-                    f'background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);'
-                    f'border-left:4px solid #f59e0b;border-radius:4px;font-size:12px">'
-                    f'<span style="color:#f59e0b;font-weight:700;letter-spacing:1px">📋 RETURNING APPLICANT</span>'
-                    f'&nbsp;&nbsp;<span style="color:#64748b;font-size:10px">Last assessed {_hist_dt} '
-                    f'via {_pp["bank"]} | {_pp["location"]} | {_pp["product"]}</span><br>'
-                    f'<span style="color:#94a3b8">Avg income: </span>'
-                    f'<span style="color:#e2e8f0;font-weight:700">{money(_prev_avg)}</span>'
-                    f'&nbsp;→&nbsp;'
-                    f'<span style="color:{_hist_col};font-weight:700">{money(_avg_ei)}</span>'
-                    f'&nbsp;<span style="color:{_hist_col}">({_chg_inc:+.1f}%)</span>'
-                    f'&nbsp;&nbsp;|&nbsp;&nbsp;'
-                    f'<span style="color:#94a3b8">Max loan: </span>'
-                    f'<span style="color:#e2e8f0;font-weight:700">{money(_prev_loan)}</span>'
-                    f'&nbsp;→&nbsp;'
-                    f'<span style="color:{"#34d399" if _chg_loan >= 0 else "#f87171"};font-weight:700">'
-                    f'{money(result.get("max_loan", 0))}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+        # ── Borrower Memory — rich diff vs prior assessments ──────────────
+        if _prior_assess:
+            _pa  = _prior_assess[0]   # most recent prior assessment
+            _f   = lambda v: float(v or 0)
+            _cur_net   = result.get("total_net", 0)
+            _cur_loan  = result.get("max_loan", 0)
+            _cur_dti   = (result.get("dti") or 0) * 100
+            _cur_obl   = _monthly_repay_mem
+            _pr_net    = _f(_pa.get("total_net"))
+            _pr_loan   = _f(_pa.get("max_loan"))
+            _pr_dti    = _f(_pa.get("dti"))
+            _pr_obl    = _f(_pa.get("monthly_repay_obligation"))
+            _d_inc_pct = ((_cur_net - _pr_net) / _pr_net * 100) if _pr_net else 0
+            _inc_col   = "#34d399" if _d_inc_pct >= 0 else "#f87171"
+            _loan_col  = "#34d399" if _cur_loan >= _pr_loan else "#f87171"
+            _dti_col   = "#34d399" if _cur_dti <= _pr_dti else "#fbbf24"
+
+            _delta_bits = [
+                f'<span style="color:#94a3b8">Eligible net: </span>'
+                f'<span style="color:#e2e8f0;font-weight:700">{money(_pr_net)}</span> → '
+                f'<span style="color:{_inc_col};font-weight:700">{money(_cur_net)} ({_d_inc_pct:+.1f}%)</span>',
+                f'<span style="color:#94a3b8">Max loan: </span>'
+                f'<span style="color:#e2e8f0;font-weight:700">{money(_pr_loan)}</span> → '
+                f'<span style="color:{_loan_col};font-weight:700">{money(_cur_loan)}</span>',
+                f'<span style="color:#94a3b8">DTI: </span>'
+                f'<span style="color:#e2e8f0;font-weight:700">{_pr_dti:.1f}%</span> → '
+                f'<span style="color:{_dti_col};font-weight:700">{_cur_dti:.1f}%</span>',
+            ]
+            # New / increased loan obligations — the classic repeat-borrower trap
+            _obl_warn = ""
+            if _cur_obl > 0 and _pr_obl == 0:
+                _obl_warn = (f'<div style="margin-top:6px;color:#f87171;font-weight:700;font-size:12px">'
+                             f'⚠ NEW loan repayment obligations: {money(_cur_obl)}/month '
+                             f'(none in the previous assessment)</div>')
+            elif _pr_obl > 0 and _cur_obl > _pr_obl * 1.5:
+                _obl_warn = (f'<div style="margin-top:6px;color:#fbbf24;font-weight:700;font-size:12px">'
+                             f'⚑ Loan repayment obligations up {(_cur_obl/_pr_obl-1)*100:.0f}%: '
+                             f'{money(_pr_obl)}/mo → {money(_cur_obl)}/mo</div>')
+
+            _hist_rows_html = "".join(
+                f'<tr>'
+                f'<td>{(h.get("ts") or "")[:10]}</td>'
+                f'<td>{h.get("officer") or "—"}</td>'
+                f'<td>{(h.get("bank") or "—").replace("_"," ")}</td>'
+                f'<td style="text-align:right">{money(_f(h.get("total_net")))}</td>'
+                f'<td style="text-align:right">{money(_f(h.get("max_loan")))}</td>'
+                f'<td style="text-align:right">{_f(h.get("dti")):.1f}%</td>'
+                f'<td style="color:{"#34d399" if h.get("approved") else "#f87171"};font-weight:700">'
+                f'{"Approved" if h.get("approved") else "Declined"}</td>'
+                f'</tr>'
+                for h in _prior_assess[:5]
+            )
+            _notes_html = ""
+            try:
+                _prior_notes = get_officer_notes(_acct_no, _report_name or "")
+            except Exception:
+                _prior_notes = []
+            if _prior_notes:
+                _notes_html = '<div style="margin-top:10px;border-top:1px solid rgba(245,158,11,.2);padding-top:8px">'
+                _notes_html += ('<div style="font-size:10px;letter-spacing:1.5px;color:#f59e0b;'
+                                'text-transform:uppercase;font-weight:700;margin-bottom:4px">Officer Notes on File</div>')
+                for _n in _prior_notes[:3]:
+                    _notes_html += (
+                        f'<div style="font-size:12px;color:#cbd5e1;margin-bottom:4px">'
+                        f'<span style="color:#64748b;font-size:10px">{(_n.get("ts") or "")[:10]} · '
+                        f'{_n.get("officer") or "—"}:</span> {_n.get("note") or ""}</div>'
+                    )
+                _notes_html += '</div>'
+
+            st.markdown(
+                f'<div style="margin:6px 0 14px;padding:12px 16px;'
+                f'background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.22);'
+                f'border-left:4px solid #f59e0b;border-radius:8px;font-size:12px">'
+                f'<span style="font-family:Plus Jakarta Sans,sans-serif;color:#f59e0b;'
+                f'font-weight:800;letter-spacing:1px">📋 RETURNING APPLICANT</span>'
+                f'&nbsp;&nbsp;<span style="color:#64748b;font-size:11px">'
+                f'{len(_prior_assess)} prior assessment(s) · last on {(_pa.get("ts") or "")[:10]} '
+                f'by {_pa.get("officer") or "—"}</span>'
+                f'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px">'
+                + "".join(_delta_bits) + '</div>'
+                + _obl_warn +
+                f'<table class="preview-table" style="margin-top:10px"><thead><tr>'
+                f'<th style="text-align:left">Date</th><th style="text-align:left">Officer</th>'
+                f'<th style="text-align:left">Bank</th><th>Eligible Net</th>'
+                f'<th>Max Loan</th><th>DTI</th><th style="text-align:left">Decision</th>'
+                f'</tr></thead><tbody>{_hist_rows_html}</tbody></table>'
+                + _notes_html +
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
         st.markdown("---")
         st.markdown('<div class="sel-section-title">04 — Results</div>', unsafe_allow_html=True)
@@ -4541,6 +4619,63 @@ async function doShare(via){{
 """, height=52)
     with st.expander("📋  Copy message text", expanded=False):
         st.code(_s["msg"], language=None)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# OFFICER NOTES — persistent free-text note on the latest assessment
+# Saved to the audit log; surfaces automatically when the same applicant
+# returns (Borrower Memory panel) and in the admin data.
+# ════════════════════════════════════════════════════════════════════════════
+_lp_notes = st.session_state.last_calc_params
+if isinstance(_lp_notes, dict) and isinstance(_lp_notes.get("result"), dict):
+    st.markdown("---")
+    with st.expander("📝  Officer Notes — attach a note to this assessment", expanded=False):
+        _note_who = _lp_notes.get("report_name") or "this applicant"
+        st.markdown(
+            f'<div style="font-size:12px;color:#cbd5e1;margin-bottom:8px;line-height:1.7">'
+            f'Notes are saved against <strong style="color:#e6ebe8">{_note_who}</strong> '
+            f'and shown automatically the next time they are assessed.</div>',
+            unsafe_allow_html=True,
+        )
+        _note_txt = st.text_area(
+            "Note",
+            key="officer_note_input",
+            placeholder="e.g. Verified top counterparty by phone — genuine trade income. "
+                        "Declined pending fresh statement (current one is 5 months old).",
+            label_visibility="collapsed",
+            height=90,
+        )
+        if st.button("💾  Save note", key="save_officer_note_btn"):
+            if not (_note_txt or "").strip():
+                st.error("Type a note before saving.")
+            else:
+                save_officer_note(
+                    applicant  = _lp_notes.get("report_name") or "",
+                    account_no = _lp_notes.get("acct_no") or "",
+                    note       = _note_txt,
+                    officer    = _OFFICER,
+                    session    = _SID,
+                )
+                st.success("Note saved — it will appear whenever this applicant is assessed again.")
+        # Existing notes for this applicant
+        try:
+            _exist_notes = get_officer_notes(
+                _lp_notes.get("acct_no") or "", _lp_notes.get("report_name") or "")
+        except Exception:
+            _exist_notes = []
+        if _exist_notes:
+            st.markdown(
+                '<div style="font-size:10px;letter-spacing:1.5px;color:#9fb0a7;'
+                'text-transform:uppercase;font-weight:700;margin:10px 0 4px">Notes on file</div>'
+                + "".join(
+                    f'<div style="font-size:12px;color:#cbd5e1;margin-bottom:5px;'
+                    f'padding:7px 10px;background:rgba(255,255,255,.03);border-radius:6px">'
+                    f'<span style="color:#6b7c73;font-size:10px">{(n.get("ts") or "")[:10]} · '
+                    f'{n.get("officer") or "—"}:</span> {n.get("note") or ""}</div>'
+                    for n in _exist_notes[:5]
+                ),
+                unsafe_allow_html=True,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════

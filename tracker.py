@@ -289,6 +289,89 @@ def get_history(account_name: str) -> list[dict]:
     )
 
 
+# ── Cross-statement applicant memory ─────────────────────────────────────────
+def get_applicant_assessments(account_no: str = "", applicant: str = "") -> list[dict]:
+    """Full past assessments for one applicant from the eligibility audit log.
+
+    Matches by account number first (strongest identity), falling back to the
+    applicant name. Returns the rich JSON fields tracked with every
+    eligibility_result — income, DTI, obligations — so a new assessment can be
+    diffed against the borrower's history. Newest first.
+    """
+    rows: list[dict] = []
+    if account_no:
+        rows = _query(
+            "SELECT ts, bank, "
+            "  JGET(data,officer)         AS officer, "
+            "  JGET(data,applicant)       AS applicant, "
+            "  JTRUE(data,approved)       AS approved, "
+            "  JGET(data,max_loan)        AS max_loan, "
+            "  JGET(data,tenor)           AS tenor, "
+            "  JGET(data,dti)             AS dti, "
+            "  JGET(data,total_net)       AS total_net, "
+            "  JGET(data,monthly_repay_obligation) AS monthly_repay_obligation, "
+            "  JGET(data,debit_total)     AS debit_total "
+            "FROM events WHERE event='eligibility_result' "
+            "AND JGET(data,account_no) = ? "
+            "ORDER BY ts DESC LIMIT 10",
+            (account_no,),
+        )
+    if not rows and applicant:
+        rows = _query(
+            "SELECT ts, bank, "
+            "  JGET(data,officer)         AS officer, "
+            "  JGET(data,applicant)       AS applicant, "
+            "  JTRUE(data,approved)       AS approved, "
+            "  JGET(data,max_loan)        AS max_loan, "
+            "  JGET(data,tenor)           AS tenor, "
+            "  JGET(data,dti)             AS dti, "
+            "  JGET(data,total_net)       AS total_net, "
+            "  JGET(data,monthly_repay_obligation) AS monthly_repay_obligation, "
+            "  JGET(data,debit_total)     AS debit_total "
+            "FROM events WHERE event='eligibility_result' "
+            "AND lower(JGET(data,applicant)) = lower(?) "
+            "ORDER BY ts DESC LIMIT 10",
+            (applicant.strip(),),
+        )
+    return rows
+
+
+# ── Officer notes ─────────────────────────────────────────────────────────────
+def save_officer_note(applicant: str, account_no: str, note: str,
+                      officer: str = "", session: str = "") -> None:
+    """Persist a free-text officer note against an applicant. Never raises."""
+    if not (note or "").strip():
+        return
+    _execute(
+        "INSERT INTO events (ts, session, event, bank, filename, data) "
+        "VALUES (?, ?, 'officer_note', '', '', ?)",
+        (_now_iso(), session,
+         json.dumps({"applicant": applicant, "account_no": account_no,
+                     "note": note.strip()[:2000], "officer": officer},
+                    default=str)),
+    )
+
+
+def get_officer_notes(account_no: str = "", applicant: str = "") -> list[dict]:
+    """Past officer notes for an applicant (account no first, name fallback)."""
+    rows: list[dict] = []
+    if account_no:
+        rows = _query(
+            "SELECT ts, JGET(data,officer) AS officer, JGET(data,note) AS note "
+            "FROM events WHERE event='officer_note' "
+            "AND JGET(data,account_no) = ? ORDER BY ts DESC LIMIT 10",
+            (account_no,),
+        )
+    if not rows and applicant:
+        rows = _query(
+            "SELECT ts, JGET(data,officer) AS officer, JGET(data,note) AS note "
+            "FROM events WHERE event='officer_note' "
+            "AND lower(JGET(data,applicant)) = lower(?) ORDER BY ts DESC LIMIT 10",
+            (applicant.strip(),),
+        )
+    return rows
+
+
 # ── Full audit-log export (admin only) ────────────────────────────────────────
 def export_audit_csv() -> str:
     """Return the complete eligibility audit trail as CSV text.
