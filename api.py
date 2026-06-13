@@ -32,9 +32,8 @@ import datetime
 import os
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader
 
 import bank_parser
@@ -57,26 +56,6 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-
-def _custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        contact={"name": "PARSIO / Kvic7™", "email": "kenechosen@gmail.com"},
-        routes=app.routes,
-    )
-    schema.setdefault("components", {})["securitySchemes"] = {
-        "APIKeyHeader": {"type": "apiKey", "in": "header", "name": "X-API-Key"}
-    }
-    schema["security"] = [{"APIKeyHeader": []}]
-    app.openapi_schema = schema
-    return schema
-
-
-app.openapi = _custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
