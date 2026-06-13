@@ -1,0 +1,19 @@
+# PARSIO Credit Intelligence API dependencies
+# Run:  pip install -r requirements_api.txt
+#       uvicorn api:app --reload --port 8000
+
+# Web framework
+fastapi>=0.111,<1
+uvicorn[standard]>=0.29
+
+# Multipart form / file uploads
+python-multipart>=0.0.9
+
+# Parser + engine deps (same as main app, minus Streamlit)
+PyPDF2>=3.0
+pandas>=2.0,<4
+numpy>=1.26,<3
+pdfplumber>=0.10
+pycryptodome>=3.19
+reportlab>=4.0
+psycopg2-binary>=2.9
