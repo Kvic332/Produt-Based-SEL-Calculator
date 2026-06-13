@@ -138,6 +138,9 @@ st.markdown("""
   .vh-declined .vh-amount { color: #fecaca; }
   .vh-sub { font-size: 13px; color: var(--muted); margin-top: 8px; font-weight: 500; }
   .vh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .vh-cell-gauge { background: rgba(0,0,0,.22); border: 1px solid rgba(255,255,255,.06);
+                  border-radius: 10px; padding: 10px 8px 6px;
+                  display: flex; align-items: center; justify-content: center; }
   .vh-cell { background: rgba(0,0,0,.22); border: 1px solid rgba(255,255,255,.06);
              border-radius: 10px; padding: 12px 14px; }
   .vh-cell-label { font-family: var(--font-head); font-size: 9.5px; letter-spacing: 1.6px;
@@ -3934,6 +3937,47 @@ if calc_btn:
         loan     = result["max_loan"]
 
         # ── Hero verdict card ─────────────────────────────────────────────
+        def _dti_gauge_svg(dti_ratio: float) -> str:
+            import math as _math
+            p = min(max(float(dti_ratio or 0), 0.0), 1.0)
+            if p <= 0.30:
+                color, risk = "#34d399", "LOW RISK"
+            elif p <= 0.45:
+                color, risk = "#f59e0b", "MODERATE"
+            else:
+                color, risk = "#f87171", "HIGH RISK"
+            cx, cy, r = 50, 50, 36
+            bg = f"M {cx-r},{cy} A {r},{r} 0 0,1 {cx+r},{cy}"
+            if p < 0.01:
+                fg = ""
+            elif p > 0.99:
+                fg = bg
+            else:
+                angle = _math.pi * (1 - p)
+                ex = cx + r * _math.cos(angle)
+                ey = cy - r * _math.sin(angle)
+                large = 1 if p > 0.5 else 0
+                fg = f"M {cx-r},{cy} A {r},{r} 0 {large},1 {ex:.2f},{ey:.2f}"
+            fg_path_html = (f'<path d="{fg}" fill="none" stroke="{color}" '
+                            f'stroke-width="7" stroke-linecap="round"/>') if fg else ""
+            return (
+                f'<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg" '
+                f'style="width:100%;max-width:130px;display:block;margin:0 auto 4px">'
+                f'<path d="{bg}" fill="none" stroke="rgba(255,255,255,0.08)" '
+                f'stroke-width="7" stroke-linecap="round"/>'
+                f'{fg_path_html}'
+                f'<text x="{cx}" y="{cy-2}" text-anchor="middle" '
+                f'font-family="system-ui,sans-serif" font-size="15" font-weight="800" '
+                f'fill="{color}">{p*100:.0f}%</text>'
+                f'<text x="{cx}" y="{cy+12}" text-anchor="middle" '
+                f'font-family="system-ui,sans-serif" font-size="7" font-weight="700" '
+                f'letter-spacing="1.2" fill="{color}">{risk}</text>'
+                f'<text x="{cx}" y="{cy+22}" text-anchor="middle" '
+                f'font-family="system-ui,sans-serif" font-size="6" '
+                f'fill="rgba(255,255,255,0.35)">DEBT-TO-INCOME</text>'
+                f'</svg>'
+            )
+
         _vh_cls   = "vh-approved" if approved else "vh-declined"
         _vh_badge = "✓ &nbsp;Approved" if approved else "✕ &nbsp;Below Product Minimum"
         _vh_rate  = (f"{pct(result['interest_rate'])} ★" if manual_rate > 0
@@ -3948,8 +3992,7 @@ if calc_btn:
             f'    <div class="vh-sub">{prod_type} &nbsp;·&nbsp; {tenor} months &nbsp;·&nbsp; {location}</div>'
             f'  </div>'
             f'  <div class="vh-grid">'
-            f'    <div class="vh-cell"><div class="vh-cell-label">DTI</div>'
-            f'      <div class="vh-cell-value em">{pct(result["dti"])}</div></div>'
+            f'    <div class="vh-cell vh-cell-gauge">{_dti_gauge_svg(result["dti"])}</div>'
             f'    <div class="vh-cell"><div class="vh-cell-label">Interest Rate</div>'
             f'      <div class="vh-cell-value">{_vh_rate}</div></div>'
             f'    <div class="vh-cell"><div class="vh-cell-label">Repayment / Period</div>'
