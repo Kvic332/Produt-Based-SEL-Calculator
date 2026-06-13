@@ -34,11 +34,15 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.models import APIKey, APIKeyIn
+from fastapi.security import APIKeyHeader
 
 import bank_parser
 from sel_rules import calculate_eligibility
 
 # ── App ───────────────────────────────────────────────────────────────────────
+
+_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 app = FastAPI(
     title="PARSIO Credit Intelligence API",
@@ -70,7 +74,7 @@ def _valid_keys() -> set[str]:
     return {k.strip() for k in raw.split(",") if k.strip()}
 
 
-def verify_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
+def verify_api_key(x_api_key: Annotated[str | None, Depends(_api_key_scheme)] = None) -> str:
     keys = _valid_keys()
     if not keys:
         raise HTTPException(
