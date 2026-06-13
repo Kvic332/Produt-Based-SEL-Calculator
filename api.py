@@ -34,6 +34,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader
 
 import bank_parser
@@ -54,22 +55,28 @@ app = FastAPI(
     license_info={"name": "Proprietary — All rights reserved"},
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_tags=[{"name": "Health"}, {"name": "Analysis"}],
-    swagger_ui_init_oauth={},
-    # Register the API key security scheme so Swagger shows the Authorize button
-    openapi_extra={
-        "components": {
-            "securitySchemes": {
-                "APIKeyHeader": {
-                    "type": "apiKey",
-                    "in": "header",
-                    "name": "X-API-Key",
-                }
-            }
-        },
-        "security": [{"APIKeyHeader": []}],
-    },
 )
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        contact={"name": "PARSIO / Kvic7™", "email": "kenechosen@gmail.com"},
+        routes=app.routes,
+    )
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "APIKeyHeader": {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    }
+    schema["security"] = [{"APIKeyHeader": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
