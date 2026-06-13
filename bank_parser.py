@@ -4520,64 +4520,70 @@ def _parse_transactions_locked(file_bytes: bytes, password: str = "",
         "mybankStatement",  # unidentified logo-only portal bank (officer overrides)
     }
 
-    if bank == "Carbon":
-        buckets, account_name = parse_carbon(full_text)
-    elif bank == "Providus":
-        buckets, account_name = parse_providus(full_text)
-    elif bank == "FairMoney":
-        buckets, account_name = parse_fairmoney(full_text)
-    elif bank == "OPay":
-        buckets, account_name = parse_opay(full_text)
-    elif bank == "OPay_v2":
-        buckets, account_name = parse_opay_v2(file_bytes, full_text)
-    elif bank == "OPay_Business":
-        buckets, account_name = parse_opay_business(file_bytes)
-    elif bank == "Moniepoint_Business_v2":
-        buckets, account_name = parse_moniepoint_business_v2(full_text)
-    elif bank == "Moniepoint_Business":
-        buckets, account_name = parse_moniepoint_business(full_text)
-    elif bank == "Kuda":
-        buckets, account_name = parse_kuda(full_text)
-    elif bank == "PalmPay_New":
-        buckets, account_name = parse_palmpay_new(full_text)
-    elif bank == "PalmPay_Business":
-        buckets, account_name = parse_palmpay_business(full_text)
-    elif bank == "Access_Oracle":
-        buckets, account_name = parse_access_oracle(full_text)
-    elif bank == "Fidelity_Direct":
-        buckets, account_name = parse_fidelity_direct(full_text)
-    elif bank == "Fidelity_EStatement":
-        buckets, account_name = parse_fidelity_estatement(full_text)
-    elif bank == "Fidelity_Savings":
-        buckets, account_name = parse_fidelity_savings(full_text)
-    elif bank == "Taj":
-        buckets, account_name = parse_taj(full_text)
-    elif bank == "Jaiz":
-        buckets, account_name = parse_jaiz(full_text)
-    elif bank == "Parallex":
-        buckets, account_name = parse_parallex(full_text)
-    elif bank == "Renmoney":
-        buckets, account_name = parse_renmoney(full_text)
-    elif bank == "Lotus":
-        buckets, account_name = parse_lotus(full_text)
-    elif bank == "Moniepoint_EStatement":
-        buckets, account_name = parse_moniepoint_estatement(full_text)
-    elif bank in _MYBANKSTATEMENT_BANKS:
-        # Sterling Bank: PyPDF2 silently drops pages with certain encodings.
-        # pdfplumber captures all pages and matches the stated total exactly.
-        _gtb_text = (
-            extract_pdf_text_pdfplumber(file_bytes, password)
-            if bank == "Sterling"
-            else full_text
-        )
-        buckets, account_name = parse_gtbank(_gtb_text)
-    elif bank == "Zenith":
-        buckets, account_name = parse_zenith(full_text)
-    elif bank == "Zenith_New":
-        buckets, account_name = parse_zenith_new(full_text)
-    elif bank == "Zenith_Corporate":
-        buckets, account_name = parse_zenith_corporate(full_text)
-    else:
+    try:
+        if bank == "Carbon":
+            buckets, account_name = parse_carbon(full_text)
+        elif bank == "Providus":
+            buckets, account_name = parse_providus(full_text)
+        elif bank == "FairMoney":
+            buckets, account_name = parse_fairmoney(full_text)
+        elif bank == "OPay":
+            buckets, account_name = parse_opay(full_text)
+        elif bank == "OPay_v2":
+            buckets, account_name = parse_opay_v2(file_bytes, full_text)
+        elif bank == "OPay_Business":
+            buckets, account_name = parse_opay_business(file_bytes)
+        elif bank == "Moniepoint_Business_v2":
+            buckets, account_name = parse_moniepoint_business_v2(full_text)
+        elif bank == "Moniepoint_Business":
+            buckets, account_name = parse_moniepoint_business(full_text)
+        elif bank == "Kuda":
+            buckets, account_name = parse_kuda(full_text)
+        elif bank == "PalmPay_New":
+            buckets, account_name = parse_palmpay_new(full_text)
+        elif bank == "PalmPay_Business":
+            buckets, account_name = parse_palmpay_business(full_text)
+        elif bank == "Access_Oracle":
+            buckets, account_name = parse_access_oracle(full_text)
+        elif bank == "Fidelity_Direct":
+            buckets, account_name = parse_fidelity_direct(full_text)
+        elif bank == "Fidelity_EStatement":
+            buckets, account_name = parse_fidelity_estatement(full_text)
+        elif bank == "Fidelity_Savings":
+            buckets, account_name = parse_fidelity_savings(full_text)
+        elif bank == "Taj":
+            buckets, account_name = parse_taj(full_text)
+        elif bank == "Jaiz":
+            buckets, account_name = parse_jaiz(full_text)
+        elif bank == "Parallex":
+            buckets, account_name = parse_parallex(full_text)
+        elif bank == "Renmoney":
+            buckets, account_name = parse_renmoney(full_text)
+        elif bank == "Lotus":
+            buckets, account_name = parse_lotus(full_text)
+        elif bank == "Moniepoint_EStatement":
+            buckets, account_name = parse_moniepoint_estatement(full_text)
+        elif bank in _MYBANKSTATEMENT_BANKS:
+            # Sterling Bank: PyPDF2 silently drops pages with certain encodings.
+            # pdfplumber captures all pages and matches the stated total exactly.
+            _gtb_text = (
+                extract_pdf_text_pdfplumber(file_bytes, password)
+                if bank == "Sterling"
+                else full_text
+            )
+            buckets, account_name = parse_gtbank(_gtb_text)
+        elif bank == "Zenith":
+            buckets, account_name = parse_zenith(full_text)
+        elif bank == "Zenith_New":
+            buckets, account_name = parse_zenith_new(full_text)
+        elif bank == "Zenith_Corporate":
+            buckets, account_name = parse_zenith_corporate(full_text)
+        else:
+            buckets, account_name = parse_generic(full_text)
+        # Safety: if a parser returned None instead of a dict, fall back
+        if buckets is None:
+            buckets, account_name = parse_generic(full_text)
+    except Exception:
         buckets, account_name = parse_generic(full_text)
 
     # Cache full_text so caller can reuse it for account-number extraction and
