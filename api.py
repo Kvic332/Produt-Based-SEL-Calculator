@@ -160,8 +160,8 @@ async def analyse(
     pdf: Annotated[UploadFile, File(description="Bank statement PDF file")],
     _key: Annotated[str, Depends(verify_api_key)],
     pdf_password: Annotated[str, Form()] = "",
-    location: Annotated[str, Form(description="'Core' or 'Expansion'")] = "Core",
-    product_type: Annotated[str, Form(description="'NEW' or 'RENEWAL'")] = "NEW",
+    location: Annotated[str, Form(description="'Lagos', 'Outside Lagos', or 'Expansion'")] = "Lagos",
+    product_type: Annotated[str, Form(description="'NTB' (new customer), 'RENEWAL', 'TOP-UP', or 'SEL'")] = "NTB",
     tenor: Annotated[int, Form(description="Loan tenor in months (3–24)")] = 12,
     other_loans: Annotated[float, Form(description="Existing monthly loan obligations (NGN)")] = 0.0,
     requested_loan: Annotated[float, Form(description="Specific loan amount requested (0 = max)")] = 0.0,
@@ -183,11 +183,11 @@ async def analyse(
     - `requested` — analysis of requested loan amount (if provided)
     """
     # Validate inputs
-    if location not in ("Core", "Expansion"):
-        raise HTTPException(status_code=400, detail="location must be 'Core' or 'Expansion'")
+    if location not in ("Lagos", "Outside Lagos", "Expansion"):
+        raise HTTPException(status_code=400, detail="location must be 'Lagos', 'Outside Lagos', or 'Expansion'")
     if product_type not in ("NTB", "NEW", "RENEWAL", "TOP-UP", "SEL"):
         raise HTTPException(status_code=400, detail="product_type must be 'NTB', 'RENEWAL', 'TOP-UP', or 'SEL'")
-    # "NEW" is an alias for "NTB" (New To Bank) — translate for the rules engine
+    # "NEW" is an alias for "NTB"
     if product_type == "NEW":
         product_type = "NTB"
     if not (1 <= tenor <= 36):
