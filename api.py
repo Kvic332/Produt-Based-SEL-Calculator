@@ -50,7 +50,7 @@ app = FastAPI(
         "Upload a Nigerian bank statement PDF and receive a structured "
         "credit-eligibility verdict. Powered by the PARSIO engine."
     ),
-    version="1.0.0",
+    version="1.0.3",
     contact={"name": "PARSIO / Kvic7™", "email": "kenechosen@gmail.com"},
     license_info={"name": "Proprietary — All rights reserved"},
     docs_url="/docs",
