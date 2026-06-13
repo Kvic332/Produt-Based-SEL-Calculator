@@ -2401,6 +2401,7 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
         if mc:
             credit = float(mc.group(1).replace(",", ""))
             return (credit, text[:mc.start()].strip()) if credit > 0 else (0, "")
+        return 0, ""
 
     def _try_debit(text: str) -> tuple[float, str]:
         """Return (debit_amount, narration) if a debit row; else (0, '')."""
