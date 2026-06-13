@@ -309,7 +309,7 @@ def classify_credit(narration: str, account_name: str = "") -> tuple[str, str]:
 
     # ── 8. Non-business inflows ───────────────────────────────────────────
     non_biz_exact = [
-        "salary", "salaries",
+        # Salary is legitimate income for SEL accounts — do NOT block it.
         "allowance",
         " support ",
         "monthly stipend", "stipend",
@@ -861,13 +861,17 @@ def detect_bank(text: str) -> str:
 # BANK PARSERS
 # ════════════════════════════════════════════════════════════════════════════
 def _extract_account_name(full_text: str) -> str:
+    # Stop-words that mark the end of a name field (other column headers that
+    # pdfplumber sometimes concatenates onto the same line as the account name).
+    _STOP = r"(?:\s+(?:Total|Account|Period|Currency|Branch|Address|BVN|Phone|Email)\b.*)?$"
     for pat in [
-        r"Account\s*Name\s+([A-Z][A-Z .'\-]{4,})",   # allows hyphens, dots
-        r"ACCOUNT\s*NAME[:\s]+([A-Z][A-Z .'\-]{4,})",
-        r"AccountName\s+([A-Z][A-Z .'\-]{4,})",       # pdfplumber (no space)
-        r"Name\s+([A-Z][A-Z .'\-]{4,})",
+        rf"Account\s*Name\s*:\s*([A-Z][A-Z .'\\-]{{4,}}){_STOP}",
+        rf"Account\s*Name\s+([A-Z][A-Z .'\\-]{{4,}}){_STOP}",
+        rf"ACCOUNT\s*NAME[:\s]+([A-Z][A-Z .'\\-]{{4,}}){_STOP}",
+        rf"AccountName\s+([A-Z][A-Z .'\\-]{{4,}}){_STOP}",
+        rf"Name\s+([A-Z][A-Z .'\\-]{{4,}}){_STOP}",
     ]:
-        m = re.search(pat, full_text, re.I)
+        m = re.search(pat, full_text, re.I | re.MULTILINE)
         if m:
             return m.group(1).strip().rstrip("-").strip()
     return ""
@@ -2368,16 +2372,21 @@ def parse_access_oracle(full_text: str) -> tuple[dict, str]:
         r'^(\d{2})-([A-Za-z]{3})\s*-(\d{2})\s+\d{2}-[A-Za-z]{3}\s*-\d{2}\s*(.*)',
         re.I,
     )
+    # Money amount: enforce proper comma-thousand format so that reference
+    # numbers glued to amounts (e.g. "5253159056675,000.00") never match.
+    # \d{1,3}(?:,\d{3})* requires 1-3 leading digits then groups of exactly 3.
+    _AMT = r'\d{1,3}(?:,\d{3})*\.\d{2}'
+
     # Credit: leading dash (debit="-") then AMOUNT BALANCE at end of text
     # Balance uses [\d, ]+ to tolerate PyPDF2 stray spaces inside large numbers
     # e.g. "1,500,118.38" → "1,500,1 18.38" (space inserted mid-number)
-    CREDIT_AMT = re.compile(r'-\s*([\d,]+\.\d{2})\s+([\d, ]+\.\d{2})\s*$')
+    CREDIT_AMT = re.compile(rf'-\s*({_AMT})\s+([\d, ]+\.\d{{2}})\s*$')
     # Debit:  AMOUNT then dash then BALANCE at end of text
     # Same tolerance for stray spaces in balance column
-    DEBIT_AMT  = re.compile(r'([\d,]+\.\d{2})\s+-\s*([\d, ]+\.\d{2})\s*$')
+    DEBIT_AMT  = re.compile(rf'({_AMT})\s+-\s*([\d, ]+\.\d{{2}})\s*$')
     # Explicit 3-column: DEBIT  CREDIT  BALANCE (rare in this format)
     THREE_AMT  = re.compile(
-        r'([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$'
+        rf'({_AMT})\s+({_AMT})\s+({_AMT})\s*$'
     )
 
     # Lines to skip regardless of in_tx state
@@ -4545,7 +4554,10 @@ def _parse_transactions_locked(file_bytes: bytes, password: str = "",
         elif bank == "PalmPay_Business":
             buckets, account_name = parse_palmpay_business(full_text)
         elif bank == "Access_Oracle":
-            buckets, account_name = parse_access_oracle(full_text)
+            # pdfplumber preserves column spacing; PyPDF2 glues reference numbers
+            # onto amounts (e.g. "C391,000,000.00" instead of "1,000,000.00").
+            _ao_text = extract_pdf_text_pdfplumber(file_bytes, password)
+            buckets, account_name = parse_access_oracle(_ao_text)
         elif bank == "Fidelity_Direct":
             buckets, account_name = parse_fidelity_direct(full_text)
         elif bank == "Fidelity_EStatement":
