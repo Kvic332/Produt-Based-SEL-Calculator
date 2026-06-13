@@ -54,6 +54,21 @@ app = FastAPI(
     license_info={"name": "Proprietary — All rights reserved"},
     docs_url="/docs",
     redoc_url="/redoc",
+    openapi_tags=[{"name": "Health"}, {"name": "Analysis"}],
+    swagger_ui_init_oauth={},
+    # Register the API key security scheme so Swagger shows the Authorize button
+    openapi_extra={
+        "components": {
+            "securitySchemes": {
+                "APIKeyHeader": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "X-API-Key",
+                }
+            }
+        },
+        "security": [{"APIKeyHeader": []}],
+    },
 )
 
 app.add_middleware(
