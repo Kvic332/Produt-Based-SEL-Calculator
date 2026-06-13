@@ -185,8 +185,11 @@ async def analyse(
     # Validate inputs
     if location not in ("Core", "Expansion"):
         raise HTTPException(status_code=400, detail="location must be 'Core' or 'Expansion'")
-    if product_type not in ("NEW", "RENEWAL", "SEL"):
-        raise HTTPException(status_code=400, detail="product_type must be 'NEW', 'RENEWAL', or 'SEL'")
+    if product_type not in ("NTB", "NEW", "RENEWAL", "TOP-UP", "SEL"):
+        raise HTTPException(status_code=400, detail="product_type must be 'NTB', 'RENEWAL', 'TOP-UP', or 'SEL'")
+    # "NEW" is an alias for "NTB" (New To Bank) — translate for the rules engine
+    if product_type == "NEW":
+        product_type = "NTB"
     if not (1 <= tenor <= 36):
         raise HTTPException(status_code=400, detail="tenor must be between 1 and 36 months")
     if not (1 <= n_months <= 12):
@@ -226,7 +229,7 @@ async def analyse(
         nets=nets,
         counts=counts,
         location=location,
-        product_type=product_type if product_type != "SEL" else "NEW",
+        product_type=product_type if product_type != "SEL" else "NTB",
         tenor=tenor,
         other_loans=other_loans,
         requested_loan=requested_loan if requested_loan > 0 else 0,
