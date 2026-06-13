@@ -384,6 +384,7 @@ def classify_debit(narration: str) -> tuple[str, str]:
         "palmcredit repay", "creditwave", "page financials",
         "quick credit repay", "lendigo", "lendha repay",
         "flexpay repay", "creditcorp", "lapo repay",
+        "principal liquidation",
     ]
     # Exclude "repayment for material/goods/supply" — these are vendor payments
     _loan_exclusions = [
